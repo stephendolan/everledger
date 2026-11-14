@@ -1,322 +1,429 @@
 #!/usr/bin/env python3
-"""everledger: a WoW: Forever catalogue CLI.
-Recipe facts (learn levels, skill-up bands, reagents, source types) come ONLY from the
-local catalogue built from wowforever.ninja client-data profession pages.
-Prices come ONLY from AHledger (default market forever.pvp.alliance.us: Alliance, PvP, US; override with EVERLEDGER_MARKET).
-Character state comes ONLY from a self-hosted companion roster service (see README).
-Constants: game 'WoW: Forever', faction Alliance, ruleset PvP."""
-import json, os, sys, urllib.request, datetime, pathlib
+"""everledger: WoW Forever prices, catalogue, vendors, characters and outcomes."""
+import argparse
+import contextlib
+import io
+import json
+from pathlib import Path
+import subprocess
+import sys
 
-HOME = pathlib.Path.home()
-# Local state lives outside the repo. Override with EVERLEDGER_DATA_DIR,
-# EVERLEDGER_ROSTER_URL, and EVERLEDGER_ROSTER_TOKEN (or EVERLEDGER_ROSTER_TOKEN_FILE).
-DATA_DIR = pathlib.Path(os.environ.get("EVERLEDGER_DATA_DIR", HOME / ".everledger"))
-CAT = DATA_DIR / "catalogue.json"
-TOKEN_FILE = os.environ.get("EVERLEDGER_ROSTER_TOKEN_FILE", "")
-ROSTER = os.environ.get("EVERLEDGER_ROSTER_URL", "http://localhost:8765")
-MARKET = os.environ.get("EVERLEDGER_MARKET", "forever.pvp.alliance.us")
-AHL = "https://api.ahledger.com"
+from everledger_core import (AHL, MARKET, Failure, age, catalogue_source,
+    character_path, emit, load_catalogue, market_table, money,
+    recipes, request, resolve_item, roster, source, sources, stale_code)
+import everledger_catalogue as catalogue
+import everledger_outcomes as outcomes
+import everledger_vendors as vendors
 
-def money(c):
-    if c is None: return "?"
-    sign = "-" if c < 0 else ""; c = abs(round(c)); g, rem = divmod(int(c), 10000); s, cc = divmod(rem, 100)
-    return f"{sign}{g}g" if g and s == 0 and cc == 0 else (f"{sign}{g}g {s}s" if g else (f"{sign}{s}s {cc}c" if s else f"{sign}{cc}c"))
+EPILOG = '''Selectors: --char accepts a unique first or full character name.
+Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
+until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
+JSON uses API field names, integer copper totals and UTC ISO timestamps.
+Human output ends with source names, save/publication times and ages.
+Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
+Journal save age is normal: outcomes and net exit 0 even for old saves.
+Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
+Listings use the roster scan limit (15m). Positions apply both market/scan limits.
+Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
+On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
+Vendor listed prices and sale claims are Classic 1.12 baseline. Vendor sightings
+alone may be seen in Forever. Purchase quantity and faction are unavailable;
+all zones appear, including Horde. Listed prices are not used in craft margins.
+Configuration: Python 3.11+ and curl; keep this executable beside everledger_*.py.
+EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
+EVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN
+or EVERLEDGER_ROSTER_TOKEN_FILE for bearer authentication.
+EVERLEDGER_MARKET defaults to forever.pvp.alliance.us.
+EVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.
+EVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.
+Refresh downloads profession pages and refreshes only previously queried vendor IDs.
+Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
+margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
+char NAME auctions prints listings --char NAME on stderr and exits 2.
+'''
 
-def load():
-    d = json.loads(CAT.read_text())
-    gen = datetime.datetime.strptime(d["generated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC)
-    age = (datetime.datetime.now(datetime.UTC) - gen).days
-    if age > 14:
-        print(f"WARNING: catalogue is {age} days old (built {d['generated_at']}); run: everledger refresh", file=sys.stderr)
-    return d
 
-def all_recipes(cat):
-    for prof, blk in cat["professions"].items():
-        for r in blk["recipes"]:
-            yield prof, r
+def parser():
+    p = argparse.ArgumentParser(description=__doc__, epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False)
+    sub = p.add_subparsers(dest='command', required=True)
+    specs = [
+        ('price', 'AHledger quote plus vendor listed prices', [('item', {'nargs':'+'})]),
+        ('recipe', 'Catalogue facts and roster known-by annotation', [('item', {'nargs':'+'}), ('--skill', {'type':int})]),
+        ('bridge', 'Catalogue skill-up bands across a range', [('profession', {}), ('start', {'type':int}), ('end', {'type':int})]),
+        ('margins', 'AHledger craft margins; optional roster recipe/level scope', [('profession', {'nargs':'?'}), ('--level', {'type':int}), ('--char', {}), ('--known', {'help':argparse.SUPPRESS})]),
+        ('vendors', 'Vendor listed prices/locations; faction unavailable', [('item', {'nargs':'+'}), ('--in', {'dest':'zone','help':'zone/city substring; aliases IF, SW, Darn, Org, TB, UC'}), ('--char', {'help':'character scope; faction filtering unavailable'}), ('--all', {'action':'store_true','help':'all zones (also the default: faction unavailable)'})]),
+        ('char', 'Characters, profession ranks and known recipes', [('name', {'nargs':'?'}), ('profession', {'nargs':'?'}), ('--skill', {'type':int})]),
+        ('listings', 'Recorded live auction listings and AHledger floor comparison', [('--char', {}), ('--item', {})]),
+        ('positions', 'Inventory holdings/listings and AHledger floor; basis unknown without assignments', [('--char', {}), ('--item', {})]),
+        ('sales', 'Sales proceeds (defaults to auction)', []),
+        ('purchases', 'Auction and vendor purchases', []),
+        ('expirations', 'Expired auctions with market repost inputs', []),
+        ('net', 'Item auction cash/count diagnostic; profit basis stays unknown', [('item', {'nargs':'+'})]),
+        ('events', 'Typed journal feed; prints next_cursor, has_more and service checkpoint', []),
+        ('status', 'Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors', []),
+        ('refresh', 'Rebuild catalogue and refresh previously queried vendor items', [('target', {'nargs':'?','choices':['catalogue']})]),
+        ('verify', 'Deprecated catalogue anchor check (use status)', []),
+    ]
+    for name, help_text, arguments in specs:
+        c = sub.add_parser(name, help=help_text, description=help_text, allow_abbrev=False)
+        for flag, kwargs in arguments:
+            c.add_argument(flag, **kwargs)
+        if name in ('sales', 'purchases', 'expirations', 'events', 'net', 'positions'):
+            if name != 'net' and name != 'positions':
+                c.add_argument('--item')
+                c.add_argument('--char')
+            if name == 'net':
+                c.add_argument('--char')
+            if name != 'positions':
+                c.add_argument('--since')
+                c.add_argument('--until')
+        if name in ('sales', 'purchases', 'events'):
+            c.add_argument('--venue', choices=['auction', 'vendor'], default='auction' if name == 'sales' else None)
+        if name == 'events':
+            c.add_argument('--type', help='comma-separated domain types')
+            c.add_argument('--cursor', help='snapshot page cursor from next_cursor; inherits fixed filters')
+            c.add_argument('--after', help='opaque cursor/checkpoint; exclusive with since/until')
+            c.add_argument('--limit', type=int, help='0 bootstraps a watch; default 50 human, 500 JSON')
+            c.epilog = ('Start a watch: everledger events --limit 0 --json. Save the service checkpoint '
+                        'for after when supplied; next_cursor finishes pagination via the service cursor parameter. '
+                        'The feed never skips or repeats across cursors; a worker that acts before saving '
+                        'next_cursor delivers at least once. Filters may change between polls. On 409 '
+                        'cursor_invalid, alert once and resync from resync_since; this command retries once. '
+                        'snapshot_changed requires restarting from the last committed checkpoint. '
+                        'This CLI persists nothing.')
+        c.add_argument('--json', action='store_true', help='one JSON document using API field names')
+    return p
 
-def color_at(bands, skill):
-    if skill < bands["learn"]: return "not learnable"
-    if bands["yellow"] is None: return "orange"
-    if skill < bands["yellow"]: return "orange"
-    if skill < bands["green"]: return "yellow"
-    if skill < bands["grey"]: return "green"
-    return "grey"
 
-def find(cat, query):
-    q = query.lower()
-    hits = [(p, r) for p, r in all_recipes(cat) if q in r["name"].lower()]
-    exact = [(p, r) for p, r in hits if r["name"].lower() == q]
-    return exact or hits
+def capture(func, *args):
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = func(*args)
+    return code, output.getvalue().splitlines()
 
-def fmt_recipe(prof, r, skill=None):
-    b = r["bands"]
-    bands = f"learn {b['learn']}" + (f", yellow {b['yellow']}, green {b['green']}, grey {b['grey']}" if b["yellow"] is not None else " (stays orange)")
-    col = f" | at skill {skill}: {color_at(b, skill)}" if skill is not None else ""
-    reags = ", ".join(f"{x['qty']}x {x['name']}" for x in r["reagents"]) or "none"
-    res = r["result"]
-    res_s = f"{res['name']}" + (f" (item {res['item_id']})" if res["item_id"] else "") + (f" x{res['qty']}" if res["qty"] > 1 else "")
-    return (f"{r['name']} [{prof}] spell {r['spell_id']}\n"
-            f"  bands: {bands}{col}\n  makes: {res_s}\n  reagents: {reags}\n  source: {r['source_type'] or 'unmarked in index (see recipe page)'}")
 
-def roster_token():
-    tok = os.environ.get("EVERLEDGER_ROSTER_TOKEN", "")
-    if tok: return tok.strip()
-    if TOKEN_FILE: return pathlib.Path(TOKEN_FILE).read_text().strip()
-    raise RuntimeError("no roster token configured: set EVERLEDGER_ROSTER_TOKEN or EVERLEDGER_ROSTER_TOKEN_FILE")
+def item_for(query):
+    item = resolve_item(query)
+    if item['name'] is None:
+        try:
+            cat = load_catalogue()
+        except Failure:
+            return item
+        for _, r in recipes(cat):
+            for candidate in [r['result'], *r['reagents']]:
+                if candidate.get('item_id') == item['id']:
+                    item['name'] = candidate['name']
+                    return item
+    return item
 
-def roster(path):
-    proxy = os.environ.get("HTTPS_PROXY", "")
-    tunnel = proxy.rsplit(":", 1)[0] + ":3130" if proxy else None
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": tunnel})) if tunnel else urllib.request.build_opener()
-    req = urllib.request.Request(ROSTER + path, headers={"Authorization": "Bearer " + roster_token()})
-    return json.loads(opener.open(req, timeout=20).read())
 
-def spell_index(cat):
-    idx = {}
-    for prof, blk in cat["professions"].items():
-        for r in blk["recipes"]:
-            idx[r["spell_id"]] = (prof, r["name"])
-    return idx
+def disclose_item_source(data, item):
+    if item and item.get('name'):
+        cat_source = catalogue_source(load_catalogue())
+        data['sources'] = sources(data)
+        if cat_source not in data['sources']:
+            data['sources'].append(cat_source)
+    return data
 
-def char_known_ids(ch, prof_name):
-    """(available, {spell_ids}) for one character's profession from the roster payload.
-    available False means the roster holds no recipe data: never read as 'knows nothing'."""
-    for p in ch.get("professions", []):
-        if p["name"].lower() == prof_name.lower():
-            rec = p.get("recipes") or {}
-            if rec.get("available") and rec.get("known") is not None:
-                return True, {k["spell_id"] for k in rec["known"]}
-            return False, set()
-    return False, set()
 
-def roster_characters():
-    data = roster("/characters")
-    if isinstance(data, dict):
-        return data.get("characters", [])
-    return data if isinstance(data, list) else []
+def price(args):
+    item = item_for(' '.join(args.item))
+    raw, _ = request(f"{AHL}/v1/prices/{MARKET}/{item['id']}")
+    data = json.loads(raw)
+    latest, sales = data['latest'], data['sales']
+    stamp = latest['observedAt']
+    s = source('AHledger ' + MARKET, stamp, stale=age(stamp) is None or age(stamp) > 900)
+    quote = {'item': data['item'], 'latest': {'observed_at': stamp,
+        'median_copper': round(latest['median']) if latest['median'] is not None else None,
+        'min_buyout_copper': round(latest['minBuyout']) if latest['minBuyout'] is not None else None,
+        'median_7d_copper': round(latest['median7d']) if latest['median7d'] is not None else None,
+        'quantity': latest['quantity'], 'auctions': latest['auctions']}, 'sales': sales, 'sources':[s]}
+    v = vendors.lookup(item['id'])
+    quote['vendors'] = v['vendors']
+    quote['vendor_reason'] = v['reason']
+    quote['sources'].extend(v['sources'])
+    lines = [f"{data['item']['name']} (item {item['id']}) latest {stamp}: median {money(latest['median'])}, min {money(latest['minBuyout'])}, listed {latest['quantity']} in {latest['auctions']} auctions | 7d median {money(latest['median7d'])} | est {sales['estimatedPerDay']}/day over {sales['coveredHours']}h coverage"]
+    if v['vendors']:
+        prices = [r['price_copper'] for r in v['vendors'] if r['price_copper'] is not None]
+        lines.append(f"vendor: listed price {money(min(prices) if prices else None)} | 1.12 baseline sale/price; purchase quantity unknown")
+    disclose_item_source(quote,item)
+    emit(quote, lines, args.json)
+    return stale_code(quote['sources'])
 
-def pricetable():
-    req = urllib.request.Request(f"{AHL}/v1/pricetable/{MARKET}", headers={"User-Agent": "everledger"})
-    raw = urllib.request.urlopen(req, timeout=30).read().decode()
-    lines = raw.splitlines()
-    head = lines[0].split("|")
-    prices = {}
-    for ln in lines[1:]:
-        p = ln.split(":")
-        def num(x): return None if x == "" else float(x)
-        prices[int(p[0])] = {"median": num(p[1]), "min": num(p[2]), "qty": num(p[3]),
-                             "sales": (num(p[8]) / 10 if num(p[8]) is not None else None)}
-    return prices, head[2], int(head[3])
 
-def cmd_recipe(cat, args):
-    skill = None
-    if "--skill" in args:
-        i = args.index("--skill"); skill = int(args[i + 1]); args = args[:i] + args[i + 2:]
-    hits = find(cat, " ".join(args))
-    if not hits: print("no catalogue match"); return 1
-    for prof, r in hits[:8]:
-        print(fmt_recipe(prof, r, skill))
-    # known-by annotation from the roster service; degrade quietly if it is unreachable
+def recipe(args):
+    cat = load_catalogue()
+    hits = catalogue.find(cat, ' '.join(args.item))[:8]
+    if not hits:
+        raise Failure('no catalogue match')
+    used = [catalogue_source(cat)]
+    rows = [dict(r, profession=p) for p, r in hits]
+    lines = [catalogue.fmt_recipe(p, r, args.skill) for p, r in hits]
     try:
-        chars = []
-        for entry in roster_characters():
-            nm = entry.get("short_name") or entry.get("name")
-            if nm:
-                d = roster(f"/characters/{nm}")
-                chars.append(d.get("character", d))
-        for prof, r in hits[:8]:
-            knowers, unknown = [], False
-            for ch in chars:
-                avail, ids = char_known_ids(ch, prof)
-                if not avail: unknown = True
-                elif r["spell_id"] in ids: knowers.append(ch.get("short_name") or ch.get("name"))
-            who = ", ".join(knowers) if knowers else "no roster character"
-            note = "; recipe data unavailable for at least one character" if unknown else ""
-            print(f"  known by: {who} (spell {r['spell_id']}){note}")
-    except RuntimeError as e:
-        # configuration problem (e.g. no roster token): the message is written
-        # for the user, so print it plainly rather than an exception class name
-        print(f"  known by: not checked ({e})")
-    except Exception as e:
-        print(f"  known by: roster unreachable ({e.__class__.__name__}); not checked")
+        chars = roster('/characters')
+        used += sources(chars)
+        for (prof, r), row in zip(hits, rows):
+            known_by, unavailable = [], []
+            for ch in chars['characters']:
+                ids = catalogue.char_known_ids(ch, prof)
+                name = ch.get('name') or ch.get('short_name')
+                if ids is None:
+                    unavailable.append(name)
+                elif r['spell_id'] in ids:
+                    known_by.append(name)
+            row.update(known_by=known_by, recipe_data_unavailable=unavailable)
+            lines.append('  known by: ' + (', '.join(known_by) or 'no roster character') + ('; recipe data unavailable: ' + ', '.join(unavailable) if unavailable else ''))
+    except Failure as e:
+        for row in rows:
+            row['known_by'] = None
+        lines.append('known by: not checked (' + str(e) + ')')
+    emit({'recipes': rows, 'sources': used}, lines, args.json)
     return 0
 
-def cmd_bridge(cat, args):
-    prof, frm, to = args[0], int(args[1]), int(args[2])
-    recs = [r for r in cat["professions"][prof]["recipes"]
-            if r["bands"]["learn"] <= to and (r["bands"]["grey"] is None or r["bands"]["grey"] > frm)]
-    # segment the range at every band boundary; per segment list recipes that give points throughout it
-    cuts = sorted({frm, to} | {r["bands"]["learn"] for r in recs if frm < r["bands"]["learn"] < to})
-    print(f"{prof} bridge {frm} -> {to} (catalogue bands only; prices via: everledger margins {prof} <skill>)")
+
+def bridge(args):
+    cat = load_catalogue()
+    prof = args.profession.casefold()
+    if prof not in cat['professions'] or args.start >= args.end:
+        raise Failure('bridge requires a catalogue profession and start < end', 2)
+    rows = [r for p, r in recipes(cat) if p == prof and r['bands']['learn'] <= args.end and (r['bands']['grey'] is None or r['bands']['grey'] > args.start)]
+    cuts = sorted({args.start, args.end} | {r['bands']['learn'] for r in rows if args.start < r['bands']['learn'] < args.end})
+    segments, lines = [], [f'{prof} bridge {args.start} -> {args.end}']
     for a, b in zip(cuts, cuts[1:]):
-        live = [r for r in recs if r["bands"]["learn"] <= a and (r["bands"]["grey"] is None or r["bands"]["grey"] > a)
-                and r["source_type"] != "Not yet known"]
-        def sprio(r):
-            s = r["source_type"] or ""
-            return 0 if ("Trainer" in s or "Automatic" in s) else 1 if "Vendor" in s else 2 if "Drop" in s else 3
-        crank = {"orange": 0, "yellow": 1, "green": 2}
-        live.sort(key=lambda r: (sprio(r), crank.get(color_at(r["bands"], a), 3), -r["bands"]["learn"]))
-        print(f"\n{a}-{b}:")
-        for r in live[:12]:
-            print(f"  {r['name']:<34} {color_at(r['bands'], a):<6} learn {r['bands']['learn']:<4} grey {r['bands']['grey']}  {r['source_type'] or '?'}")
+        live = [r for r in rows if r['bands']['learn'] <= a and (r['bands']['grey'] is None or r['bands']['grey'] > a) and r['source_type'] != 'Not yet known']
+        def priority(r):
+            st = r['source_type'] or ''
+            return (0 if 'Trainer' in st or 'Automatic' in st else 1 if 'Vendor' in st else 2 if 'Drop' in st else 3,
+                    {'orange':0,'yellow':1,'green':2}.get(catalogue.color_at(r['bands'],a),3), -r['bands']['learn'])
+        live.sort(key=priority)
+        segments.append({'from_level':a,'to_level':b,'recipes':live[:12]})
+        lines.append(f'{a}-{b}:')
+        lines += [f"  {r['name']} {catalogue.color_at(r['bands'],a)} learn {r['bands']['learn']} grey {r['bands']['grey']} {r['source_type']}" for r in live[:12]]
+    emit({'profession':prof,'segments':segments,'sources':[catalogue_source(cat)]},lines,args.json)
     return 0
 
-def cmd_margins(cat, args):
-    known_char = None
-    if "--known" in args:
-        i = args.index("--known"); known_char = args[i + 1]; args = args[:i] + args[i + 2:]
-    prof, skill = args[0], int(args[1])
-    known_ids = None
-    if known_char:
-        d = roster(f"/characters/{known_char}")
-        avail, known_ids = char_known_ids(d.get("character", d), prof)
-        if not avail:
-            print(f"roster has no recipe data for {known_char}'s {prof}; refusing to guess craftable set")
-            return 1
-    prices, ts, want = pricetable()
-    when = datetime.datetime.fromtimestamp(int(ts), datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def margins(args):
+    cat = load_catalogue()
+    if args.known:
+        print('deprecated --known; use --char',file=sys.stderr)
+        if args.char and args.char != args.known:
+            raise Failure('--known conflicts with --char',2)
+        args.char = args.known
+    used = [catalogue_source(cat)]
+    ch = None
+    if args.char:
+        d = roster(character_path(args.char))
+        ch = d.get('character',d)
+        used += sources(d)
+    profs = [args.profession.casefold()] if args.profession else list(cat['professions'])
+    if any(p not in cat['professions'] for p in profs):
+        raise Failure('unknown profession; choose ' + ', '.join(cat['professions']),2)
+    prices, ms = market_table()
+    used.append(ms)
     rows = []
-    for r in cat["professions"][prof]["recipes"]:
-        if known_ids is not None and r["spell_id"] not in known_ids: continue
-        if r["bands"]["learn"] > skill or r["result"]["item_id"] is None: continue
-        rp = prices.get(r["result"]["item_id"])
-        if not rp or rp["median"] is None: continue
-        cost, bad = 0, False
-        for x in r["reagents"]:
-            pp = prices.get(x["item_id"])
-            if not pp or pp["median"] is None: bad = True; break
-            cost += pp["median"] * x["qty"]
-        if bad: continue
-        margin = rp["median"] * r["result"]["qty"] * 0.95 - cost
-        rows.append((margin, r, cost, rp))
-    crank = {"orange": 0, "yellow": 1, "green": 2, "grey": 3}
-    rows.sort(key=lambda t: (crank.get(color_at(t[1]["bands"], skill), 4), -(t[0] * (t[3]["sales"] or 0) if t[0] > 0 else t[0])))
-    scope = f" | only recipes known by {known_char} (roster)" if known_char else ""
-    print(f"{prof} at skill {skill}: crafts priced from AHledger scan {when} (rows {want}). Prices from AHledger.{scope}")
-    for margin, r, cost, rp in rows[:15]:
-        print(f"  {r['name']:<34} {color_at(r['bands'], skill):<6} margin {money(margin):>9} | cost {money(cost):>9} | sells {money(rp['median']):>9} | {rp['sales']}/day | {r['source_type'] or '?'}")
-    return 0
-
-def cmd_char(cat, args):
-    skill_override = None
-    if "--skill" in args:
-        i = args.index("--skill"); skill_override = int(args[i + 1]); args = args[:i] + args[i + 2:]
-    name = args[0]
-    data = roster(f"/characters/{name}")
-    ch = data.get("character", data)
-    print(f"{ch.get('name')} | level {ch.get('level')} {ch.get('race')} {ch.get('class')} | {ch.get('faction')} {ch.get('realm')} | gold {money(ch.get('gold_copper'))} | hearth {ch.get('hearth', {}).get('location')}")
-    print(f"  (roster snapshot generated {data.get('generated_at', '?')[:16]}Z; professions updated {ch.get('professions_updated_at', '?')[:16]}Z)")
-    want = args[1].lower() if len(args) > 1 else None
-    if want == "auctions":
-        inv = roster(f"/characters/{name}/inventory")
-        auc = inv.get("auctions", {})
-        pricing = auc.get("pricing", {})
-        src = pricing.get("source", {})
-        state = "STALE" if src.get("stale") else "fresh"
-        scanned = str(src.get('scanned_at', '?'))
-        print(f"  auctions (Syndicator listings, prices from DataStore_Auctions scan {scanned if scanned.endswith('Z') else scanned + 'Z'}, {state}, age {src.get('scan_age_seconds', '?')}s):")
-        groups = {}
-        for a in auc.get("items", []):
-            pr = a.get("price", {})
-            rec = pr.get("recorded") or {}
-            key = (a.get("name"), rec.get("buyout_copper"), rec.get("bid_copper"), bool(rec.get("has_bid")), pr.get("available"))
-            g = groups.setdefault(key, {"n": 0, "exp": rec.get("expires_at")})
-            g["n"] += 1
-        for (nm, buy, bid, has_bid, avail), g in sorted(groups.items()):
-            bid_s = f" | bid {money(bid)}" if has_bid else " | no bids"
-            av_s = "" if avail else " (recorded; scan stale, not confirmed live)"
-            print(f"    {g['n']}x {nm}: buyout {money(buy)}{bid_s} | expires {g['exp']}{av_s}")
-        if not groups: print("    none recorded")
-        return 0
-    for p in ch.get("professions", []):
-        if p.get("skill_available"):
-            print(f"  {p['name']}: {p['skill']}/{p['max_skill']}")
-        else:
-            print(f"  {p['name']}: skill unavailable from roster ({p.get('reason')}); open the profession window in game, or pass --skill")
-        rec = p.get("recipes") or {}
-        if rec.get("available") and rec.get("known") is not None:
-            print(f"    known recipes: {len(rec['known'])} (roster, DataStore_Crafts)")
-        else:
-            print(f"    known recipes: unavailable from roster (never read as 'knows nothing')")
-        if want and p["name"].lower() == want:
-            sk = skill_override if skill_override is not None else p.get("skill")
-            if sk is None:
-                print("    no skill to analyse; pass --skill N")
+    for prof in profs:
+        skill = args.level
+        known = None
+        if ch:
+            known = catalogue.char_known_ids(ch,prof)
+            if known is None:
+                if args.profession:
+                    raise Failure(f'roster has no recipe data for {args.char} {prof}; craftable set unknown')
                 continue
-            blk = cat["professions"].get(want)
-            if not blk: print(f"    no catalogue profession '{want}'"); continue
-            k_avail, k_ids = char_known_ids(ch, p["name"])
-            tag = (lambda r: "known " if r["spell_id"] in k_ids else "TRAIN ") if k_avail else (lambda r: "")
-            ups = [r for r in blk["recipes"] if r["bands"]["learn"] <= sk and (r["bands"]["grey"] is None or r["bands"]["grey"] > sk)]
-            crank = {"orange": 0, "yellow": 1, "green": 2}
-            ups.sort(key=lambda r: (crank.get(color_at(r["bands"], sk), 3), -r["bands"]["learn"]))
-            print(f"    skill-up options at {sk}:" + (" (TRAIN = not known; training/pattern cost applies)" if k_avail else ""))
-            for r in ups[:8]:
-                print(f"      {tag(r)}{r['name']:<34} {color_at(r['bands'], sk):<6} learn {r['bands']['learn']:<4} grey {r['bands']['grey']}  {r['source_type'] or '?'}")
-            nxt = sorted([r for r in blk["recipes"] if sk < r["bands"]["learn"] <= sk + 30], key=lambda r: r["bands"]["learn"])
-            print(f"    next unlocks (to {sk + 30}):")
-            for r in nxt[:8]:
-                print(f"      {tag(r)}{r['name']:<34} learn {r['bands']['learn']}  {r['source_type'] or '?'}")
-            if k_avail:
-                idx = spell_index(cat)
-                names = sorted(idx[s][1] for s in k_ids if s in idx and idx[s][0] == want)
-                extra = len(k_ids) - sum(1 for s in k_ids if s in idx and idx[s][0] == want)
-                print(f"    all known {p['name']} recipes ({len(k_ids)}):")
-                for i in range(0, len(names), 4):
-                    print("      " + ", ".join(names[i:i + 4]))
-                if extra: print(f"      (+{extra} known spell ids not in the catalogue for this profession)")
+            if skill is None:
+                skill = next((p.get('skill') for p in ch['professions'] if p['name'].casefold()==prof and p.get('skill_available')),None)
+                if skill is None:
+                    raise Failure(f'roster skill unavailable for {prof}; pass --level N',2)
+        for r in cat['professions'][prof]['recipes']:
+            if known is not None and r['spell_id'] not in known or skill is not None and r['bands']['learn'] > skill:
+                continue
+            rp = prices.get(r['result']['item_id'],{})
+            if rp.get('median_copper') is None:
+                continue
+            reagents = []
+            for x in r['reagents']:
+                cost = prices.get(x['item_id'],{}).get('median_copper')
+                reagents.append({**x,'unit_copper':cost,'basis':'AHledger'})
+            if any(x['unit_copper'] is None for x in reagents):
+                continue
+            cost = sum(x['unit_copper']*x['qty'] for x in reagents)
+            margin = round(rp['median_copper'] * r['result']['qty'] * 0.95) - cost
+            rows.append({'name':r['name'],'profession':prof,'spell_id':r['spell_id'],
+                'color':catalogue.color_at(r['bands'],skill) if skill is not None else None,
+                'margin_copper':margin,'cost_copper':cost,'sells_copper':rp['median_copper'],
+                'sales_per_day':rp['sales_per_day'],'reagents':reagents,'source_type':r['source_type']})
+    rows.sort(key=lambda r: ({'orange':0,'yellow':1,'green':2,'grey':3}.get(r['color'],4),-(r['margin_copper']*(r['sales_per_day'] or 0) if r['margin_copper']>0 else r['margin_copper'])))
+    rows=rows[:15]
+    emit({'margins':rows,'sources':used},[f"{r['name']} [{r['profession']}] {r['color'] or ''} | margin {money(r['margin_copper'])} | cost {money(r['cost_copper'])} | sells {money(r['sells_copper'])} | {r['sales_per_day']}/day | {r['source_type']}" for r in rows] or ['no priced recipes'],args.json)
+    return stale_code(used)
+
+
+def char(args):
+    if args.profession == 'auctions':
+        raise Failure(f'Use: everledger listings --char "{args.name}"',2)
+    data=roster(character_path(args.name) if args.name else '/characters')
+    used=sources(data)
+    if args.name:
+        if args.profession:
+            cat=load_catalogue()
+            used.append(catalogue_source(cat))
+        else:
+            cat={'professions':{}}
+        argv=[args.name]+([args.profession] if args.profession else [])+(['--skill',str(args.skill)] if args.skill is not None else [])
+        _,lines=capture(catalogue.cmd_char,cat,argv,data)
+    else:
+        lines=[f"{c.get('name')} | level {c.get('level')} {c.get('race')} {c.get('class')} | gold {money(c.get('gold_copper'))}" for c in data.get('characters',[])] or ['no characters recorded']
+    emit({**data,'sources':used},lines,args.json)
     return 0
 
-def cmd_price(cat, args):
-    q = " ".join(args)
-    ids = set()
-    if q.isdigit(): ids.add(int(q))
-    for _p, r in all_recipes(cat):
-        if r["result"]["name"].lower() == q.lower() and r["result"]["item_id"]: ids.add(r["result"]["item_id"])
-        for x in r["reagents"]:
-            if x["name"].lower() == q.lower(): ids.add(x["item_id"])
-    if not ids: print("item not found in catalogue; AHledger lookup needs a catalogue item id"); return 1
-    for iid in sorted(ids):
-        req = urllib.request.Request(f"{AHL}/v1/prices/{MARKET}/{iid}", headers={"User-Agent": "everledger"})
-        d = json.loads(urllib.request.urlopen(req, timeout=30).read())
-        lat, sal = d["latest"], d["sales"]
-        print(f"{d['item']['name']} (item {iid}) latest {lat['observedAt'][:16]}Z: median {money(lat['median'])}, min {money(lat['minBuyout'])}, "
-              f"listed {lat['quantity']} in {lat['auctions']} auctions | 7d median {money(lat['median7d'])} | est {sal['estimatedPerDay']}/day over {sal['coveredHours']}h coverage. Prices from AHledger.")
+
+def outcome(args):
+    params=outcomes.event_params(args)
+    item=item_for(args.item) if args.item else None
+    if args.command=='events':
+        params['item']=item.get('name') or str(item['id']) if item else None
+        if args.cursor:
+            if any((args.after is not None, args.since, args.until, args.char, args.item, args.type, args.venue)):
+                raise Failure('--cursor inherits filters; supply only --cursor and --limit',2)
+            params={'cursor':args.cursor,'limit':args.limit}
+        data=outcomes.fetch_events(params)
+        disclose_item_source(data,item)
+        lines=outcomes.event_lines(outcomes.event_rows(data)) if data.get('available') is not False else [f"journal {data.get('state')}: {data.get('reason')}"]
+        emit(data,lines+[f"next_cursor: {data.get('next_cursor')} | has_more: {data.get('has_more')} | checkpoint: {data.get('checkpoint')}"],args.json)
+        return 0
+    types={'sales':'sale','purchases':'purchase','expirations':'expiration'}
+    data=outcomes.item_events(args,item,types[args.command])
+    rows=data.pop('events',[])
+    lines=outcomes.event_lines(rows)
+    if args.command=='sales':
+        data['proceeds_copper']=outcomes.total(rows,'proceeds_copper') if data.get('available') is not False else None
+        lines.append('total proceeds ' + money(data['proceeds_copper']))
+    if args.command=='expirations' and rows:
+        prices,ms=market_table()
+        data['sources']=sources(data)+[ms]
+        for r in rows:
+            iid=(r.get('item') or {}).get('id')
+            r['market']=prices.get(iid)
+            if r['market']:
+                lines.append(f"  repost input: floor {money(r['market']['floor_copper'])} | listed {r['market']['quantity']} | sales/day {r['market']['sales_per_day']}")
+    data[args.command]=rows
+    if data.get('available') is False:
+        lines.append(f"journal {data.get('state')}: {data.get('reason')}")
+    disclose_item_source(data,item)
+    emit(data,lines,args.json)
     return 0
 
-ANCHORS = [("tailoring", "White Swashbuckler's Shirt", 125, "Trainer"),
-           ("tailoring", "Bolt of Silk Cloth", 100, "Trainer"),
-           ("tailoring", "Bolt of Woolen Cloth", 55, "Trainer"),
-           ("tailoring", "Red Woolen Boots", 75, "Pattern · Drop"),
-           ("tailoring", "Dark Silk Shirt", 120, "Pattern · Vendor"),
-           ("tailoring", "Robes of Arcana", 125, "Pattern · Drop"),
-           ("leatherworking", "Cloudy Gustwoven Boots", 55, None)]
 
-def cmd_verify(cat, _args):
-    ok = True
-    for prof, blk in cat["professions"].items():
-        good = len(blk["recipes"]) == blk["stated_count"]
-        ok = ok and good
-        print(f"{'PASS' if good else 'FAIL'} {prof}: {len(blk['recipes'])}/{blk['stated_count']} recipes")
-    for prof, name, learn, src in ANCHORS:
-        r = next((x for x in cat["professions"][prof]["recipes"] if x["name"] == name), None)
-        good = bool(r) and r["bands"]["learn"] == learn and (src is None or r["source_type"] == src)
-        ok = ok and good
-        print(f"{'PASS' if good else 'FAIL'} anchor {name}: learn {r['bands']['learn'] if r else '?'}, source {r['source_type'] if r else '?'}")
-    print("catalogue built:", cat["generated_at"], "| source:", cat["source"])
-    return 0 if ok else 1
+def status(args):
+    rows=[]; used=[]; code=0
+    try:
+        cat=load_catalogue()
+        checked,lines=capture(catalogue.cmd_verify,cat,[])
+        s=catalogue_source(cat); used.append(s)
+        rows.append({'source':'catalogue','state':'ok' if not checked else 'anchor failure','updated_at':cat['generated_at'],'checks':lines})
+        code=max(code,checked)
+    except Failure as e:
+        rows.append({'source':'catalogue','state':str(e)}); code=max(code,e.code)
+    for label,path in [('roster','/characters'),('outcomes','/events'),('listings','/listings')]:
+        try:
+            d=roster(path,{'limit':0} if label=='outcomes' else None)
+            used+=sources(d)
+            rows.append({'source':label,'state':d.get('state','reachable'),'sources':sources(d)})
+            if label=='listings': code=max(code,stale_code(outcomes.listing_sources(d)))
+        except Failure as e:
+            rows.append({'source':label,'state':str(e)}); code=max(code,e.code)
+    try:
+        _,s=market_table(); used.append(s); rows.append({'source':'AHledger','state':'stale' if s['stale'] else 'reachable',**s}); code=max(code,stale_code([s]))
+    except Failure as e:
+        rows.append({'source':'AHledger','state':str(e)}); code=max(code,e.code)
+    cached=[json.loads(p.read_text()) for p in vendors.CACHE.glob('*.json')]
+    try:
+        request(vendors.BASE, vendors.UA)
+        state='reachable'
+    except Failure as e:
+        state=str(e); code=max(code,e.code)
+    all_rows=[r for d in cached for r in d.get('vendors') or []]
+    vendor_status={'source':'vendors','backend':vendors.BACKEND,'state':state,'cache_items':len(cached),
+        'published_at':max((d.get('published_at') or '' for d in cached),default=None),
+        'seen':sum(r['basis']=='seen' for r in all_rows),'baseline':sum(r['basis']=='baseline' for r in all_rows),
+        'unverified':sum(r['basis']=='unverified' for r in all_rows),'future_backend':'ForeverDB not configured'}
+    rows.append(vendor_status)
+    used.append(source(vendors.BACKEND,vendor_status['published_at'],detail=f"cache {len(cached)} items; {vendor_status['seen']} vendor seen in Forever, {vendor_status['baseline']} baseline; ForeverDB not configured"))
+    lines=[f"{r['source']} | {r.get('backend','')} | {r['state']}" for r in rows]
+    lines.append(f"vendors data {vendor_status['published_at']} | cache {len(cached)} items | {vendor_status['seen']} vendor seen in Forever, {vendor_status['baseline']} baseline, {vendor_status['unverified']} unverified | ForeverDB not configured")
+    emit({'status':rows,'sources':used},lines,args.json)
+    return code
 
-def main():
-    args = sys.argv[1:]
-    if not args: print(__doc__); return 2
-    cmd = args[0]
-    if cmd == "refresh":
-        return os.system(f"bash {pathlib.Path(__file__).resolve().parent / 'refresh.sh'}")
-    cat = load()
-    return {"recipe": cmd_recipe, "bridge": cmd_bridge, "margins": cmd_margins,
-            "char": cmd_char, "price": cmd_price, "verify": cmd_verify}.get(
-                cmd, lambda c, a: (print(f"unknown command {cmd}"), 2)[1])(cat, args[1:])
 
-if __name__ == "__main__":
+def refresh(args):
+    if args.target is None:
+        print('deprecated bare refresh; use: everledger refresh catalogue',file=sys.stderr)
+    result=subprocess.run(['bash',str(Path(__file__).resolve().parent/'refresh.sh')],capture_output=True,text=True)
+    if result.returncode:
+        print(result.stderr or result.stdout,file=sys.stderr)
+        return 4 if 'curl:' in result.stderr else 1
+    if result.stderr: print(result.stderr,end='',file=sys.stderr)
+    used=[catalogue_source(load_catalogue())]
+    code=0
+    for path in sorted(vendors.CACHE.glob('*.json')):
+        data=vendors.lookup(int(path.stem),refresh=True)
+        used+=data['sources']; code=max(code,stale_code(data['sources']))
+    emit({'refreshed':'catalogue','sources':used},['catalogue refreshed'],args.json)
+    return code
+
+
+def main(argv=None):
+    args=parser().parse_args(argv)
+    try:
+        if args.command=='events':
+            if args.limit is None and args.cursor is None: args.limit=500 if args.json else 50
+            if args.cursor == '': raise Failure('empty --cursor; pass next_cursor from the previous page',2)
+            if args.limit is not None and args.limit<0: raise Failure('--limit must be nonnegative',2)
+        if args.command in ('price','recipe','bridge','margins','char','status','refresh'):
+            return globals()[args.command](args)
+        if args.command=='verify':
+            print('deprecated verify; use: everledger status',file=sys.stderr)
+            cat=load_catalogue(); code,lines=capture(catalogue.cmd_verify,cat,[])
+            emit({'ok':code==0,'checks':lines,'sources':[catalogue_source(cat)]},lines,args.json)
+            return code
+        if args.command=='vendors':
+            item=item_for(' '.join(args.item)); data=vendors.lookup(item['id'])
+            disclose_item_source(data,item)
+            if args.zone: data=vendors.select_zone(data,args.zone)
+            emit(vendors.public(data),vendors.lines(data),args.json)
+            return stale_code(data['sources'])
+        if args.command=='listings':
+            item=item_for(args.item) if args.item else None
+            prices,ms=market_table()
+            data=outcomes.listings({'char':args.char,'item':str(item['id']) if item else None},prices)
+            data['sources']=sources(data)+[ms]
+            disclose_item_source(data,item)
+            emit(data,outcomes.listing_lines(data),args.json)
+            return stale_code([ms]+outcomes.listing_sources(data))
+        if args.command=='positions':
+            args.since=args.until=None
+            item=item_for(args.item) if args.item else None
+            prices,ms=market_table()
+            data,lines=outcomes.positions(args,item,prices,ms)
+            disclose_item_source(data,item)
+            emit(data,lines,args.json)
+            return 3 if data['stale'] else 0
+        if args.command=='net':
+            cat=load_catalogue(); item=item_for(' '.join(args.item))
+            data,lines=outcomes.net(args,item,catalogue_source(cat),cat)
+            emit(data,lines,args.json)
+            return 0
+        return outcome(args)
+    except Failure as e:
+        print(str(e),file=sys.stderr)
+        if e.body and e.body.get('response'):
+            print(json.dumps(e.body['response']),file=sys.stderr)
+        return e.code
+    except (OSError,ValueError,KeyError,TypeError) as e:
+        print(f'error: {e}',file=sys.stderr)
+        return 1
+
+if __name__=='__main__':
     sys.exit(main())

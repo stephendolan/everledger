@@ -1,88 +1,341 @@
 # everledger
 
-A command-line companion for **WoW: Forever** (Alliance, PvP ruleset, US). One tool answers the questions that come up while playing:
+The command reference below is generated from `--help`.
 
-- **Recipes**: learn levels, skill-up bands (orange/yellow/green/grey), reagents, and where a recipe comes from.
-- **Auction house prices**: current medians, floor prices, listing counts, and sales volume, plus per-craft margins priced from live scans.
-- **Character state**: level, gold, hearth, profession ranks, known recipes, and current auction postings, read from a self-hosted companion roster service.
-- **Vendor lookup** (in development): which NPC sells an item, where, and at what vendor price.
+```text
+usage: - [-h]
+         {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify} ...
 
-The tool keeps its sources separate on purpose. Recipe facts come only from the local catalogue. Prices come only from AHledger. Character state comes only from the roster service. A margin is quoted at the floor price when the shelf is deep, not at the median, because a new listing earns the floor.
+everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.
 
-## Install
+positional arguments:
+  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify}
+    price               AHledger quote plus vendor listed prices
+    recipe              Catalogue facts and roster known-by annotation
+    bridge              Catalogue skill-up bands across a range
+    margins             AHledger craft margins; optional roster recipe/level
+                        scope
+    vendors             Vendor listed prices/locations; faction unavailable
+    char                Characters, profession ranks and known recipes
+    listings            Recorded live auction listings and AHledger floor
+                        comparison
+    positions           Inventory holdings/listings and AHledger floor; basis
+                        unknown without assignments
+    sales               Sales proceeds (defaults to auction)
+    purchases           Auction and vendor purchases
+    expirations         Expired auctions with market repost inputs
+    net                 Item auction cash/count diagnostic; profit basis stays
+                        unknown
+    events              Typed journal feed; prints next_cursor, has_more and
+                        service checkpoint
+    status              Reachability/freshness of AHledger, roster, outcomes,
+                        catalogue and vendors
+    refresh             Rebuild catalogue and refresh previously queried
+                        vendor items
+    verify              Deprecated catalogue anchor check (use status)
 
-Requirements: Python 3.11+ and `curl`. No third-party packages.
+options:
+  -h, --help            show this help message and exit
 
-```bash
-git clone <this repo>
-cd everledger
-chmod +x everledger
-./everledger refresh   # builds the local recipe catalogue (see below)
-./everledger verify    # checks the catalogue against known anchor recipes
+Selectors: --char accepts a unique first or full character name.
+Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
+until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
+JSON uses API field names, integer copper totals and UTC ISO timestamps.
+Human output ends with source names, save/publication times and ages.
+Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
+Journal save age is normal: outcomes and net exit 0 even for old saves.
+Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
+Listings use the roster scan limit (15m). Positions apply both market/scan limits.
+Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
+On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
+Vendor listed prices and sale claims are Classic 1.12 baseline. Vendor sightings
+alone may be seen in Forever. Purchase quantity and faction are unavailable;
+all zones appear, including Horde. Listed prices are not used in craft margins.
+Configuration: Python 3.11+ and curl; keep this executable beside everledger_*.py.
+EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
+EVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN
+or EVERLEDGER_ROSTER_TOKEN_FILE for bearer authentication.
+EVERLEDGER_MARKET defaults to forever.pvp.alliance.us.
+EVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.
+EVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.
+Refresh downloads profession pages and refreshes only previously queried vendor IDs.
+Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
+margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
+char NAME auctions prints listings --char NAME on stderr and exits 2.
 ```
 
-Put `everledger` on your `PATH`, or call it by path.
+## price
 
-## Data
+```text
+usage: - price [-h] [--json] item [item ...]
 
-Recipe data is not committed to this repo. `everledger refresh` downloads the profession index pages from wowforever.ninja into a local data directory and builds `catalogue.json` from them (about 2,200 recipes across 12 professions). Re-run it whenever the game patches. The catalogue warns when it is more than 14 days old.
+AHledger quote plus vendor listed prices
 
-Prices are fetched live from the AHledger API on each `price` or `margins` call. Nothing is cached.
+positional arguments:
+  item
 
-Character state needs the companion roster service, which reads the game's addon SavedVariables (Syndicator, DataStore) and serves them over HTTP. That service is not part of this repo. Without it, `char` fails and `recipe` simply skips its known-by annotation; everything else works.
-
-## Configuration
-
-All configuration is by environment variable. See `.env.example` for the full list.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `EVERLEDGER_DATA_DIR` | `~/.everledger` | Where `catalogue.json` and the raw page cache live |
-| `EVERLEDGER_ROSTER_URL` | `http://localhost:8765` | Base URL of the companion roster service |
-| `EVERLEDGER_ROSTER_TOKEN` | (none) | Bearer token for the roster service |
-| `EVERLEDGER_ROSTER_TOKEN_FILE` | (none) | Path to a file holding the token, if not set directly |
-| `EVERLEDGER_MARKET` | `forever.pvp.alliance.us` | AHledger market to price against |
-
-The default market is the author's: `forever.pvp.alliance.us` (Alliance, PvP, US). Set `EVERLEDGER_MARKET` to price against a different market.
-
-## Usage
-
-```bash
-# Recipe lookup, optionally coloured at a given skill level
-everledger recipe "Phoenix Pants"
-everledger recipe --skill 117 "Bolt of Silk Cloth"
-
-# Which recipes give skill points across a range (a levelling bridge)
-everledger bridge tailoring 100 125
-
-# Craft margins at a skill level, priced from the latest AHledger scan
-everledger margins tailoring 117
-everledger margins --known <character> tailoring 117
-
-# Character state, professions, skill-up options, current auctions
-everledger char <character>
-everledger char <character> tailoring
-everledger char <character> auctions
-
-# Item price: median, floor, listed count, 7-day median, estimated sales/day
-everledger price "Bolt of Silk Cloth"
-everledger price 2604
-
-# Catalogue health check
-everledger verify
+options:
+  -h, --help  show this help message and exit
+  --json      one JSON document using API field names
 ```
 
-Sample output (`price`):
+## recipe
 
+```text
+usage: - recipe [-h] [--skill SKILL] [--json] item [item ...]
+
+Catalogue facts and roster known-by annotation
+
+positional arguments:
+  item
+
+options:
+  -h, --help     show this help message and exit
+  --skill SKILL
+  --json         one JSON document using API field names
 ```
-Red Dye (item 2604) latest 2026-11-14T18:49Z: median 88c, min 87c, listed 709 in 13 auctions | 7d median 92c | est 380.8/day over 79.7h coverage. Prices from AHledger.
+
+## bridge
+
+```text
+usage: - bridge [-h] [--json] profession start end
+
+Catalogue skill-up bands across a range
+
+positional arguments:
+  profession
+  start
+  end
+
+options:
+  -h, --help  show this help message and exit
+  --json      one JSON document using API field names
 ```
 
-## How it works
+## margins
 
-- `build_catalogue.py` parses the wowforever.ninja profession pages into `catalogue.json`. It asserts a set of anchor recipes whose learn levels and sources are verified, because marketplace metadata for those fields is unreliable.
-- `refresh.sh` fetches the pages and runs the builder. `everledger refresh` calls it.
-- `everledger` itself is a single Python file using only the standard library.
+```text
+usage: - margins [-h] [--level LEVEL] [--char CHAR] [--json] [profession]
+
+AHledger craft margins; optional roster recipe/level scope
+
+positional arguments:
+  profession
+
+options:
+  -h, --help     show this help message and exit
+  --level LEVEL
+  --char CHAR
+  --json         one JSON document using API field names
+```
+
+## vendors
+
+```text
+usage: - vendors [-h] [--in ZONE] [--char CHAR] [--all] [--json]
+                 item [item ...]
+
+Vendor listed prices/locations; faction unavailable
+
+positional arguments:
+  item
+
+options:
+  -h, --help   show this help message and exit
+  --in ZONE    zone/city substring; aliases IF, SW, Darn, Org, TB, UC
+  --char CHAR  character scope; faction filtering unavailable
+  --all        all zones (also the default: faction unavailable)
+  --json       one JSON document using API field names
+```
+
+## char
+
+```text
+usage: - char [-h] [--skill SKILL] [--json] [name] [profession]
+
+Characters, profession ranks and known recipes
+
+positional arguments:
+  name
+  profession
+
+options:
+  -h, --help     show this help message and exit
+  --skill SKILL
+  --json         one JSON document using API field names
+```
+
+## listings
+
+```text
+usage: - listings [-h] [--char CHAR] [--item ITEM] [--json]
+
+Recorded live auction listings and AHledger floor comparison
+
+options:
+  -h, --help   show this help message and exit
+  --char CHAR
+  --item ITEM
+  --json       one JSON document using API field names
+```
+
+## positions
+
+```text
+usage: - positions [-h] [--char CHAR] [--item ITEM] [--json]
+
+Inventory holdings/listings and AHledger floor; basis unknown without
+assignments
+
+options:
+  -h, --help   show this help message and exit
+  --char CHAR
+  --item ITEM
+  --json       one JSON document using API field names
+```
+
+## sales
+
+```text
+usage: - sales [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+               [--until UNTIL] [--venue {auction,vendor}] [--json]
+
+Sales proceeds (defaults to auction)
+
+options:
+  -h, --help            show this help message and exit
+  --item ITEM
+  --char CHAR
+  --since SINCE
+  --until UNTIL
+  --venue {auction,vendor}
+  --json                one JSON document using API field names
+```
+
+## purchases
+
+```text
+usage: - purchases [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                   [--until UNTIL] [--venue {auction,vendor}] [--json]
+
+Auction and vendor purchases
+
+options:
+  -h, --help            show this help message and exit
+  --item ITEM
+  --char CHAR
+  --since SINCE
+  --until UNTIL
+  --venue {auction,vendor}
+  --json                one JSON document using API field names
+```
+
+## expirations
+
+```text
+usage: - expirations [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                     [--until UNTIL] [--json]
+
+Expired auctions with market repost inputs
+
+options:
+  -h, --help     show this help message and exit
+  --item ITEM
+  --char CHAR
+  --since SINCE
+  --until UNTIL
+  --json         one JSON document using API field names
+```
+
+## net
+
+```text
+usage: - net [-h] [--char CHAR] [--since SINCE] [--until UNTIL] [--json]
+             item [item ...]
+
+Item auction cash/count diagnostic; profit basis stays unknown
+
+positional arguments:
+  item
+
+options:
+  -h, --help     show this help message and exit
+  --char CHAR
+  --since SINCE
+  --until UNTIL
+  --json         one JSON document using API field names
+```
+
+## events
+
+```text
+usage: - events [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                [--until UNTIL] [--venue {auction,vendor}] [--type TYPE]
+                [--cursor CURSOR] [--after AFTER] [--limit LIMIT] [--json]
+
+Typed journal feed; prints next_cursor, has_more and service checkpoint
+
+options:
+  -h, --help            show this help message and exit
+  --item ITEM
+  --char CHAR
+  --since SINCE
+  --until UNTIL
+  --venue {auction,vendor}
+  --type TYPE           comma-separated domain types
+  --cursor CURSOR       snapshot page cursor from next_cursor; inherits fixed
+                        filters
+  --after AFTER         opaque cursor/checkpoint; exclusive with since/until
+  --limit LIMIT         0 bootstraps a watch; default 50 human, 500 JSON
+  --json                one JSON document using API field names
+
+Start a watch: everledger events --limit 0 --json. Save the service checkpoint
+for after when supplied; next_cursor finishes pagination via the service
+cursor parameter. The feed never skips or repeats across cursors; a worker
+that acts before saving next_cursor delivers at least once. Filters may change
+between polls. On 409 cursor_invalid, alert once and resync from resync_since;
+this command retries once. snapshot_changed requires restarting from the last
+committed checkpoint. This CLI persists nothing.
+```
+
+## status
+
+```text
+usage: - status [-h] [--json]
+
+Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
+
+options:
+  -h, --help  show this help message and exit
+  --json      one JSON document using API field names
+```
+
+## refresh
+
+```text
+usage: - refresh [-h] [--json] [{catalogue}]
+
+Rebuild catalogue and refresh previously queried vendor items
+
+positional arguments:
+  {catalogue}
+
+options:
+  -h, --help   show this help message and exit
+  --json       one JSON document using API field names
+```
+
+## verify
+
+```text
+usage: - verify [-h] [--json]
+
+Deprecated catalogue anchor check (use status)
+
+options:
+  -h, --help  show this help message and exit
+  --json      one JSON document using API field names
+```
 
 ## Credits
 
