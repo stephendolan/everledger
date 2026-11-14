@@ -26,8 +26,9 @@ Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
 Listings use the roster scan limit (15m). Positions apply both market/scan limits.
 Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
 On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
-Vendor listed prices and sale claims are Classic 1.12 baseline. Vendor sightings
-alone may be seen in Forever. Purchase quantity and faction are unavailable;
+Ninja sale/price claims are Classic 1.12 baseline; vendor sightings may be seen
+in Forever. ForeverDB maps its own sell-row labels separately from sightings.
+Purchase quantity and faction are unavailable;
 all zones appear, including Horde. Listed prices are not used in craft margins.
 Configuration: Python 3.11+ and curl; keep this executable beside everledger_*.py.
 EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
@@ -36,7 +37,15 @@ or EVERLEDGER_ROSTER_TOKEN_FILE for bearer authentication.
 EVERLEDGER_MARKET defaults to forever.pvp.alliance.us.
 EVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.
 EVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.
-Refresh downloads profession pages and refreshes only previously queried vendor IDs.
+Set EVERLEDGER_FOREVERDB_API_KEY or EVERLEDGER_FOREVERDB_API_KEY_FILE
+(default: EVERLEDGER_DATA_DIR/foreverdb-api-key). No key: ForeverDB is dormant.
+Ninja stays active until a key is configured and a ForeverDB sync completes.
+Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
+retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
+Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
+ForeverDB vendors only: at most 36 requests per 24h, paced below 30/minute.
+Unfinished syncs resume on a later daily refresh; only complete indexes activate.
+Status and vendor lookups never make ForeverDB requests.
 Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
 margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
 char NAME auctions prints listings --char NAME on stderr and exits 2.
@@ -62,7 +71,7 @@ def parser():
         ('net', 'Item auction cash/count diagnostic; profit basis stays unknown', [('item', {'nargs':'+'})]),
         ('events', 'Typed journal feed; prints next_cursor, has_more and service checkpoint', []),
         ('status', 'Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors', []),
-        ('refresh', 'Rebuild catalogue and refresh previously queried vendor items', [('target', {'nargs':'?','choices':['catalogue']})]),
+        ('refresh', 'Rebuild catalogue and refresh the configured vendor backend', [('target', {'nargs':'?','choices':['catalogue']})]),
         ('verify', 'Deprecated catalogue anchor check (use status)', []),
     ]
     for name, help_text, arguments in specs:
@@ -146,7 +155,8 @@ def price(args):
     lines = [f"{data['item']['name']} (item {item['id']}) latest {stamp}: median {money(latest['median'])}, min {money(latest['minBuyout'])}, listed {latest['quantity']} in {latest['auctions']} auctions | 7d median {money(latest['median7d'])} | est {sales['estimatedPerDay']}/day over {sales['coveredHours']}h coverage"]
     if v['vendors']:
         prices = [r['price_copper'] for r in v['vendors'] if r['price_copper'] is not None]
-        lines.append(f"vendor: listed price {money(min(prices) if prices else None)} | 1.12 baseline sale/price; purchase quantity unknown")
+        claim = 'ForeverDB sell-row labels' if v['backend'] == vendors.foreverdb.BACKEND else '1.12 baseline sale/price'
+        lines.append(f"vendor: listed price {money(min(prices) if prices else None)} | {claim}; purchase quantity unknown")
     disclose_item_source(quote,item)
     emit(quote, lines, args.json)
     return stale_code(quote['sources'])
@@ -338,21 +348,20 @@ def status(args):
         _,s=market_table(); used.append(s); rows.append({'source':'AHledger','state':'stale' if s['stale'] else 'reachable',**s}); code=max(code,stale_code([s]))
     except Failure as e:
         rows.append({'source':'AHledger','state':str(e)}); code=max(code,e.code)
-    cached=[json.loads(p.read_text()) for p in vendors.CACHE.glob('*.json')]
-    try:
-        request(vendors.BASE, vendors.UA)
-        state='reachable'
-    except Failure as e:
-        state=str(e); code=max(code,e.code)
-    all_rows=[r for d in cached for r in d.get('vendors') or []]
-    vendor_status={'source':'vendors','backend':vendors.BACKEND,'state':state,'cache_items':len(cached),
-        'published_at':max((d.get('published_at') or '' for d in cached),default=None),
-        'seen':sum(r['basis']=='seen' for r in all_rows),'baseline':sum(r['basis']=='baseline' for r in all_rows),
-        'unverified':sum(r['basis']=='unverified' for r in all_rows),'future_backend':'ForeverDB not configured'}
+    vendor_status, vendor_sources = vendors.backend_status()
+    if vendor_status['backend'] == vendors.BACKEND:
+        try:
+            request(vendors.BASE, vendors.UA)
+            vendor_status['state'] = 'reachable'
+        except Failure as e:
+            vendor_status['state'] = str(e); code=max(code,e.code)
+    used += vendor_sources
+    code = max(code, stale_code(vendor_sources))
     rows.append(vendor_status)
-    used.append(source(vendors.BACKEND,vendor_status['published_at'],detail=f"cache {len(cached)} items; {vendor_status['seen']} vendor seen in Forever, {vendor_status['baseline']} baseline; ForeverDB not configured"))
     lines=[f"{r['source']} | {r.get('backend','')} | {r['state']}" for r in rows]
-    lines.append(f"vendors data {vendor_status['published_at']} | cache {len(cached)} items | {vendor_status['seen']} vendor seen in Forever, {vendor_status['baseline']} baseline, {vendor_status['unverified']} unverified | ForeverDB not configured")
+    info = vendor_status['foreverdb']
+    lines.append(f"ForeverDB {info['state']} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {info['pending']}")
+    lines.append(f"vendors data {vendor_status['published_at']} | cache {vendor_status['cache_items']} items | {vendor_status['seen']} seen, {vendor_status['baseline']} baseline, {vendor_status['unverified']} unverified")
     emit({'status':rows,'sources':used},lines,args.json)
     return code
 
@@ -367,10 +376,15 @@ def refresh(args):
     if result.stderr: print(result.stderr,end='',file=sys.stderr)
     used=[catalogue_source(load_catalogue())]
     code=0
-    for path in sorted(vendors.CACHE.glob('*.json')):
-        data=vendors.lookup(int(path.stem),refresh=True)
-        used+=data['sources']; code=max(code,stale_code(data['sources']))
-    emit({'refreshed':'catalogue','sources':used},['catalogue refreshed'],args.json)
+    vendor_sources, synced = vendors.refresh_cached()
+    used += vendor_sources
+    code = max(code, stale_code(vendor_sources))
+    if synced.get('failed') and not vendor_sources:
+        code = max(code, 4)
+    lines = ['catalogue refreshed']
+    if synced.get('configured'):
+        lines.append(f"ForeverDB sync: {'complete' if synced['complete'] else 'pending'}; {synced.get('requests', 0)} requests this refresh")
+    emit({'refreshed':'catalogue','vendor_sync':synced,'sources':used},lines,args.json)
     return code
 
 

@@ -1,0 +1,13 @@
+{
+  "provisional": "Synthetic documented-shape fixture; envelope, field names, revision coverage and labels require live acceptance.",
+  "pages": [
+    {"vendors": [{"id": 2691, "updated_at": "v1"}, {"id": 3072, "updated_at": "v1"}], "next_page": 2, "build": "1.60.1.70938", "extracted_at": "2026-11-13T00:00:00Z"},
+    {"vendors": [{"id": 5158, "updated_at": "v1"}, {"id": 5164, "updated_at": "v1"}], "next_page": null, "build": "1.60.1.70938", "extracted_at": "2026-11-13T00:00:00Z"}
+  ],
+  "details": {
+    "2691": {"id": 2691, "name": "Outfitter Eric", "title": "Speciality Tailoring Supplies", "seen": true, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 43.4, "y": 29.3}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": true}, {"item_id": 9001, "name": "Retired Supply", "price_copper": 200, "seen": false}]},
+    "3072": {"id": 3072, "name": "Poranna Snowbraid", "title": "Tailoring Supplies", "seen": true, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 42.9, "y": 28.3}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": true}]},
+    "5158": {"id": 5158, "name": "Burbik Gearspanner", "title": "Trade Supplier", "seen": true, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 46.4, "y": 26.9}, {"zone": "Dun Morogh", "zone_slug": "dun-morogh", "x": 48.1, "y": 59.2}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": false}]},
+    "5164": {"id": 5164, "name": "Bombus Finespindle", "title": "Leatherworking Supplies", "seen": false, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 39.6, "y": 34.5}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": true}]}
+  }
+}

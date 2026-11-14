@@ -49,6 +49,8 @@ class CLI(unittest.TestCase):
         self.env = dict(os.environ, TZ='UTC', EVERLEDGER_DATA_DIR=self.tmp.name,
                         EVERLEDGER_ROSTER_URL=base, EVERLEDGER_ROSTER_TOKEN='fixture',
                         EVERLEDGER_AHLEDGER_URL=base, EVERLEDGER_VENDOR_URL=base)
+        self.env.pop('EVERLEDGER_FOREVERDB_API_KEY', None)
+        self.env.pop('EVERLEDGER_FOREVERDB_API_KEY_FILE', None)
         Handler.requests = []
         Handler.routes = {
             '/items/2604.json': (200, json.loads((FIX / '2604.json').read_text())),
@@ -299,6 +301,135 @@ class CLI(unittest.TestCase):
         self.assertEqual(vendor['backend'],'wowforever.ninja')
         self.assertEqual(vendor['cache_items'],1)
         self.assertEqual(vendor['seen']+vendor['baseline']+vendor['unverified'],89)
+
+    def sync_foreverdb(self):
+        self.refresh_routes()
+        self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+        # Only the vendor transport is replaced. The public refresh command still
+        # rebuilds the catalogue through the existing local fixture HTTP server.
+        script = """
+import json, runpy
+from pathlib import Path
+from unittest.mock import patch
+import everledger_foreverdb as db
+fixture = json.loads(Path('tests/fixtures/foreverdb.json').read_text())
+def get(url, headers):
+    from urllib.parse import urlsplit, parse_qs
+    parsed = urlsplit(url)
+    if parsed.path == '/api/v1/vendors':
+        data = fixture['pages'][int(parse_qs(parsed.query)['page'][0])-1]
+    else:
+        data = fixture['details'][parsed.path.rsplit('/',1)[1]]
+    return json.dumps(data).encode(), {}
+with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'):
+    runpy.run_path('everledger', run_name='__main__')
+"""
+        result = subprocess.run(['python3', '-c', script, 'refresh', 'catalogue', '--json'],
+                                cwd=ROOT, env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        return json.loads(result.stdout)
+
+    def test_foreverdb_refresh_selection_credit_and_locations(self):
+        self.run_cli('vendors', '2604', '--json')
+        ninja = Path(self.tmp.name, 'vendors/wowforever.ninja/2604.json')
+        before = ninja.read_bytes()
+        sync = self.sync_foreverdb()
+        self.assertEqual(sync['vendor_sync']['requests'], 6)
+        self.assertEqual(ninja.read_bytes(), before)
+        Handler.requests = []
+        data = json.loads(self.run_cli('vendors', '2604', '--in', 'IF', '--json').stdout)
+        self.assertEqual(data['backend'], 'foreverdb.net')
+        self.assertEqual({v['name'] for v in data['vendors']}, {
+            'Poranna Snowbraid', 'Outfitter Eric', 'Burbik Gearspanner', 'Bombus Finespindle'})
+        other = json.loads(self.run_cli('vendors', '2604', '--in', 'Dun Morogh', '--json').stdout)
+        self.assertEqual([v['name'] for v in other['vendors']], ['Burbik Gearspanner'])
+        self.assertEqual(len(other['vendors'][0]['locations']), 2)
+        human = self.run_cli('vendors', '2604').stdout
+        self.assertIn('Dun Morogh: 48.1, 59.2', human)
+        self.assertIn('sale/price Classic-only baseline; vendor seen', human)
+        self.assertIn('source: foreverdb.net', human)
+        self.assertIn('Data from ForeverDB.net (https://foreverdb.net)', human)
+        self.assertNotIn('each', human)
+        unknown = json.loads(self.run_cli('vendors', '999999', '--json').stdout)
+        self.assertIsNone(unknown['vendors'])
+        self.assertIn('no known sellers in the vendor index', self.run_cli('vendors', '999999').stdout)
+        path = Path(self.tmp.name, 'vendors/foreverdb.net/index.json')
+        index = json.loads(path.read_text())
+        index['items']['9001']['vendors'] = []
+        path.write_text(json.dumps(index))
+        empty = json.loads(self.run_cli('vendors', '9001', '--json').stdout)
+        self.assertEqual(empty['vendors'], [])
+        self.assertIsNone(empty['reason'])
+        self.assertIn('no known sellers in the vendor index', self.run_cli('vendors', '9001').stdout)
+        self.assertEqual(Handler.requests, [])
+        self.market()
+        self.refresh_routes()
+        info = json.loads(self.run_cli('status', '--json').stdout)
+        row = next(row for row in info['status'] if row['source'] == 'vendors')
+        self.assertEqual(row['backend'], 'foreverdb.net')
+        self.assertEqual(row['record_count'], 4)
+        self.assertIsNotNone(row['last_sync_at'])
+        self.assertEqual(row['foreverdb']['state'], 'synced')
+        detail = next(source['detail'] for source in info['sources'] if source.get('name') == 'foreverdb.net vendors')
+        self.assertIn('3 seen in Forever', detail)
+        self.assertIn('1 Classic-only baseline', detail)
+        self.assertFalse(any('/api/v1/' in url for url in Handler.requests))
+        self.market()
+        # Restore the item catalogue for recipe and margin assertions after refresh.
+        Path(self.tmp.name, 'catalogue.json').write_bytes((FIX / 'catalogue-fixture.json').read_bytes())
+        price = self.run_cli('price', '2604').stdout
+        self.assertIn('ForeverDB sell-row labels', price)
+        self.assertIn('Data from ForeverDB.net (https://foreverdb.net)', price)
+        margins = json.loads(self.run_cli('margins', 'tailoring', '--json').stdout)
+        self.assertEqual(margins['margins'][0]['cost_copper'], 88)
+
+    def test_foreverdb_no_key_and_before_sync_status(self):
+        self.refresh_routes()
+        self.run_cli('refresh', 'catalogue', '--json')
+        self.market()
+        Handler.routes['/'] = (200, {})
+        self.run_cli('vendors', '2604', '--json')
+        data = json.loads(self.run_cli('status', '--json').stdout)
+        row = next(row for row in data['status'] if row['source'] == 'vendors')
+        self.assertEqual(row['backend'], 'wowforever.ninja')
+        self.assertEqual(row['foreverdb']['state'], 'not configured')
+        self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+        data = json.loads(self.run_cli('status', '--json').stdout)
+        row = next(row for row in data['status'] if row['source'] == 'vendors')
+        self.assertEqual(row['backend'], 'wowforever.ninja')
+        self.assertEqual(row['foreverdb']['state'], 'awaiting completed sync')
+        self.assertEqual(json.loads(self.run_cli('vendors', '2604', '--json').stdout)['backend'], 'wowforever.ninja')
+        self.assertFalse(any('/api/v1/' in url for url in Handler.requests))
+
+    def test_foreverdb_failure_uses_stale_index_then_ninja_and_key_removal(self):
+        self.run_cli('vendors', '2604', '--json')
+        self.sync_foreverdb()
+        directory = Path(self.tmp.name, 'vendors/foreverdb.net')
+        attempt = {'attempted_at': NOW, 'requests': 1, 'failed': True, 'status': 503}
+        (directory / 'attempt.json').write_text(json.dumps(attempt))
+        data = json.loads(self.run_cli('vendors', '2604', '--json', code=3).stdout)
+        self.assertEqual(data['backend'], 'foreverdb.net')
+        index = json.loads((directory / 'index.json').read_text())
+        index['fetched_at'] = '2020-01-01T00:00:00Z'
+        (directory / 'index.json').write_text(json.dumps(index))
+        data = json.loads(self.run_cli('vendors', '2604', '--json', code=3).stdout)
+        self.assertEqual(data['backend'], 'wowforever.ninja')
+        index['fetched_at'] = NOW
+        (directory / 'index.json').write_text(json.dumps(index))
+        attempt['status'] = 401
+        (directory / 'attempt.json').write_text(json.dumps(attempt))
+        data = json.loads(self.run_cli('vendors', '2604', '--json', code=3).stdout)
+        self.assertEqual(data['backend'], 'wowforever.ninja')
+        ninja_path = Path(self.tmp.name, 'vendors/wowforever.ninja/2604.json')
+        ninja = json.loads(ninja_path.read_text())
+        ninja['fetched_at'] = '2020-01-01T00:00:00Z'
+        ninja_path.write_text(json.dumps(ninja))
+        self.run_cli('vendors', '2604', '--json', code=4)
+        ninja['fetched_at'] = NOW
+        ninja_path.write_text(json.dumps(ninja))
+        del self.env['EVERLEDGER_FOREVERDB_API_KEY']
+        data = json.loads(self.run_cli('vendors', '2604', '--json').stdout)
+        self.assertEqual(data['backend'], 'wowforever.ninja')
 
     def test_local_date_and_unknown_inventory(self):
         self.env['TZ']='America/New_York'
