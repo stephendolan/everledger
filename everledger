@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""everledger: a WoW: Forever catalogue CLI.
+Recipe facts (learn levels, skill-up bands, reagents, source types) come ONLY from the
+local catalogue built from wowforever.ninja client-data profession pages.
+Prices come ONLY from AHledger (default market forever.pvp.alliance.us: Alliance, PvP, US; override with EVERLEDGER_MARKET).
+Character state comes ONLY from a self-hosted companion roster service (see README).
+Constants: game 'WoW: Forever', faction Alliance, ruleset PvP."""
+import json, os, sys, urllib.request, datetime, pathlib
+
+HOME = pathlib.Path.home()
+# Local state lives outside the repo. Override with EVERLEDGER_DATA_DIR,
+# EVERLEDGER_ROSTER_URL, and EVERLEDGER_ROSTER_TOKEN (or EVERLEDGER_ROSTER_TOKEN_FILE).
+DATA_DIR = pathlib.Path(os.environ.get("EVERLEDGER_DATA_DIR", HOME / ".everledger"))
+CAT = DATA_DIR / "catalogue.json"
+TOKEN_FILE = os.environ.get("EVERLEDGER_ROSTER_TOKEN_FILE", "")
+ROSTER = os.environ.get("EVERLEDGER_ROSTER_URL", "http://localhost:8765")
+MARKET = os.environ.get("EVERLEDGER_MARKET", "forever.pvp.alliance.us")
+AHL = "https://api.ahledger.com"
+
+def money(c):
+    if c is None: return "?"
+    sign = "-" if c < 0 else ""; c = abs(round(c)); g, rem = divmod(int(c), 10000); s, cc = divmod(rem, 100)
+    return f"{sign}{g}g" if g and s == 0 and cc == 0 else (f"{sign}{g}g {s}s" if g else (f"{sign}{s}s {cc}c" if s else f"{sign}{cc}c"))
+
+def load():
+    d = json.loads(CAT.read_text())
+    gen = datetime.datetime.strptime(d["generated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC)
+    age = (datetime.datetime.now(datetime.UTC) - gen).days
+    if age > 14:
+        print(f"WARNING: catalogue is {age} days old (built {d['generated_at']}); run: everledger refresh", file=sys.stderr)
+    return d
+
+def all_recipes(cat):
+    for prof, blk in cat["professions"].items():
+        for r in blk["recipes"]:
+            yield prof, r
+
+def color_at(bands, skill):
+    if skill < bands["learn"]: return "not learnable"
+    if bands["yellow"] is None: return "orange"
+    if skill < bands["yellow"]: return "orange"
+    if skill < bands["green"]: return "yellow"
+    if skill < bands["grey"]: return "green"
+    return "grey"
+
+def find(cat, query):
+    q = query.lower()
+    hits = [(p, r) for p, r in all_recipes(cat) if q in r["name"].lower()]
+    exact = [(p, r) for p, r in hits if r["name"].lower() == q]
+    return exact or hits
+
+def fmt_recipe(prof, r, skill=None):
+    b = r["bands"]
+    bands = f"learn {b['learn']}" + (f", yellow {b['yellow']}, green {b['green']}, grey {b['grey']}" if b["yellow"] is not None else " (stays orange)")
+    col = f" | at skill {skill}: {color_at(b, skill)}" if skill is not None else ""
+    reags = ", ".join(f"{x['qty']}x {x['name']}" for x in r["reagents"]) or "none"
+    res = r["result"]
+    res_s = f"{res['name']}" + (f" (item {res['item_id']})" if res["item_id"] else "") + (f" x{res['qty']}" if res["qty"] > 1 else "")
+    return (f"{r['name']} [{prof}] spell {r['spell_id']}\n"
+            f"  bands: {bands}{col}\n  makes: {res_s}\n  reagents: {reags}\n  source: {r['source_type'] or 'unmarked in index (see recipe page)'}")
+
+def roster_token():
+    tok = os.environ.get("EVERLEDGER_ROSTER_TOKEN", "")
+    if tok: return tok.strip()
+    if TOKEN_FILE: return pathlib.Path(TOKEN_FILE).read_text().strip()
+    raise RuntimeError("no roster token configured: set EVERLEDGER_ROSTER_TOKEN or EVERLEDGER_ROSTER_TOKEN_FILE")
+
+def roster(path):
+    proxy = os.environ.get("HTTPS_PROXY", "")
+    tunnel = proxy.rsplit(":", 1)[0] + ":3130" if proxy else None
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": tunnel})) if tunnel else urllib.request.build_opener()
+    req = urllib.request.Request(ROSTER + path, headers={"Authorization": "Bearer " + roster_token()})
+    return json.loads(opener.open(req, timeout=20).read())
+
+def spell_index(cat):
+    idx = {}
+    for prof, blk in cat["professions"].items():
+        for r in blk["recipes"]:
+            idx[r["spell_id"]] = (prof, r["name"])
+    return idx
+
+def char_known_ids(ch, prof_name):
+    """(available, {spell_ids}) for one character's profession from the roster payload.
+    available False means the roster holds no recipe data: never read as 'knows nothing'."""
+    for p in ch.get("professions", []):
+        if p["name"].lower() == prof_name.lower():
+            rec = p.get("recipes") or {}
+            if rec.get("available") and rec.get("known") is not None:
+                return True, {k["spell_id"] for k in rec["known"]}
+            return False, set()
+    return False, set()
+
+def roster_characters():
+    data = roster("/characters")
+    if isinstance(data, dict):
+        return data.get("characters", [])
+    return data if isinstance(data, list) else []
+
+def pricetable():
+    req = urllib.request.Request(f"{AHL}/v1/pricetable/{MARKET}", headers={"User-Agent": "everledger"})
+    raw = urllib.request.urlopen(req, timeout=30).read().decode()
+    lines = raw.splitlines()
+    head = lines[0].split("|")
+    prices = {}
+    for ln in lines[1:]:
+        p = ln.split(":")
+        def num(x): return None if x == "" else float(x)
+        prices[int(p[0])] = {"median": num(p[1]), "min": num(p[2]), "qty": num(p[3]),
+                             "sales": (num(p[8]) / 10 if num(p[8]) is not None else None)}
+    return prices, head[2], int(head[3])
+
+def cmd_recipe(cat, args):
+    skill = None
+    if "--skill" in args:
+        i = args.index("--skill"); skill = int(args[i + 1]); args = args[:i] + args[i + 2:]
+    hits = find(cat, " ".join(args))
+    if not hits: print("no catalogue match"); return 1
+    for prof, r in hits[:8]:
+        print(fmt_recipe(prof, r, skill))
+    # known-by annotation from the roster service; degrade quietly if it is unreachable
+    try:
+        chars = []
+        for entry in roster_characters():
+            nm = entry.get("short_name") or entry.get("name")
+            if nm:
+                d = roster(f"/characters/{nm}")
+                chars.append(d.get("character", d))
+        for prof, r in hits[:8]:
+            knowers, unknown = [], False
+            for ch in chars:
+                avail, ids = char_known_ids(ch, prof)
+                if not avail: unknown = True
+                elif r["spell_id"] in ids: knowers.append(ch.get("short_name") or ch.get("name"))
+            who = ", ".join(knowers) if knowers else "no roster character"
+            note = "; recipe data unavailable for at least one character" if unknown else ""
+            print(f"  known by: {who} (spell {r['spell_id']}){note}")
+    except RuntimeError as e:
+        # configuration problem (e.g. no roster token): the message is written
+        # for the user, so print it plainly rather than an exception class name
+        print(f"  known by: not checked ({e})")
+    except Exception as e:
+        print(f"  known by: roster unreachable ({e.__class__.__name__}); not checked")
+    return 0
+
+def cmd_bridge(cat, args):
+    prof, frm, to = args[0], int(args[1]), int(args[2])
+    recs = [r for r in cat["professions"][prof]["recipes"]
+            if r["bands"]["learn"] <= to and (r["bands"]["grey"] is None or r["bands"]["grey"] > frm)]
+    # segment the range at every band boundary; per segment list recipes that give points throughout it
+    cuts = sorted({frm, to} | {r["bands"]["learn"] for r in recs if frm < r["bands"]["learn"] < to})
+    print(f"{prof} bridge {frm} -> {to} (catalogue bands only; prices via: everledger margins {prof} <skill>)")
+    for a, b in zip(cuts, cuts[1:]):
+        live = [r for r in recs if r["bands"]["learn"] <= a and (r["bands"]["grey"] is None or r["bands"]["grey"] > a)
+                and r["source_type"] != "Not yet known"]
+        def sprio(r):
+            s = r["source_type"] or ""
+            return 0 if ("Trainer" in s or "Automatic" in s) else 1 if "Vendor" in s else 2 if "Drop" in s else 3
+        crank = {"orange": 0, "yellow": 1, "green": 2}
+        live.sort(key=lambda r: (sprio(r), crank.get(color_at(r["bands"], a), 3), -r["bands"]["learn"]))
+        print(f"\n{a}-{b}:")
+        for r in live[:12]:
+            print(f"  {r['name']:<34} {color_at(r['bands'], a):<6} learn {r['bands']['learn']:<4} grey {r['bands']['grey']}  {r['source_type'] or '?'}")
+    return 0
+
+def cmd_margins(cat, args):
+    known_char = None
+    if "--known" in args:
+        i = args.index("--known"); known_char = args[i + 1]; args = args[:i] + args[i + 2:]
+    prof, skill = args[0], int(args[1])
+    known_ids = None
+    if known_char:
+        d = roster(f"/characters/{known_char}")
+        avail, known_ids = char_known_ids(d.get("character", d), prof)
+        if not avail:
+            print(f"roster has no recipe data for {known_char}'s {prof}; refusing to guess craftable set")
+            return 1
+    prices, ts, want = pricetable()
+    when = datetime.datetime.fromtimestamp(int(ts), datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = []
+    for r in cat["professions"][prof]["recipes"]:
+        if known_ids is not None and r["spell_id"] not in known_ids: continue
+        if r["bands"]["learn"] > skill or r["result"]["item_id"] is None: continue
+        rp = prices.get(r["result"]["item_id"])
+        if not rp or rp["median"] is None: continue
+        cost, bad = 0, False
+        for x in r["reagents"]:
+            pp = prices.get(x["item_id"])
+            if not pp or pp["median"] is None: bad = True; break
+            cost += pp["median"] * x["qty"]
+        if bad: continue
+        margin = rp["median"] * r["result"]["qty"] * 0.95 - cost
+        rows.append((margin, r, cost, rp))
+    crank = {"orange": 0, "yellow": 1, "green": 2, "grey": 3}
+    rows.sort(key=lambda t: (crank.get(color_at(t[1]["bands"], skill), 4), -(t[0] * (t[3]["sales"] or 0) if t[0] > 0 else t[0])))
+    scope = f" | only recipes known by {known_char} (roster)" if known_char else ""
+    print(f"{prof} at skill {skill}: crafts priced from AHledger scan {when} (rows {want}). Prices from AHledger.{scope}")
+    for margin, r, cost, rp in rows[:15]:
+        print(f"  {r['name']:<34} {color_at(r['bands'], skill):<6} margin {money(margin):>9} | cost {money(cost):>9} | sells {money(rp['median']):>9} | {rp['sales']}/day | {r['source_type'] or '?'}")
+    return 0
+
+def cmd_char(cat, args):
+    skill_override = None
+    if "--skill" in args:
+        i = args.index("--skill"); skill_override = int(args[i + 1]); args = args[:i] + args[i + 2:]
+    name = args[0]
+    data = roster(f"/characters/{name}")
+    ch = data.get("character", data)
+    print(f"{ch.get('name')} | level {ch.get('level')} {ch.get('race')} {ch.get('class')} | {ch.get('faction')} {ch.get('realm')} | gold {money(ch.get('gold_copper'))} | hearth {ch.get('hearth', {}).get('location')}")
+    print(f"  (roster snapshot generated {data.get('generated_at', '?')[:16]}Z; professions updated {ch.get('professions_updated_at', '?')[:16]}Z)")
+    want = args[1].lower() if len(args) > 1 else None
+    if want == "auctions":
+        inv = roster(f"/characters/{name}/inventory")
+        auc = inv.get("auctions", {})
+        pricing = auc.get("pricing", {})
+        src = pricing.get("source", {})
+        state = "STALE" if src.get("stale") else "fresh"
+        scanned = str(src.get('scanned_at', '?'))
+        print(f"  auctions (Syndicator listings, prices from DataStore_Auctions scan {scanned if scanned.endswith('Z') else scanned + 'Z'}, {state}, age {src.get('scan_age_seconds', '?')}s):")
+        groups = {}
+        for a in auc.get("items", []):
+            pr = a.get("price", {})
+            rec = pr.get("recorded") or {}
+            key = (a.get("name"), rec.get("buyout_copper"), rec.get("bid_copper"), bool(rec.get("has_bid")), pr.get("available"))
+            g = groups.setdefault(key, {"n": 0, "exp": rec.get("expires_at")})
+            g["n"] += 1
+        for (nm, buy, bid, has_bid, avail), g in sorted(groups.items()):
+            bid_s = f" | bid {money(bid)}" if has_bid else " | no bids"
+            av_s = "" if avail else " (recorded; scan stale, not confirmed live)"
+            print(f"    {g['n']}x {nm}: buyout {money(buy)}{bid_s} | expires {g['exp']}{av_s}")
+        if not groups: print("    none recorded")
+        return 0
+    for p in ch.get("professions", []):
+        if p.get("skill_available"):
+            print(f"  {p['name']}: {p['skill']}/{p['max_skill']}")
+        else:
+            print(f"  {p['name']}: skill unavailable from roster ({p.get('reason')}); open the profession window in game, or pass --skill")
+        rec = p.get("recipes") or {}
+        if rec.get("available") and rec.get("known") is not None:
+            print(f"    known recipes: {len(rec['known'])} (roster, DataStore_Crafts)")
+        else:
+            print(f"    known recipes: unavailable from roster (never read as 'knows nothing')")
+        if want and p["name"].lower() == want:
+            sk = skill_override if skill_override is not None else p.get("skill")
+            if sk is None:
+                print("    no skill to analyse; pass --skill N")
+                continue
+            blk = cat["professions"].get(want)
+            if not blk: print(f"    no catalogue profession '{want}'"); continue
+            k_avail, k_ids = char_known_ids(ch, p["name"])
+            tag = (lambda r: "known " if r["spell_id"] in k_ids else "TRAIN ") if k_avail else (lambda r: "")
+            ups = [r for r in blk["recipes"] if r["bands"]["learn"] <= sk and (r["bands"]["grey"] is None or r["bands"]["grey"] > sk)]
+            crank = {"orange": 0, "yellow": 1, "green": 2}
+            ups.sort(key=lambda r: (crank.get(color_at(r["bands"], sk), 3), -r["bands"]["learn"]))
+            print(f"    skill-up options at {sk}:" + (" (TRAIN = not known; training/pattern cost applies)" if k_avail else ""))
+            for r in ups[:8]:
+                print(f"      {tag(r)}{r['name']:<34} {color_at(r['bands'], sk):<6} learn {r['bands']['learn']:<4} grey {r['bands']['grey']}  {r['source_type'] or '?'}")
+            nxt = sorted([r for r in blk["recipes"] if sk < r["bands"]["learn"] <= sk + 30], key=lambda r: r["bands"]["learn"])
+            print(f"    next unlocks (to {sk + 30}):")
+            for r in nxt[:8]:
+                print(f"      {tag(r)}{r['name']:<34} learn {r['bands']['learn']}  {r['source_type'] or '?'}")
+            if k_avail:
+                idx = spell_index(cat)
+                names = sorted(idx[s][1] for s in k_ids if s in idx and idx[s][0] == want)
+                extra = len(k_ids) - sum(1 for s in k_ids if s in idx and idx[s][0] == want)
+                print(f"    all known {p['name']} recipes ({len(k_ids)}):")
+                for i in range(0, len(names), 4):
+                    print("      " + ", ".join(names[i:i + 4]))
+                if extra: print(f"      (+{extra} known spell ids not in the catalogue for this profession)")
+    return 0
+
+def cmd_price(cat, args):
+    q = " ".join(args)
+    ids = set()
+    if q.isdigit(): ids.add(int(q))
+    for _p, r in all_recipes(cat):
+        if r["result"]["name"].lower() == q.lower() and r["result"]["item_id"]: ids.add(r["result"]["item_id"])
+        for x in r["reagents"]:
+            if x["name"].lower() == q.lower(): ids.add(x["item_id"])
+    if not ids: print("item not found in catalogue; AHledger lookup needs a catalogue item id"); return 1
+    for iid in sorted(ids):
+        req = urllib.request.Request(f"{AHL}/v1/prices/{MARKET}/{iid}", headers={"User-Agent": "everledger"})
+        d = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        lat, sal = d["latest"], d["sales"]
+        print(f"{d['item']['name']} (item {iid}) latest {lat['observedAt'][:16]}Z: median {money(lat['median'])}, min {money(lat['minBuyout'])}, "
+              f"listed {lat['quantity']} in {lat['auctions']} auctions | 7d median {money(lat['median7d'])} | est {sal['estimatedPerDay']}/day over {sal['coveredHours']}h coverage. Prices from AHledger.")
+    return 0
+
+ANCHORS = [("tailoring", "White Swashbuckler's Shirt", 125, "Trainer"),
+           ("tailoring", "Bolt of Silk Cloth", 100, "Trainer"),
+           ("tailoring", "Bolt of Woolen Cloth", 55, "Trainer"),
+           ("tailoring", "Red Woolen Boots", 75, "Pattern · Drop"),
+           ("tailoring", "Dark Silk Shirt", 120, "Pattern · Vendor"),
+           ("tailoring", "Robes of Arcana", 125, "Pattern · Drop"),
+           ("leatherworking", "Cloudy Gustwoven Boots", 55, None)]
+
+def cmd_verify(cat, _args):
+    ok = True
+    for prof, blk in cat["professions"].items():
+        good = len(blk["recipes"]) == blk["stated_count"]
+        ok = ok and good
+        print(f"{'PASS' if good else 'FAIL'} {prof}: {len(blk['recipes'])}/{blk['stated_count']} recipes")
+    for prof, name, learn, src in ANCHORS:
+        r = next((x for x in cat["professions"][prof]["recipes"] if x["name"] == name), None)
+        good = bool(r) and r["bands"]["learn"] == learn and (src is None or r["source_type"] == src)
+        ok = ok and good
+        print(f"{'PASS' if good else 'FAIL'} anchor {name}: learn {r['bands']['learn'] if r else '?'}, source {r['source_type'] if r else '?'}")
+    print("catalogue built:", cat["generated_at"], "| source:", cat["source"])
+    return 0 if ok else 1
+
+def main():
+    args = sys.argv[1:]
+    if not args: print(__doc__); return 2
+    cmd = args[0]
+    if cmd == "refresh":
+        return os.system(f"bash {pathlib.Path(__file__).resolve().parent / 'refresh.sh'}")
+    cat = load()
+    return {"recipe": cmd_recipe, "bridge": cmd_bridge, "margins": cmd_margins,
+            "char": cmd_char, "price": cmd_price, "verify": cmd_verify}.get(
+                cmd, lambda c, a: (print(f"unknown command {cmd}"), 2)[1])(cat, args[1:])
+
+if __name__ == "__main__":
+    sys.exit(main())
