@@ -727,16 +727,19 @@ fn absent_zone_name_falls_back_to_slug() {
     );
 }
 #[test]
-fn ninja_preserves_nullable_coordinates_and_python_decimal_prices() {
+fn ninja_preserves_nullable_coordinates_and_reads_ascii_prices_only() {
     let f = Fixture::new();
     f.raw("/items/22.json", r#"{"name":"Fixture"}"#);
-    f.raw("/items/22.pins.json",r#"{"zones":{"test":{"vendors":{"1":{"n":"Seller","s":"Supply · ١s ２c"}},"pins":{"vendor":[[null,0,1]]}}}}"#);
+    f.raw("/items/22.pins.json",r#"{"zones":{"test":{"vendors":{"1":{"n":"Seller","s":"Supply · 1s 2c"},"2":{"n":"Other","s":"Supply · ١s ２c"}},"pins":{"vendor":[[null,0,1]]}}}}"#);
     let out = f.command(&["vendors", "22"]).unwrap();
-    let row = &out.data.get("vendors").unwrap().as_array().unwrap()[0];
+    let rows = out.data.get("vendors").unwrap().as_array().unwrap();
+    let row = &rows[1];
     assert_eq!(row.get("price_copper"), Some(&Document::from(102_i64)));
+    assert_eq!(rows[0].get("price_copper"), Some(&Document::Null));
+    assert_eq!(rows[0].get("price_raw"), Some(&Document::from("١s ２c")));
     assert_eq!(
         row.get("coords"),
         Some(&document::parse("[[null, 0]]").unwrap())
     );
-    assert!(out.lines[1].contains("unknown, 0"));
+    assert!(out.lines[2].contains("unknown, 0"));
 }

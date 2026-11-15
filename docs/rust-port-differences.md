@@ -35,8 +35,8 @@ missing required field.
 ## Inputs the port does not accept
 
 - **Non-ASCII digits.** Python reads any Unicode decimal digit as a number, in
-  integer arguments, numeric item IDs, relative time selectors (`٣d`), and
-  epoch strings. Rust reads ASCII digits.
+  integer arguments, numeric item IDs, relative time selectors (`٣d`), epoch
+  strings, and vendor price text. Rust reads ASCII digits.
 - **Integers beyond 64 bits** in integer arguments. Python integers are
   unbounded.
 - **Unpaired UTF-16 surrogates** in JSON strings. They cannot be Rust strings.
