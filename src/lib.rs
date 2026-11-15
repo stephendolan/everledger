@@ -9,6 +9,7 @@ pub mod diagnostics;
 pub mod document;
 pub mod http;
 pub mod human;
+pub mod journal;
 pub mod market;
 pub mod primitives;
 pub mod provenance;
