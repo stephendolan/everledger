@@ -305,7 +305,17 @@ Options:
       --json               one JSON document using API field names
   -h, --help               Print help
 
-Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot with positive service limits and prints no entries. Save after_cursor (the service terminal checkpoint) only after has_more is false. While has_more is true, pass next_cursor to --cursor to finish the snapshot; page cursors retain the local view. Character/item/type/venue filters are local views over an unfiltered checkpoint and may change between polls. Limit bounds the scanned page, so a filtered page may be empty with has_more true. Times are sent as integer epoch seconds. On 409 cursor_invalid, alert once and resync from resync_since; retries can replay entries. snapshot_changed requires restarting from the last committed checkpoint. Act before saving progress for at-least-once delivery. This CLI persists nothing.
+Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot
+with positive service limits and prints no entries. Save after_cursor (the
+service terminal checkpoint) only after has_more is false. While has_more is
+true, pass next_cursor to --cursor to finish the snapshot; page cursors retain
+the local view. Character/item/type/venue filters are local views over an
+unfiltered checkpoint and may change between polls. Limit bounds the scanned
+page, so a filtered page may be empty with has_more true. Times are sent as
+integer epoch seconds. On 409 cursor_invalid, alert once and resync from
+resync_since; retries can replay entries. snapshot_changed requires restarting
+from the last committed checkpoint. Act before saving progress for
+at-least-once delivery. This CLI persists nothing.
 ```
 
 ## status
