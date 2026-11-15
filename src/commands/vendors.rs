@@ -23,8 +23,28 @@ pub struct Args {
     #[arg(long = "json", help = "one JSON document using API field names")]
     pub json: bool,
 }
-use crate::{Context, Failure, Result, commands::CommandOutput};
-
-pub fn run(_args: &Args, _context: &Context<'_>) -> Result<CommandOutput> {
-    Err(Failure::error("vendors: not yet ported"))
+use crate::{
+    Context, Result,
+    commands::CommandOutput,
+    vendors::{self, VendorAnswer},
+};
+pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
+    let item = crate::catalogue::item_for(&args.item.join(" "), context)?;
+    let mut answer = vendors::lookup(item.id, false, context)?;
+    match &mut answer {
+        VendorAnswer::Ninja(a) => {
+            if let Some(q) = args.zone.as_deref().filter(|s| !s.is_empty()) {
+                a.select_zone(q)?;
+            }
+        }
+    }
+    let mut data = match &answer {
+        VendorAnswer::Ninja(a) => a.public(),
+    };
+    crate::catalogue::disclose_item_source(&mut data, Some(&item), context)?;
+    let lines = crate::human::vendors::render(&answer);
+    let code = crate::provenance::stale_code(&crate::provenance::sources(&data)?);
+    let mut out = CommandOutput::new(data, lines);
+    out.code = code;
+    Ok(out)
 }

@@ -60,7 +60,7 @@ pub fn float_repr(n: f64) -> String {
         )
     }
 }
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
 pub enum Scalar {
     Bool(bool),
