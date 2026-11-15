@@ -1,0 +1,86 @@
+[
+ {
+  "value": "",
+  "lower": "",
+  "casefold": "",
+  "quote": "",
+  "urlencode": "q=&n=True&f=1.0"
+ },
+ {
+  "value": "Hello WORLD",
+  "lower": "hello world",
+  "casefold": "hello world",
+  "quote": "Hello%20WORLD",
+  "urlencode": "q=Hello+WORLD&n=True&f=1.0"
+ },
+ {
+  "value": "Straße",
+  "lower": "straße",
+  "casefold": "strasse",
+  "quote": "Stra%C3%9Fe",
+  "urlencode": "q=Stra%C3%9Fe&n=True&f=1.0"
+ },
+ {
+  "value": "İIıi",
+  "lower": "i̇iıi",
+  "casefold": "i̇iıi",
+  "quote": "%C4%B0I%C4%B1i",
+  "urlencode": "q=%C4%B0I%C4%B1i&n=True&f=1.0"
+ },
+ {
+  "value": "ΣΟΣ",
+  "lower": "σος",
+  "casefold": "σοσ",
+  "quote": "%CE%A3%CE%9F%CE%A3",
+  "urlencode": "q=%CE%A3%CE%9F%CE%A3&n=True&f=1.0"
+ },
+ {
+  "value": "ΟΣ́",
+  "lower": "ος́",
+  "casefold": "οσ́",
+  "quote": "%CE%9F%CE%A3%CC%81",
+  "urlencode": "q=%CE%9F%CE%A3%CC%81&n=True&f=1.0"
+ },
+ {
+  "value": "ΟΣ Α",
+  "lower": "ος α",
+  "casefold": "οσ α",
+  "quote": "%CE%9F%CE%A3%20%CE%91",
+  "urlencode": "q=%CE%9F%CE%A3+%CE%91&n=True&f=1.0"
+ },
+ {
+  "value": "ΑΣ.",
+  "lower": "ας.",
+  "casefold": "ασ.",
+  "quote": "%CE%91%CE%A3.",
+  "urlencode": "q=%CE%91%CE%A3.&n=True&f=1.0"
+ },
+ {
+  "value": "ΑΣ’",
+  "lower": "ας’",
+  "casefold": "ασ’",
+  "quote": "%CE%91%CE%A3%E2%80%99",
+  "urlencode": "q=%CE%91%CE%A3%E2%80%99&n=True&f=1.0"
+ },
+ {
+  "value": "ᾈ ﬃ K",
+  "lower": "ᾀ ﬃ k",
+  "casefold": "ἀι ffi k",
+  "quote": "%E1%BE%88%20%EF%AC%83%20%E2%84%AA",
+  "urlencode": "q=%E1%BE%88+%EF%AC%83+%E2%84%AA&n=True&f=1.0"
+ },
+ {
+  "value": "東京😀",
+  "lower": "東京😀",
+  "casefold": "東京😀",
+  "quote": "%E6%9D%B1%E4%BA%AC%F0%9F%98%80",
+  "urlencode": "q=%E6%9D%B1%E4%BA%AC%F0%9F%98%80&n=True&f=1.0"
+ },
+ {
+  "value": "a/b?x=1 +%é~",
+  "lower": "a/b?x=1 +%é~",
+  "casefold": "a/b?x=1 +%é~",
+  "quote": "a%2Fb%3Fx%3D1%20%2B%25%C3%A9~",
+  "urlencode": "q=a%2Fb%3Fx%3D1+%2B%25%C3%A9~&n=True&f=1.0"
+ }
+]

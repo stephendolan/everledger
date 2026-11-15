@@ -1,0 +1,219 @@
+use crate::{
+    EpochSeconds, Failure, Result,
+    clock::Clock,
+    document::{Document, Number},
+};
+use jiff::{Timestamp, civil::Date, tz::TimeZone};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct UtcInstant(pub Timestamp);
+impl UtcInstant {
+    pub fn from_epoch(value: EpochSeconds) -> Result<Self> {
+        Timestamp::from_second(value.0)
+            .map(Self)
+            .map_err(|e| Failure::error(e.to_string()))
+    }
+    pub fn microseconds(self) -> i64 {
+        self.0.as_microsecond()
+    }
+    pub fn add_microseconds(self, us: i64) -> Result<Self> {
+        Timestamp::from_microsecond(
+            self.microseconds()
+                .checked_add(us)
+                .ok_or_else(|| Failure::error("time overflow"))?,
+        )
+        .map(Self)
+        .map_err(|e| Failure::error(e.to_string()))
+    }
+}
+pub fn iso(value: UtcInstant) -> String {
+    format!("{:.0}", value.0)
+}
+pub fn instant(value: &str) -> Result<UtcInstant> {
+    instant_in(value, None)
+}
+pub fn instant_in(value: &str, zone: Option<&str>) -> Result<UtcInstant> {
+    fn invalid() -> Failure {
+        Failure::error("invalid ISO timestamp")
+    }
+    fn n(s: &str) -> Result<i32> {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        s.parse().map_err(|_| invalid())
+    }
+    fn clock(s: &str) -> Result<(i32, i32, i32, i32)> {
+        let (base, fraction) = s
+            .split_once(['.', ','])
+            .map_or((s, None), |(a, b)| (a, Some(b)));
+        let parts = if base.contains(':') {
+            base.split(':').collect::<Vec<_>>()
+        } else {
+            if !base.is_ascii() || !base.len().is_multiple_of(2) {
+                return Err(invalid());
+            }
+            base.as_bytes()
+                .chunks(2)
+                .map(|b| std::str::from_utf8(b).unwrap())
+                .collect()
+        };
+        if parts.is_empty() || parts.len() > 3 || parts.iter().any(|s| s.len() != 2) {
+            return Err(invalid());
+        }
+        let mut v = [0; 3];
+        for (i, p) in parts.iter().enumerate() {
+            v[i] = n(p)?;
+        }
+        let us = if let Some(f) = fraction {
+            if f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(invalid());
+            }
+            let f = &f[..f.len().min(6)];
+            n(f)? * 10i32.pow(6 - f.len() as u32)
+        } else {
+            0
+        };
+        Ok((v[0], v[1], v[2], us))
+    }
+    let s = value.replace('Z', "+00:00");
+    if !s.is_char_boundary(4) {
+        return Err(invalid());
+    }
+    let year = n(s.get(..4).ok_or_else(invalid)?)?;
+    if !(1..=9999).contains(&year) {
+        return Err(invalid());
+    }
+    let extended = s.as_bytes().get(4) == Some(&b'-');
+    let start = if extended { 5 } else { 4 };
+    let (date, end) = if s.as_bytes().get(start) == Some(&b'W') {
+        let week = n(s.get(start + 1..start + 3).ok_or_else(invalid)?)?;
+        let mut end = start + 3;
+        let mut day = 1;
+        if extended && s.as_bytes().get(end) == Some(&b'-') {
+            day = n(s.get(end + 1..end + 2).ok_or_else(invalid)?)?;
+            end += 2;
+        } else if !extended && s.as_bytes().get(end).is_some_and(u8::is_ascii_digit) {
+            day = n(s.get(end..end + 1).ok_or_else(invalid)?)?;
+            end += 1;
+        }
+        if !(1..=53).contains(&week) || !(1..=7).contains(&day) {
+            return Err(invalid());
+        }
+        let jan = Date::new(year as i16, 1, 4).map_err(|_| invalid())?;
+        let offset = (week - 1) * 7 + day - 1 - (jan.weekday().to_monday_zero_offset() as i32);
+        let date = jan
+            .checked_add(jiff::Span::new().days(offset))
+            .map_err(|_| invalid())?;
+        if week == 53 && date.iso_week_date().year() != year as i16 {
+            return Err(invalid());
+        }
+        (date, end)
+    } else {
+        let month = n(s.get(start..start + 2).ok_or_else(invalid)?)?;
+        let dstart = if extended {
+            if s.as_bytes().get(7) != Some(&b'-') {
+                return Err(invalid());
+            }
+            8
+        } else {
+            6
+        };
+        let day = n(s.get(dstart..dstart + 2).ok_or_else(invalid)?)?;
+        (
+            Date::new(year as i16, month as i8, day as i8).map_err(|_| invalid())?,
+            dstart + 2,
+        )
+    };
+    let mut dt = date.at(0, 0, 0, 0);
+    let mut offset = None;
+    if s.len() > end {
+        let sep = s[end..].chars().next().ok_or_else(invalid)?;
+        let tail = &s[end + sep.len_utf8()..];
+        let split = tail.find(['+', '-']);
+        let (tm, tz) = split.map_or((tail, None), |i| (&tail[..i], Some(&tail[i..])));
+        let (h, m, sec, us) = clock(tm)?;
+        if h > 23 || m > 59 || sec > 59 {
+            return Err(invalid());
+        }
+        dt = date.at(h as i8, m as i8, sec as i8, us * 1000);
+        if let Some(tz) = tz {
+            let (h, m, s, us) = clock(&tz[1..])?;
+            let seconds = h * 3600 + m * 60 + s;
+            if seconds >= 86400 {
+                return Err(invalid());
+            }
+            offset = Some(
+                (if tz.starts_with('-') { -1 } else { 1 })
+                    * (i64::from(seconds) * 1_000_000 + i64::from(us)),
+            );
+        }
+    }
+    let stamp = if let Some(offset) = offset {
+        let utc = TimeZone::UTC.to_timestamp(dt).map_err(|_| invalid())?;
+        Timestamp::from_microsecond(utc.as_microsecond() - offset).map_err(|_| invalid())?
+    } else {
+        let tz = match zone {
+            Some(z) => TimeZone::get(z).map_err(|_| invalid())?,
+            None => TimeZone::system(),
+        };
+        tz.to_ambiguous_timestamp(dt)
+            .compatible()
+            .map_err(|_| invalid())?
+    };
+    Ok(UtcInstant(stamp))
+}
+pub fn time_selector(value: &str, clock: &dyn Clock) -> Result<String> {
+    time_selector_in(value, clock, None)
+}
+pub fn time_selector_in(value: &str, clock: &dyn Clock, zone: Option<&str>) -> Result<String> {
+    let err = || Failure::usage("time must be 7d, 24h, a date, or an ISO timestamp");
+    let suffix = value.chars().last();
+    if matches!(suffix, Some('d' | 'h'))
+        && let Some(digits) = crate::primitives::decimal(&value[..value.len() - 1])
+    {
+        let n = digits.parse::<i64>().map_err(|_| err())?;
+        let scale = if suffix == Some('d') {
+            86_400_000_000i64
+        } else {
+            3_600_000_000
+        };
+        return Ok(iso(clock
+            .now()
+            .add_microseconds(
+                n.checked_mul(scale)
+                    .and_then(i64::checked_neg)
+                    .ok_or_else(err)?,
+            )
+            .map_err(|_| err())?));
+    }
+    instant_in(value, zone).map(iso).map_err(|_| err())
+}
+pub fn roster_seconds(value: &Document) -> Result<EpochSeconds> {
+    roster_seconds_in(value, None)
+}
+pub fn roster_seconds_in(value: &Document, zone: Option<&str>) -> Result<EpochSeconds> {
+    match value {
+        Document::Bool(b) => Ok(EpochSeconds(i64::from(*b))),
+        Document::Number(Number::Integer(s)) => s
+            .parse()
+            .map(EpochSeconds)
+            .map_err(|_| Failure::error("epoch seconds out of range")),
+        Document::String(s) => {
+            if let Some(n) = crate::primitives::decimal(s) {
+                n.parse()
+                    .map(EpochSeconds)
+                    .map_err(|_| Failure::error("epoch seconds out of range"))
+            } else {
+                instant_in(s, zone).map(|t| EpochSeconds(t.microseconds() / 1_000_000))
+            }
+        }
+        _ => Err(Failure::error("invalid epoch seconds")),
+    }
+}
+pub fn age(value: Option<&str>, clock: &dyn Clock) -> Option<i64> {
+    age_in(value, clock, None)
+}
+pub fn age_in(value: Option<&str>, clock: &dyn Clock, zone: Option<&str>) -> Option<i64> {
+    let t = instant_in(value?, zone).ok()?;
+    Some(((clock.now().microseconds() - t.microseconds()) / 1_000_000).max(0))
+}
