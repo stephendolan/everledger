@@ -212,6 +212,110 @@ class CLI(unittest.TestCase):
         r = self.run_cli('events','--limit','0','--json',code=1)
         self.assertIn('pagination did not advance', r.stderr)
 
+    def output_fixture(self):
+        self.market()
+        journal = {'file':'Journalator.lua', 'saved_at':'2020-01-01T00:00:00Z', 'stale':True}
+        scans = [{'available':True, 'pricing':{'available':True, 'source':{
+            'file':'DataStore_Auctions.lua', 'scanned_at':NOW, 'stale':False}}} for _ in range(10)]
+        Handler.routes['/listings'] = (200, {'listings':[
+            {'item_id':2604, 'name':'Red Dye', 'character':'Slade', 'count':2},
+            {'item_id':100, 'name':'Red Woolen Boots', 'character':'Slade', 'count':1}],
+            'scans':scans, 'counts':{'matched':99,'returned':99},
+            'sources':[s['pricing']['source'] for s in scans]})
+        Handler.routes['/events'] = (200, {'entries':[
+            self.event(t, None, None, character=None, recorded_at=None)
+            for t in ('purchase','sale','expiration')], 'sources':[journal],
+            'next_cursor':None, 'has_more':False, 'checkpoint':None})
+        return [('listings',), ('sales',), ('purchases',), ('expirations',), ('events',),
+                ('net','2604'), ('positions',), ('vendors','2604'), ('price','2604'),
+                ('margins','tailoring')]
+
+    def test_human_unknowns_preserve_json_nulls(self):
+        commands = self.output_fixture()
+        quote = Handler.routes['/v1/prices/forever.pvp.alliance.us/2604'][1]
+        quote['latest'].update(quantity=None, auctions=None)
+        quote['sales'].update(estimatedPerDay=None, coveredHours=None)
+        Handler.routes['/v1/pricetable/forever.pvp.alliance.us'] = (200,
+            Handler.routes['/v1/pricetable/forever.pvp.alliance.us'][1].replace(':::::3808', ':::::').replace(':::::10', ':::::'))
+        for args in commands:
+            with self.subTest(command=args):
+                human = self.run_cli(*args).stdout
+                self.assertNotRegex(human, r'\b(?:None|null|unknownx|unknownh)\b|\|\s*\|')
+                if args[0] in ('sales','purchases','expirations','events'):
+                    self.assertIn('quantity unknown', human)
+                if args[0] == 'price':
+                    self.assertIn('coverage unknown', human)
+                    self.assertIn('sales/day unknown', human)
+        self.assertIn('undercut unknown', self.run_cli('listings').stdout)
+        data = json.loads(self.run_cli('listings','--json').stdout)
+        self.assertIsNone(data['listings'][0]['undercut'])
+        self.assertIsNone(data['listings'][0]['expires_at'])
+        self.assertEqual(data['counts'], {'matched':2,'returned':2})
+
+    def test_human_has_one_trailing_source_summary(self):
+        for args in self.output_fixture():
+            with self.subTest(command=args):
+                lines = self.run_cli(*args).stdout.splitlines()
+                self.assertEqual(sum(line.startswith('source:') for line in lines), 1)
+                self.assertTrue(lines[-1].startswith('source:'))
+                self.assertIn('age', lines[-1])
+        data = json.loads(self.run_cli('listings','--json').stdout)
+        self.assertEqual(len(data['scans']), 10)
+        self.assertGreaterEqual(len(data['sources']), 20)
+
+    def test_json_counts_match_filtered_arrays_and_aggregate_pages(self):
+        rows = [self.event(t, 1, -10, id=str(i)) for i, t in enumerate(
+            ['purchase'] * 4 + ['sale'] * 2 + ['expiration'] * 2)]
+        Handler.routes['/events'] = (200, {'entries':rows[:5], 'has_more':True,
+            'next_cursor':'second', 'counts':{'matched':8, 'returned':5},
+            'matched':8, 'returned':5, 'sources':[]})
+        Handler.routes['/events?limit=500&cursor=second'] = (200, {
+            'entries':rows[5:], 'has_more':False, 'checkpoint':'terminal',
+            'counts':{'matched':8, 'returned':3}, 'matched':8, 'returned':3, 'sources':[]})
+        for command, expected in [('purchases',4), ('sales',2), ('expirations',2)]:
+            with self.subTest(command=command):
+                if command == 'expirations':
+                    self.market()
+                data = json.loads(self.run_cli(command,'--json').stdout)
+                self.assertEqual(len(data[command]), expected)
+                self.assertEqual(data['counts'], {'matched':expected, 'returned':expected})
+                self.assertEqual((data['matched'],data['returned']), (expected,expected))
+        data = json.loads(self.run_cli('events','--type','sale','--json').stdout)
+        self.assertEqual(data['counts'], {'matched':1, 'returned':1})
+        data = json.loads(self.run_cli('events','--limit','0','--json').stdout)
+        self.assertEqual(data['counts'], {'matched':0, 'returned':0})
+
+    def test_stale_notice_follows_data_once_and_preserves_exit_codes(self):
+        commands = self.output_fixture()
+        self.market(stale=True)
+        Handler.routes['/listings'][1]['scans'][0]['pricing']['source']['stale'] = True
+        for args in commands:
+            with self.subTest(command=args):
+                code = 3 if args[0] in ('price','margins','listings','positions') else 0
+                result = self.run_cli(*args, code=code)
+                lines = result.stdout.splitlines()
+                notices = [i for i, line in enumerate(lines) if line.startswith('stale:')]
+                if args[0] in ('vendors','sales','purchases','events'):
+                    self.assertEqual(notices, [])
+                else:
+                    self.assertEqual(notices, [len(lines)-2])
+                self.assertTrue(lines[-1].startswith('source:'))
+                self.assertNotIn('stale', lines[-1])
+                self.assertNotIn('stale', result.stderr)
+                if args[0] in ('sales','purchases','expirations','events','net','positions'):
+                    self.assertIn('Journalator.lua', lines[-1])
+                    self.assertIn('2020-01-01', lines[-1])
+
+    def test_readme_command_reference_matches_help(self):
+        readme = (ROOT / 'README.md').read_text()
+        for command in ('', 'price','recipe','bridge','margins','vendors','char','listings',
+                        'positions','sales','purchases','expirations','net','events','status',
+                        'refresh','verify'):
+            with self.subTest(command=command):
+                args = [command] if command else []
+                help_text = self.run_cli(*args, '--help').stdout
+                self.assertIn('```text\n' + help_text + '```', readme)
+
     def test_red_dye_ground_truth(self):
         d = json.loads(self.run_cli('vendors','Red Dye','--json').stdout)
         self.assertEqual(len(d['vendors']),89)

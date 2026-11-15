@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from everledger_core import (AHL, MARKET, Failure, age, catalogue_source,
-    character_path, emit, load_catalogue, market_table, money,
+    character_path, emit, human, load_catalogue, market_table, money,
     recipes, request, resolve_item, roster, source, sources, stale_code)
 import everledger_catalogue as catalogue
 import everledger_outcomes as outcomes
@@ -19,7 +19,12 @@ EPILOG = '''Selectors: --char accepts a unique first or full character name.
 Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
 until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
 JSON uses API field names, integer copper totals and UTC ISO timestamps.
-Human output ends with source names, save/publication times and ages.
+Human unknown values print as unknown; JSON keeps nulls and full provenance.
+Human output ends with one source: summary of sources, save/data times and ages.
+Stale data has one stale: notice after all rows, before the source summary.
+Old journal saves show their age without a stale notice or exit-code change.
+JSON matched/returned counts describe the accompanying filtered array;
+aggregates count all pages, events count the current page, bootstrap counts zero.
 Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
 Journal save age is normal: outcomes and net exit 0 even for old saves.
 Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
@@ -156,7 +161,9 @@ def price(args):
     quote['vendors'] = v['vendors']
     quote['vendor_reason'] = v['reason']
     quote['sources'].extend(v['sources'])
-    lines = [f"{data['item']['name']} (item {item['id']}) latest {stamp}: median {money(latest['median'])}, min {money(latest['minBuyout'])}, listed {latest['quantity']} in {latest['auctions']} auctions | 7d median {money(latest['median7d'])} | est {sales['estimatedPerDay']}/day over {sales['coveredHours']}h coverage"]
+    rate = f"est {sales['estimatedPerDay']}/day" if sales['estimatedPerDay'] is not None else 'sales/day unknown'
+    coverage = f"{sales['coveredHours']}h coverage" if sales['coveredHours'] is not None else 'coverage unknown'
+    lines = [f"{human(data['item']['name'])} (item {item['id']}) latest {human(stamp)}: median {money(latest['median'])}, min {money(latest['minBuyout'])}, listed {human(latest['quantity'])} in {human(latest['auctions'])} auctions | 7d median {money(latest['median7d'])} | {rate} over {coverage}"]
     if v['vendors']:
         prices = [r['price_copper'] for r in v['vendors'] if r['price_copper'] is not None]
         claim = 'ForeverDB sell-row labels' if v['backend'] == vendors.foreverdb.BACKEND else '1.12 baseline sale/price'
@@ -270,7 +277,7 @@ def margins(args):
                 'sales_per_day':rp['sales_per_day'],'reagents':reagents,'source_type':r['source_type']})
     rows.sort(key=lambda r: ({'orange':0,'yellow':1,'green':2,'grey':3}.get(r['color'],4),-(r['margin_copper']*(r['sales_per_day'] or 0) if r['margin_copper']>0 else r['margin_copper'])))
     rows=rows[:15]
-    emit({'margins':rows,'sources':used},[f"{r['name']} [{r['profession']}] {r['color'] or ''} | margin {money(r['margin_copper'])} | cost {money(r['cost_copper'])} | sells {money(r['sells_copper'])} | {r['sales_per_day']}/day | {r['source_type']}" for r in rows] or ['no priced recipes'],args.json)
+    emit({'margins':rows,'sources':used},[f"{r['name']} [{r['profession']}] {human(r['color'])} | margin {money(r['margin_copper'])} | cost {money(r['cost_copper'])} | sells {money(r['sells_copper'])} | {str(r['sales_per_day']) + '/day' if r['sales_per_day'] is not None else 'sales/day unknown'} | {human(r['source_type'])}" for r in rows] or ['no priced recipes'],args.json)
     return stale_code(used)
 
 
@@ -304,8 +311,8 @@ def outcome(args):
             params={'cursor':args.cursor,'limit':args.limit}
         data=outcomes.fetch_events(params)
         disclose_item_source(data,item)
-        lines=outcomes.event_lines(outcomes.event_rows(data)) if data.get('available') is not False else [f"journal {data.get('state')}: {data.get('reason')}"]
-        emit(data,lines+[f"next_cursor: {data.get('next_cursor')} | has_more: {data.get('has_more')} | after_cursor: {data.get('after_cursor')} | checkpoint: {data.get('checkpoint')}"],args.json)
+        lines=outcomes.event_lines(outcomes.event_rows(data)) if data.get('available') is not False else [f"journal {human(data.get('state'))}: {human(data.get('reason'))}"]
+        emit(data,lines+[f"next_cursor: {human(data.get('next_cursor'))} | has_more: {human(data.get('has_more'))} | after_cursor: {human(data.get('after_cursor'))} | checkpoint: {human(data.get('checkpoint'))}"],args.json)
         return 0
     types={'sales':'sale','purchases':'purchase','expirations':'expiration'}
     data=outcomes.item_events(args,item,types[args.command])
@@ -321,10 +328,10 @@ def outcome(args):
             iid=(r.get('item') or {}).get('id')
             r['market']=prices.get(iid)
             if r['market']:
-                lines.append(f"  repost input: floor {money(r['market']['floor_copper'])} | listed {r['market']['quantity']} | sales/day {r['market']['sales_per_day']}")
+                lines.append(f"  repost input: floor {money(r['market']['floor_copper'])} | listed {human(r['market']['quantity'])} | sales/day {human(r['market']['sales_per_day'])}")
     data[args.command]=rows
     if data.get('available') is False:
-        lines.append(f"journal {data.get('state')}: {data.get('reason')}")
+        lines.append(f"journal {human(data.get('state'))}: {human(data.get('reason'))}")
     disclose_item_source(data,item)
     emit(data,lines,args.json)
     return 0
@@ -418,15 +425,16 @@ def main(argv=None):
             data=outcomes.listings({'char':args.char,'item':str(item['id']) if item else None},prices)
             data['sources']=sources(data)+[ms]
             disclose_item_source(data,item)
-            emit(data,outcomes.listing_lines(data),args.json)
-            return stale_code([ms]+outcomes.listing_sources(data))
+            code=stale_code([ms]+outcomes.listing_sources(data))
+            emit(data,outcomes.listing_lines(data),args.json,stale=code==3)
+            return code
         if args.command=='positions':
             args.since=args.until=None
             item=item_for(args.item) if args.item else None
             prices,ms=market_table()
             data,lines=outcomes.positions(args,item,prices,ms)
             disclose_item_source(data,item)
-            emit(data,lines,args.json)
+            emit(data,lines,args.json,stale=data['stale'])
             return 3 if data['stale'] else 0
         if args.command=='net':
             cat=load_catalogue(); item=item_for(' '.join(args.item))

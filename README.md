@@ -6,8 +6,8 @@ See [Journalator consumer notes](docs/journalator-contract.md) for watch checkpo
 local filter views, and the live-service regression evidence.
 
 ```text
-usage: - [-h]
-         {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify} ...
+usage: everledger [-h]
+                  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify} ...
 
 everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.
 
@@ -44,7 +44,12 @@ Selectors: --char accepts a unique first or full character name.
 Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
 until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
 JSON uses API field names, integer copper totals and UTC ISO timestamps.
-Human output ends with source names, save/publication times and ages.
+Human unknown values print as unknown; JSON keeps nulls and full provenance.
+Human output ends with one source: summary of sources, save/data times and ages.
+Stale data has one stale: notice after all rows, before the source summary.
+Old journal saves show their age without a stale notice or exit-code change.
+JSON matched/returned counts describe the accompanying filtered array;
+aggregates count all pages, events count the current page, bootstrap counts zero.
 Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
 Journal save age is normal: outcomes and net exit 0 even for old saves.
 Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
@@ -79,7 +84,7 @@ char NAME auctions prints listings --char NAME on stderr and exits 2.
 ## price
 
 ```text
-usage: - price [-h] [--json] item [item ...]
+usage: everledger price [-h] [--json] item [item ...]
 
 AHledger quote plus vendor listed prices
 
@@ -94,7 +99,7 @@ options:
 ## recipe
 
 ```text
-usage: - recipe [-h] [--skill SKILL] [--json] item [item ...]
+usage: everledger recipe [-h] [--skill SKILL] [--json] item [item ...]
 
 Catalogue facts and roster known-by annotation
 
@@ -110,7 +115,7 @@ options:
 ## bridge
 
 ```text
-usage: - bridge [-h] [--json] profession start end
+usage: everledger bridge [-h] [--json] profession start end
 
 Catalogue skill-up bands across a range
 
@@ -127,7 +132,8 @@ options:
 ## margins
 
 ```text
-usage: - margins [-h] [--level LEVEL] [--char CHAR] [--json] [profession]
+usage: everledger margins [-h] [--level LEVEL] [--char CHAR] [--json]
+                          [profession]
 
 AHledger craft margins; optional roster recipe/level scope
 
@@ -144,8 +150,8 @@ options:
 ## vendors
 
 ```text
-usage: - vendors [-h] [--in ZONE] [--char CHAR] [--all] [--json]
-                 item [item ...]
+usage: everledger vendors [-h] [--in ZONE] [--char CHAR] [--all] [--json]
+                          item [item ...]
 
 Vendor listed prices/locations; faction unavailable
 
@@ -163,7 +169,7 @@ options:
 ## char
 
 ```text
-usage: - char [-h] [--skill SKILL] [--json] [name] [profession]
+usage: everledger char [-h] [--skill SKILL] [--json] [name] [profession]
 
 Characters, profession ranks and known recipes
 
@@ -180,7 +186,7 @@ options:
 ## listings
 
 ```text
-usage: - listings [-h] [--char CHAR] [--item ITEM] [--json]
+usage: everledger listings [-h] [--char CHAR] [--item ITEM] [--json]
 
 Recorded live auction listings and AHledger floor comparison
 
@@ -194,7 +200,7 @@ options:
 ## positions
 
 ```text
-usage: - positions [-h] [--char CHAR] [--item ITEM] [--json]
+usage: everledger positions [-h] [--char CHAR] [--item ITEM] [--json]
 
 Inventory holdings/listings and AHledger floor; basis unknown without
 assignments
@@ -209,8 +215,8 @@ options:
 ## sales
 
 ```text
-usage: - sales [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-               [--until UNTIL] [--venue {auction,vendor}] [--json]
+usage: everledger sales [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                        [--until UNTIL] [--venue {auction,vendor}] [--json]
 
 Sales proceeds (defaults to auction)
 
@@ -227,8 +233,9 @@ options:
 ## purchases
 
 ```text
-usage: - purchases [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                   [--until UNTIL] [--venue {auction,vendor}] [--json]
+usage: everledger purchases [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                            [--until UNTIL] [--venue {auction,vendor}]
+                            [--json]
 
 Auction and vendor purchases
 
@@ -245,8 +252,8 @@ options:
 ## expirations
 
 ```text
-usage: - expirations [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                     [--until UNTIL] [--json]
+usage: everledger expirations [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                              [--until UNTIL] [--json]
 
 Expired auctions with market repost inputs
 
@@ -262,8 +269,9 @@ options:
 ## net
 
 ```text
-usage: - net [-h] [--char CHAR] [--since SINCE] [--until UNTIL] [--json]
-             item [item ...]
+usage: everledger net [-h] [--char CHAR] [--since SINCE] [--until UNTIL]
+                      [--json]
+                      item [item ...]
 
 Item auction cash/count diagnostic; profit basis stays unknown
 
@@ -281,9 +289,10 @@ options:
 ## events
 
 ```text
-usage: - events [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                [--until UNTIL] [--venue {auction,vendor}] [--type TYPE]
-                [--cursor CURSOR] [--after AFTER] [--limit LIMIT] [--json]
+usage: everledger events [-h] [--item ITEM] [--char CHAR] [--since SINCE]
+                         [--until UNTIL] [--venue {auction,vendor}]
+                         [--type TYPE] [--cursor CURSOR] [--after AFTER]
+                         [--limit LIMIT] [--json]
 
 Typed journal feed; prints next_cursor, has_more and service checkpoint
 
@@ -319,7 +328,7 @@ once delivery. This CLI persists nothing.
 ## status
 
 ```text
-usage: - status [-h] [--json]
+usage: everledger status [-h] [--json]
 
 Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
 
@@ -331,7 +340,7 @@ options:
 ## refresh
 
 ```text
-usage: - refresh [-h] [--json] [{catalogue}]
+usage: everledger refresh [-h] [--json] [{catalogue}]
 
 Rebuild catalogue and refresh the configured vendor backend
 
@@ -346,7 +355,7 @@ options:
 ## verify
 
 ```text
-usage: - verify [-h] [--json]
+usage: everledger verify [-h] [--json]
 
 Deprecated catalogue anchor check (use status)
 

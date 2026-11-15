@@ -91,7 +91,6 @@ def ninja_lookup(item_id, refresh=False):
             status = (e.body or {}).get('status')
             if not cached or age(cached['fetched_at']) > 7 * 86400 or (status is not None and status < 500):
                 raise
-            print(f'vendors: {e}; serving stale cache', file=sys.stderr)
             data, stale = cached, True
         else:
             CACHE.mkdir(parents=True, exist_ok=True)
@@ -223,14 +222,14 @@ def lines(data):
         return result
     claim = 'sale/price from ForeverDB sell-row labels' if data['backend'] == foreverdb.BACKEND else 'sale and price: 1.12 baseline'
     result = [f"{data['item']['name'] or data['item']['id']} — vendor listed prices ({claim}; faction unavailable)"]
-    from everledger_core import money
+    from everledger_core import money, human
     for v in rows:
         if data['backend'] == foreverdb.BACKEND:
-            locations = '; '.join(f"{p['zone']}: {p.get('x')}, {p.get('y')}" for p in v['locations']) or 'location unknown'
-            result.append(f"  {v['name']} ({v['title']}) | {locations} | listed price {money(v['price_copper'])} | sale/price {v['sale_basis']}; vendor {v['vendor_basis']}")
+            locations = '; '.join(f"{human(p['zone'])}: {human(p.get('x'))}, {human(p.get('y'))}" for p in v['locations']) or 'location unknown'
+            result.append(f"  {human(v['name'])} ({human(v['title'])}) | {locations} | listed price {money(v['price_copper'])} | sale/price {v['sale_basis']}; vendor {v['vendor_basis']}")
             continue
-        coords = ', '.join(str(n) for n in v['coords'][0]) if v['coords'] else 'coordinates unknown'
+        coords = ', '.join(human(n) for n in v['coords'][0]) if v['coords'] else 'coordinates unknown'
         extra = f" (+{len(v['coords']) - 1} locations)" if len(v['coords']) > 1 else ''
         basis = {'seen': 'vendor seen in Forever', 'baseline': '1.12 baseline', 'unverified': 'unverified'}[v['basis']]
-        result.append(f"  {v['zone']}: {v['name']} ({v['title']}) {coords}{extra} | listed price {money(v['price_copper'])} | {basis}")
+        result.append(f"  {human(v['zone'])}: {human(v['name'])} ({human(v['title'])}) {coords}{extra} | listed price {money(v['price_copper'])} | {basis}")
     return result

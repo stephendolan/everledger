@@ -117,30 +117,51 @@ def source(name, timestamp=None, **extra):
     return dict(name=name, updated_at=timestamp, age_seconds=age(timestamp), **extra)
 
 
+def human(value):
+    return 'unknown' if value is None or value == '' else str(value)
+
+
 def source_lines(items):
-    printed = set()
+    groups = {}
     for s in items:
-        identity = (s.get('name'), s.get('file'), s.get('mtime'), s.get('scanned_at'), s.get('updated_at'))
-        if identity in printed:
-            continue
-        printed.add(identity)
-        name = s.get('name') or s.get('file') or s.get('path') or 'roster'
+        name = s.get('name') or Path(s.get('file') or s.get('path') or 'roster').name
         when = s.get('saved_at') or s.get('scanned_at') or s.get('mtime') or s.get('updated_at')
         seconds = s.get('scan_age_seconds', s.get('file_age_seconds', s.get('age_seconds', age(when))))
-        freshness = f'{seconds}s ago' if seconds is not None else 'age unknown'
-        detail = s.get('detail', '')
-        if s.get('fetched_at'):
-            detail += f"; fetched {s['fetched_at']} ({age(s['fetched_at'])}s ago)"
-        print(f"source: {name}, saved/data {when or 'unknown'}, {freshness}" + ('; stale' if s.get('stale') else '') + (f'; {detail}' if detail else ''))
+        group = groups.setdefault(name, {'times': set(), 'ages': set(), 'credits': set()})
+        group['times'].add(human(when))
+        group['ages'].add(seconds)
+        detail = s.get('detail') or ''
+        if detail.startswith('Data from '):
+            group['credits'].add(detail.split(';', 1)[0])
+    summaries = []
+    for name, group in groups.items():
+        times = sorted(group['times'])
+        known_ages = sorted(a for a in group['ages'] if a is not None)
+        span = str(known_ages[0]) if known_ages else 'unknown'
+        if len(known_ages) > 1:
+            span += '-' + str(known_ages[-1])
+        freshness = span + 's' if known_ages else span
+        if known_ages and None in group['ages']:
+            freshness += ', some unknown'
+        saved = times[0] if len(times) == 1 else times[0] + '..' + times[-1]
+        credit = '; '.join(sorted(group['credits']))
+        summaries.append(f'{name} (saved/data {saved}; age {freshness})' + (f'; {credit}' if credit else ''))
+    print('source: ' + ('; '.join(summaries) or 'unknown (age unknown)'))
 
 
-def emit(data, lines, as_json):
+def emit(data, lines, as_json, stale=None):
     if as_json:
         print(json.dumps(data, ensure_ascii=False))
     else:
         for line in lines:
             print(line)
-        source_lines(sources(data))
+        items = sources(data)
+        if stale is None:
+            stale = any(s.get('stale') for s in items
+                        if 'Journalator' not in str(s.get('file') or s.get('name') or ''))
+        if stale:
+            print('stale: data exceeds its freshness limit')
+        source_lines(items)
 
 
 def stale_code(items):

@@ -2,7 +2,7 @@ import base64
 import json
 import sys
 
-from everledger_core import (Failure, character_path, item_basis, item_matches, money,
+from everledger_core import (Failure, character_path, item_basis, item_matches, money, human,
                              roster, recipes, sources, stale_code, time_selector)
 
 
@@ -39,6 +39,15 @@ def event_params(args):
 
 def event_rows(data):
     return data.get('events', data.get('entries', []))
+
+
+def recount(data, rows=None):
+    count = len(event_rows(data) if rows is None else rows)
+    for counts in (data, data.get('counts', {})):
+        for key in ('matched', 'returned'):
+            if key in counts:
+                counts[key] = count
+    return data
 
 
 def actor(event):
@@ -118,7 +127,7 @@ def event_page(params):
     else:
         data['next_cursor'] = None
     data['after_cursor'] = None if more else data.get('checkpoint')
-    return data
+    return recount(data)
 
 
 def fetch_events(params):
@@ -137,7 +146,7 @@ def fetch_events(params):
     data['entries'] = []
     if not data.get('checkpoint') and data.get('available') is not False:
         raise Failure('finished bootstrap has no service checkpoint')
-    return data
+    return recount(data)
 
 
 def collect_events(params, discard=False):
@@ -156,7 +165,7 @@ def collect_events(params, discard=False):
                 if not discard:
                     events.extend(event_rows(data))
             data = {k: v for k, v in data.items() if k != 'entries'}
-            return {**data, 'events': events}
+            return recount({**data, 'events': events})
         except Failure as e:
             if attempt:
                 raise
@@ -185,7 +194,8 @@ def event_lines(events):
     for e in events:
         item = e.get('item') or {}
         basis = ' | item matched by name' if e.get('match_basis') == 'name' or item.get('id_basis') == 'name' or item.get('id') is None and item.get('name') else ''
-        result.append(f"{actor(e)} | {e.get('recorded_at')} | {e['type']} | {e.get('count')}x {item.get('name') or item.get('id') or ''} | cash {money(e.get('cash_copper'))}{basis}")
+        quantity = f"{e['count']}x" if e.get('count') is not None else 'quantity unknown'
+        result.append(f"{human(actor(e))} | {human(e.get('recorded_at'))} | {e['type']} | {quantity} {human(item.get('name') or item.get('id'))} | cash {money(e.get('cash_copper'))}{basis}")
     return result or ['none recorded']
 
 
@@ -212,7 +222,7 @@ def listings(params, prices=None):
         available = row['available']
         row['floor_copper'] = floor
         row['undercut'] = (buyout / count > floor) if available and floor is not None and buyout is not None and count else None
-    return data
+    return recount(data, data.get('listings', []))
 
 
 def listing_sources(data):
@@ -227,13 +237,16 @@ def listing_lines(data):
     result = []
     for row in data.get('listings', []):
         item = row.get('item') or {}
-        result.append(f"{row.get('character')} | {row.get('count')}x {item.get('name') or row.get('name') or item.get('id') or row.get('item_id')} | buyout {money(row.get('buyout_copper'))} | expires {row.get('expires_at')} | floor {money(row.get('floor_copper'))} | undercut {row.get('undercut')}")
+        quantity = f"{row['count']}x" if row.get('count') is not None else 'quantity unknown'
+        result.append(f"{human(row.get('character'))} | {quantity} {human(item.get('name') or row.get('name') or item.get('id') or row.get('item_id'))} | buyout {money(row.get('buyout_copper'))} | expires {human(row.get('expires_at'))} | floor {money(row.get('floor_copper'))} | undercut {human(row.get('undercut'))}")
     return result or ['none recorded']
 
 
 def net(args, item, cat_source, catalogue):
     data = item_events(args, item)
     rows = data.pop('events', [])
+    for key in ('matched', 'returned', 'counts'):
+        data.pop(key, None)
     by_type = {t: [e for e in rows if e['type'] == t and e.get('venue') == 'auction']
                for t in ('posting', 'sale', 'expiration', 'cancellation')}
     current = listings({'char': args.char, 'item': str(item['id'])})
@@ -264,14 +277,14 @@ def net(args, item, cat_source, catalogue):
                'sources': sources(data) + sources(current) + [cat_source]}
     lines = [item.get('name') or str(item['id']),
              'posted unknown' if counts['posting'] is None else f"posted {counts['posting']} (posting attempts)",
-             f"sold {counts['sale']} | expired {counts['expiration']} | cancelled {counts['cancellation']} | listed {listed}",
-             f'unaccounted {unaccounted} (signed diagnostic: posted - sold - expired - cancelled - listed)',
+             f"sold {human(counts['sale'])} | expired {human(counts['expiration'])} | cancelled {human(counts['cancellation'])} | listed {human(listed)}",
+             f'unaccounted {human(unaccounted)} (signed diagnostic: posted - sold - expired - cancelled - listed)',
              f'proceeds {money(proceeds)} | auction cash {money(cash)} before materials',
              'realized profit unknown; holding/materials basis unknown; real posting cycle unverified']
     if unaccounted == 0:
         lines.append('deposits lost ' + money(deposits_lost))
     if data.get('available') is False:
-        lines.append(f"journal {data.get('state')}: {data.get('reason')}")
+        lines.append(f"journal {human(data.get('state'))}: {human(data.get('reason'))}")
     if 'name' in summary['match_basis']:
         lines.append('item match basis: name (linkless journal rows)')
     return summary, lines
