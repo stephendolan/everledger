@@ -13,9 +13,11 @@ pub mod journal;
 pub mod market;
 pub mod primitives;
 pub mod provenance;
+pub mod read_roster;
 pub mod roster;
 pub mod time;
 pub mod types;
+pub mod vendors;
 
 pub use types::{Copper, EpochSeconds, ExitCode, Failure, Result};
 

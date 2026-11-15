@@ -587,7 +587,10 @@ fn warnings_survive_command_failure() {
             .unwrap();
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
     let config = everledger::config::Config::from_values(&Default::default());
-    let catalogue = everledger::catalogue::CatalogueStore::default();
+    let catalogue = everledger::catalogue::CatalogueStore::from_document(
+        document::parse(include_str!("../tests/fixtures/catalogue-fixture.json")).unwrap(),
+    )
+    .unwrap();
     let diagnostics = everledger::diagnostics::WriterDiagnostics::default();
     let context = everledger::Context {
         clock: &clock,
@@ -623,16 +626,22 @@ fn empty_token_file_is_unset() {
 #[test]
 fn non_unicode_environment_does_not_panic() {
     use std::os::unix::ffi::OsStringExt;
+    let (url, server) = server(vec![response(503, "", "{}")]);
     let output = Command::new(env!("CARGO_BIN_EXE_everledger"))
         .args(["price", "2604"])
+        .env("EVERLEDGER_AHLEDGER_URL", &url)
+        .env("EVERLEDGER_VENDOR_URL", &url)
+        .env("NO_PROXY", "127.0.0.1")
+        .env("no_proxy", "127.0.0.1")
         .env(
             "UNRELATED_NON_UNICODE",
             std::ffi::OsString::from_vec(vec![255]),
         )
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("price: not yet ported"));
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(output.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("HTTP 503"));
 }
 #[test]
 fn redirect_error_names_original_request() {
