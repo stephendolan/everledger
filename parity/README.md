@@ -171,3 +171,20 @@ abbreviated options, split positionals, negative numbers, and separators, which
 the replayed tests barely touch. The port types command-line integers as i64 in
 ASCII digits, so a candidate may reject the Unicode-digit and unbounded integers
 that Python's `int()` accepts; the script reports each such case as sanctioned.
+
+## Differential fuzz
+
+`fuzz.py` builds random worlds inside the shapes the oracle's contract allows
+(null where the oracle tolerates null, absent keys where it reads with a
+default, every provenance spelling, paged and recoverable journals) and runs
+random invocations through the same engine and comparison policy as the
+replayed corpus. The corpus is fixed and can be fitted; the fuzz cannot.
+
+```sh
+python3 parity/fuzz.py target/seams/debug/everledger --cases 40 --seed 1
+python3 parity/fuzz.py target/seams/debug/everledger --only fuzz/1/17 --report /tmp/case.json
+python3 parity/fuzz.py target/seams/debug/everledger --commands events,sales,net
+```
+
+A world never leaves the contract, so the oracle never fails internally on
+one, and every difference is a finding. `--seed` and `--only` reproduce a case.
