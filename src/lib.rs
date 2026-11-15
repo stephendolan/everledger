@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
 pub mod catalogue;
+pub mod catalogue_build;
 pub mod cli;
 pub mod clock;
 pub mod commands;
 pub mod config;
 pub mod diagnostics;
 pub mod document;
+pub mod foreverdb;
 pub mod http;
 pub mod human;
 pub mod market;
