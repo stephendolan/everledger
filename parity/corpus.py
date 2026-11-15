@@ -5,6 +5,8 @@ import importlib.util
 import json
 from pathlib import Path
 import signal
+import subprocess
+import tempfile
 import types
 import unittest
 
@@ -12,11 +14,32 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
+ORACLE_COMMIT = '32f05ab'
+_reference = None
+
+
+def reference_root():
+    """A directory holding the README the oracle's help is checked against.
+
+    The working tree's README documents the Rust binary. The replayed test
+    compares the oracle's own help with the README of the oracle's commit.
+    """
+    global _reference
+    if _reference is None:
+        _reference = tempfile.TemporaryDirectory(prefix='everledger-parity-reference-')
+        readme = subprocess.run(['git', 'show', ORACLE_COMMIT + ':README.md'], cwd=ROOT,
+                                capture_output=True, check=True).stdout
+        Path(_reference.name, 'README.md').write_bytes(readme)
+    return Path(_reference.name)
+
+
 def load_cli():
     spec = importlib.util.spec_from_file_location('parity_reference_cli', ROOT / 'tests/test_cli.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.NOW = ORIGIN
+    # The fixture directory is already resolved; only the README check reads ROOT now.
+    module.ROOT = reference_root()
     real = datetime.datetime
 
     class Fixed(real):
