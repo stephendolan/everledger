@@ -17,6 +17,7 @@ use serde::Deserialize;
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 pub const BACKEND: &str = "foreverdb.net";
@@ -151,9 +152,11 @@ pub(super) fn write_at(dir: &Path, name: &str, doc: &Document) -> Result<()> {
         random_id()?.chars().take(8).collect::<String>()
     ));
     let result = (|| {
+        // Owner-only, like the cache files the Python implementation writes beside these.
         let mut stream = OpenOptions::new()
             .create_new(true)
             .write(true)
+            .mode(0o600)
             .open(&path)?;
         stream.write_all(dumps(doc, JsonMode::Stdout).as_bytes())?;
         stream.sync_all()?;

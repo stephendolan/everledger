@@ -466,7 +466,17 @@ fn write_cache(path: &std::path::Path, data: &Document) -> Result<()> {
         .ok_or_else(|| Failure::error("cache path has no parent"))?;
     std::fs::create_dir_all(parent)?;
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::write(&temp, crate::document::dumps(data, JsonMode::Stdout))?;
+    {
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
+        // Owner-only, like the cache files the Python implementation writes beside these.
+        let mut stream = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temp)?;
+        stream.write_all(crate::document::dumps(data, JsonMode::Stdout).as_bytes())?;
+    }
     std::fs::rename(temp, path)?;
     Ok(())
 }

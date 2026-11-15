@@ -38,6 +38,13 @@ def snapshot(directory):
     return result
 
 
+def modes(directory):
+    """Permission bits of every regular file, keyed like the snapshot."""
+    root = Path(directory)
+    return {path.relative_to(root).as_posix(): path.stat().st_mode & 0o777
+            for path in sorted(root.rglob('*')) if path.is_file() and not path.is_symlink()}
+
+
 def restore(directory, files):
     root = Path(directory)
     for path in sorted(root.rglob('*'), reverse=True):
@@ -171,6 +178,13 @@ def compare(left, right, policy=None):
             if a is not None and b is not None:
                 row['byte_ranges'] = byte_diff(a, b)
             differences.append(row)
+    # restore() rewrites both sides' files with default permissions before each
+    # step, so a mode differs only for a file the step itself wrote.
+    left_modes, right_modes = left.get('modes', {}), right.get('modes', {})
+    for name in sorted(left_modes.keys() & right_modes.keys()):
+        if left_modes[name] != right_modes[name]:
+            differences.append({'field': 'modes/' + name, 'oracle': oct(left_modes[name]),
+                                'candidate': oct(right_modes[name])})
     if policy is not None and policy not in ALLOWLIST:
         raise ValueError('unknown parity policy: ' + policy)
     for row in differences:
@@ -285,7 +299,8 @@ class Engine:
             raise RuntimeError('oracle seam installation failed: ' + stderr.decode(errors='replace'))
         return {'argv': list(args), 'environment': env, 'exit_code': process.returncode,
                 'stdout': stdout, 'stderr': stderr, 'requests': copy.deepcopy(fixture.log),
-                'sleep_log': (controls / 'sleeps').read_bytes(), 'files': snapshot(directory)}
+                'sleep_log': (controls / 'sleeps').read_bytes(), 'files': snapshot(directory),
+                'modes': modes(directory)}
 
     def step(self, name, args, given, fixture, directory, death=None, policy=None, forbidden=()):
         requests_before = list(fixture.vocabulary.requests)

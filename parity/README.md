@@ -41,7 +41,8 @@ trailing whitespace survive. Decode with `base64.b64decode(value['base64'])`.
 Request lists retain their order and exact path/query strings. The four logged
 headers include null for absent headers. Environment and argv are recorded as
 inputs; the comparison covers exit status, stdout, stderr, requests, sleep log,
-and every data-directory path and byte. Directory paths end in `/` with empty
+every data-directory path and byte, and the permission bits of each file a
+step wrote. Directory paths end in `/` with empty
 bytes, preserving empty fixture directories too.
 
 Reports contain disposable fixture credentials, absolute temporary paths, and

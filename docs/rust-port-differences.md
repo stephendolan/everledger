@@ -43,6 +43,14 @@ missing required field.
 - **UTF-16 and UTF-32 JSON bodies.** Rust accepts UTF-8, with or without a
   byte-order mark.
 
+## A stricter ForeverDB index
+
+A ForeverDB index activates only when its record, vendor, and item counts agree
+with its contents. Python checks the format number alone. Every index either
+implementation publishes passes; the difference shows only for a file edited or
+damaged after publication, which Rust treats as absent and answers from the
+ninja cache.
+
 ## CPython artifacts left behind
 
 - `datetime.fromisoformat` accepts one stray character between the time and a
