@@ -16,10 +16,14 @@ NOW = datetime.datetime.now(datetime.UTC).isoformat().replace('+00:00', 'Z')
 class Handler(http.server.BaseHTTPRequestHandler):
     routes = {}
     requests = []
+    event_contract = None
 
     def do_GET(self):
         self.requests.append(self.path)
-        status, payload = self.routes.get(self.path, self.routes.get(self.path.split('?')[0], (404, {})))
+        if self.event_contract and self.path.split('?')[0] == '/events':
+            status, payload = self.event_contract(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+        else:
+            status, payload = self.routes.get(self.path, self.routes.get(self.path.split('?')[0], (404, {})))
         self.send_response(status)
         self.send_header('Last-Modified', 'Sat, 14 Nov 2026 20:20:39 GMT')
         self.end_headers()
@@ -52,19 +56,161 @@ class CLI(unittest.TestCase):
         self.env.pop('EVERLEDGER_FOREVERDB_API_KEY', None)
         self.env.pop('EVERLEDGER_FOREVERDB_API_KEY_FILE', None)
         Handler.requests = []
+        Handler.event_contract = None
         Handler.routes = {
             '/items/2604.json': (200, json.loads((FIX / '2604.json').read_text())),
             '/items/2604.pins.json': (200, json.loads((FIX / '2604.pins.json').read_text())),
-            '/events': (200, {'events': [], 'next_cursor':'opaque+/=', 'has_more':False,
+            '/events': (200, {'events': [], 'next_cursor':None, 'checkpoint':'opaque+/=', 'has_more':False,
                                'sources':[{'file':'Journalator.lua','mtime':'2020-01-01T00:00:00Z','stale':True}]}),
             '/listings': (200, {'listings':[], 'sources':[]}),
             '/characters': (200, {'characters':[], 'sources':[]}),
+            '/characters/Slade': (200, {'character':{'name':'Slade Undertow'}}),
+            '/characters/Slade%20Undertow': (200, {'character':{'name':'Slade Undertow'}}),
         }
 
     def run_cli(self, *args, code=0):
         r = subprocess.run([str(ROOT/'everledger'), *args], env=self.env, text=True, capture_output=True)
         self.assertEqual(r.returncode, code, r.stderr + r.stdout)
         return r
+
+    def live_contract(self):
+        rows = [self.event('purchase', 1, -134, id='leather', item={'id':2318,'name':'Light Leather'}),
+                self.event('purchase', 1, -1960, id='cloth', item={'id':2997,'name':'Bolt of Woolen Cloth'}),
+                *[self.event('sale', 1, 100, id=str(i)) for i in range(6)]]
+        checkpoint_scopes = {}
+        def respond(query):
+            for key in ('since', 'until'):
+                if key in query and not query[key][0].isdigit():
+                    return 400, {'error_code':'invalid_query', 'message':'Expected bounded decimal integer'}
+            limit = int(query.get('limit', ['500'])[0])
+            if not 1 <= limit <= 500:
+                return 400, {'error_code':'invalid_query', 'message':'Integer outside allowed bounds'}
+            scope = {k:query[k] for k in ('char','item','venue','type') if k in query}
+            if 'after' in query and scope != checkpoint_scopes.get(query['after'][0], {}):
+                return 400, {'error_code':'checkpoint_scope_mismatch', 'message':'Checkpoint scope changed'}
+            offset = int(query.get('cursor', ['page:0'])[0].split(':')[1])
+            if 'after' in query:
+                offset = int(query['after'][0].split(':')[1])
+            page = rows[offset:offset+min(limit, 3)]
+            more = offset + len(page) < len(rows)
+            checkpoint = f'jnrc1:{len(rows)}' + (':'+urllib.parse.urlencode(scope) if scope else '')
+            checkpoint_scopes[checkpoint] = scope
+            return 200, {'entries':page, 'mode':'incremental' if 'after' in query else 'snapshot',
+                         'has_more':more, 'next_cursor':f'page:{offset+len(page)}' if more else None,
+                         'checkpoint':None if more else checkpoint, 'filters':{'since':int(query.get('since',['0'])[0])}, 'sources':[]}
+        Handler.event_contract = staticmethod(respond)
+        return rows
+
+    def test_live_bootstrap_returns_terminal_checkpoint_without_entries(self):
+        self.live_contract()
+        d = json.loads(self.run_cli('events','--limit','0','--type','purchase','--json').stdout)
+        self.assertEqual(d['entries'], [])
+        self.assertEqual(d['after_cursor'], 'jnrc1:8')
+        self.assertEqual(d['checkpoint'], 'jnrc1:8')
+        self.assertIsNone(d['next_cursor'])
+        self.assertFalse(d['has_more'])
+        self.assertGreater(len(Handler.requests), 1)
+
+    def test_live_time_inputs_and_outcome_commands(self):
+        self.live_contract()
+        self.market()
+        Handler.routes['/listings'] = (200, {'listings':[
+            {'item':{'id':100,'name':'Red Woolen Boots'}, 'count':1, 'buyout_copper':2499},
+            {'item':{'id':101,'name':'Hands of Darkness'}, 'count':1, 'buyout_copper':4298}], 'sources':[]})
+        d = json.loads(self.run_cli('events','--since','2026-11-08T00:00:00Z','--json').stdout)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(Handler.requests[0]).query)
+        self.assertEqual(query['since'], ['1794096000'])
+        self.run_cli('events','--json')
+        for command in ('purchases','sales','expirations','net','positions','listings'):
+            args = [command] + (['2604'] if command == 'net' else []) + ['--json']
+            d = json.loads(self.run_cli(*args).stdout)
+            if command == 'purchases':
+                self.assertEqual(len(d['purchases']), 2)
+                self.assertEqual(sum(e['cash_copper'] for e in d['purchases']), -2094)
+            if command == 'listings':
+                self.assertEqual([r['buyout_copper'] for r in d['listings']], [2499, 4298])
+
+    def test_live_checkpoint_allows_changed_views_in_both_directions(self):
+        rows = self.live_contract()
+        d = json.loads(self.run_cli('events','--limit','0','--type','sale','--json').stdout)
+        checkpoint = d['after_cursor']
+        rows.append(self.event('purchase', 1, -50, id='new-purchase'))
+        d = json.loads(self.run_cli('events','--after',checkpoint,'--type','purchase','--json').stdout)
+        self.assertEqual([e['id'] for e in d['entries']], ['new-purchase'])
+        rows.append(self.event('sale', 1, 60, id='new-sale'))
+        d = json.loads(self.run_cli('events','--after',d['after_cursor'],'--json').stdout)
+        self.assertEqual([e['id'] for e in d['entries']], ['new-sale'])
+        d = json.loads(self.run_cli('events','--after',d['after_cursor'],'--char','Slade','--venue','auction','--json').stdout)
+        self.assertEqual(d['entries'], [])
+        self.assertEqual(d['after_cursor'], 'jnrc1:10')
+        rows.extend([self.event('purchase',1,-1,id='other-char',character='Other'),
+                     self.event('purchase',1,-2,id='other-venue',venue='vendor'),
+                     self.event('purchase',1,-3,id='other-item',item={'id':1,'name':'Other'}),
+                     self.event('purchase',1,-4,id='match')])
+        d = json.loads(self.run_cli('events','--after',d['after_cursor'],'--char','Slade',
+                                   '--item','2604','--venue','auction','--type','purchase','--json').stdout)
+        matched = list(d['entries'])
+        while d['has_more']:
+            d = json.loads(self.run_cli('events','--cursor',d['next_cursor'],'--json').stdout)
+            matched.extend(d['entries'])
+        self.assertEqual([e['id'] for e in matched], ['match'])
+        self.assertEqual(d['after_cursor'], 'jnrc1:14')
+
+    def test_live_view_survives_snapshot_pagination(self):
+        self.live_contract()
+        d = json.loads(self.run_cli('events','--type','sale','--limit','2','--json').stdout)
+        rows = list(d['entries'])
+        seen = set()
+        while d['has_more']:
+            self.assertIsNone(d['after_cursor'])
+            cursor = d['next_cursor']
+            self.assertNotIn(cursor, seen)
+            seen.add(cursor)
+            d = json.loads(self.run_cli('events','--cursor',cursor,'--limit','2','--json').stdout)
+            rows.extend(d['entries'])
+        self.assertEqual(len(rows), 6)
+        self.assertTrue(all(e['type'] == 'sale' for e in rows))
+        self.assertEqual(d['after_cursor'], 'jnrc1:8')
+
+    def test_expired_view_page_keeps_until_on_resync(self):
+        sale = self.event('sale', 1, 90)
+        Handler.routes['/events'] = (200, {'entries':[sale], 'has_more':True, 'next_cursor':'bad-page'})
+        d = json.loads(self.run_cli('events','--type','sale','--until','2099-01-01','--json').stdout)
+        Handler.routes['/events?cursor=bad-page'] = (409, {'error_code':'cursor_invalid','resync_since':1794614400})
+        Handler.routes['/events?until=4070908800&since=1794614400'] = (200, {
+            'entries':[sale,self.event('purchase',1,-100)], 'has_more':False, 'checkpoint':'recovered'})
+        r = self.run_cli('events','--cursor',d['next_cursor'],'--json')
+        self.assertEqual([e['type'] for e in json.loads(r.stdout)['entries']], ['sale'])
+        self.assertEqual(Handler.requests[-1], '/events?until=4070908800&since=1794614400')
+
+    def test_cursor_bootstrap_resync_keeps_view_and_until(self):
+        sale = self.event('sale', 1, 90)
+        Handler.routes['/events'] = (200, {'entries':[sale], 'has_more':True, 'next_cursor':'bad-page'})
+        d = json.loads(self.run_cli('events','--type','sale','--until','2099-01-01','--json').stdout)
+        Handler.routes['/events?cursor=bad-page&limit=500'] = (409, {'error_code':'cursor_invalid','resync_since':1794614400})
+        Handler.routes['/events?limit=500&until=4070908800&since=1794614400'] = (200, {
+            'entries':[sale], 'has_more':False, 'checkpoint':'recovered'})
+        r = self.run_cli('events','--cursor',d['next_cursor'],'--limit','0','--json')
+        self.assertEqual(json.loads(r.stdout)['entries'], [])
+        self.assertEqual(json.loads(r.stdout)['after_cursor'], 'recovered')
+        self.assertIn('until=4070908800', Handler.requests[-1])
+
+    def test_live_invalid_type_is_a_usage_error(self):
+        self.live_contract()
+        self.run_cli('events','--type','invalid','--json',code=2)
+        self.assertFalse(Handler.requests)
+
+    def test_resync_normalizes_integer_and_decimal_epoch_hints(self):
+        for hint in (1794614400, '1794614400', 0):
+            Handler.routes['/events?limit=500&after=bad'] = (409, {'error_code':'cursor_invalid','resync_since':hint})
+            r = self.run_cli('events','--after','bad','--json')
+            self.assertIn('since='+str(hint), Handler.requests[-1])
+            self.assertEqual(r.stderr.count('resynchronizing'), 1)
+
+    def test_bootstrap_refuses_repeated_page_cursor(self):
+        Handler.routes['/events'] = (200, {'entries':[], 'has_more':True, 'next_cursor':'stuck'})
+        r = self.run_cli('events','--limit','0','--json',code=1)
+        self.assertIn('pagination did not advance', r.stderr)
 
     def test_red_dye_ground_truth(self):
         d = json.loads(self.run_cli('vendors','Red Dye','--json').stdout)
@@ -91,11 +237,12 @@ class CLI(unittest.TestCase):
 
     def test_cursor_pass_through_and_usage(self):
         d=json.loads(self.run_cli('events','--limit','0','--json').stdout)
-        self.assertEqual(d['next_cursor'],'opaque+/=')
+        self.assertEqual(d['after_cursor'],'opaque+/=')
         self.assertIs(d['has_more'],False)
         self.run_cli('events','--after','opaque+/=','--char','Slade','--item','Red Dye','--venue','vendor','--type','sale','--json')
         self.assertIn('after=opaque%2B%2F%3D',Handler.requests[-1])
-        self.assertIn('char=Slade',Handler.requests[-1])
+        self.assertNotIn('char=',Handler.requests[-1])
+        self.assertNotIn('type=',Handler.requests[-1])
         for args in [('events','--after',''),('events','--after','x','--until','7d'),('sales','--since','bad'),('price',),('margins','tailoring','12')]:
             self.run_cli(*args, code=2)
         self.assertIn('events --limit 0 --json',self.run_cli('events','--after','',code=2).stderr)
@@ -103,7 +250,7 @@ class CLI(unittest.TestCase):
     def test_outcomes_are_not_stale_errors(self):
         r=self.run_cli('sales','--since','7d','--until','2026-11-14','--json')
         self.assertEqual(json.loads(r.stdout)['sales'],[])
-        self.assertIn('venue=auction',Handler.requests[-1])
+        self.assertNotIn('venue=',Handler.requests[-1])
         self.assertIn('since=',Handler.requests[-1])
         self.assertIn('Journalator',self.run_cli('sales').stdout)
 
@@ -124,9 +271,9 @@ class CLI(unittest.TestCase):
     def test_selectors_are_normalized_and_encoded(self):
         self.run_cli('events','--char','Slade Undertow','--since','24h','--until','2099-01-01','--json')
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(Handler.requests[-1]).query)
-        self.assertEqual(query['char'],['Slade Undertow'])
-        self.assertTrue(query['since'][0].endswith('Z'))
-        self.assertEqual(query['until'],['2099-01-01T00:00:00Z'])
+        self.assertNotIn('char', query)
+        self.assertTrue(query['since'][0].isdigit())
+        self.assertEqual(query['until'],['4070908800'])
         for bad in [('events','--limit','-1'),('sales','--since','2026-11-15','--until','2026-11-14'),
                     ('purchases','--venue','both'),('char','Slade','auctions')]:
             self.run_cli(*bad,code=2)
@@ -158,8 +305,8 @@ class CLI(unittest.TestCase):
         Handler.routes['/events?limit=500&after=bad']=(409,{'error_code':'cursor_invalid','resync_since':'2026-11-14T00:00:00Z'})
         r=self.run_cli('events','--after','bad','--json')
         self.assertEqual(r.stderr.count('resynchronizing'),1)
-        self.assertIn('since=2026-11-14T00%3A00%3A00Z',Handler.requests[-1])
-        self.assertEqual(json.loads(r.stdout)['next_cursor'],'opaque+/=')
+        self.assertIn('since=1794614400',Handler.requests[-1])
+        self.assertEqual(json.loads(r.stdout)['after_cursor'],'opaque+/=')
         self.run_cli('events','--cursor','page','--since','7d',code=2)
 
     def test_price_margins_and_required_source_exit_codes(self):
@@ -435,8 +582,8 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         self.env['TZ']='America/New_York'
         self.run_cli('events','--since','2026-11-14','--until','2026-11-15','--json')
         query=urllib.parse.parse_qs(urllib.parse.urlsplit(Handler.requests[-1]).query)
-        self.assertEqual(query['since'],['2026-11-14T05:00:00Z'])
-        self.assertEqual(query['until'],['2026-11-15T05:00:00Z'])
+        self.assertEqual(query['since'],['1794632400'])
+        self.assertEqual(query['until'],['1794718800'])
 
     def test_unknown_vendor_coverage_survives_zone_filter(self):
         Handler.routes['/items/6532.json']=(200,{'id':6532,'name':'Bright Baubles'})
@@ -490,7 +637,7 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         sale=self.event('sale',1,90,proceeds_copper=90)
         Handler.routes['/events']=(200,{'events':[sale],'has_more':True,'next_cursor':'bad-page','sources':[]})
         Handler.routes['/events?limit=500&cursor=bad-page']=(409,{'error_code':'cursor_invalid','resync_since':'2026-11-14T00:00:00Z'})
-        Handler.routes['/events?char=Slade&venue=auction&type=sale&limit=500&since=2026-11-14T00%3A00%3A00Z&item=Red+Dye']=(200,{
+        Handler.routes['/events?limit=500&since=1794614400']=(200,{
             'events':[dict(sale,id='restart')],'has_more':False,'next_cursor':'new-terminal','sources':[]})
         r=self.run_cli('sales','--char','Slade','--item','2604','--json')
         d=json.loads(r.stdout)

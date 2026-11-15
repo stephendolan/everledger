@@ -90,16 +90,20 @@ def parser():
         if name in ('sales', 'purchases', 'events'):
             c.add_argument('--venue', choices=['auction', 'vendor'], default='auction' if name == 'sales' else None)
         if name == 'events':
-            c.add_argument('--type', help='comma-separated domain types')
+            c.add_argument('--type', help='comma-separated purchase, sale, posting, expiration, cancellation')
             c.add_argument('--cursor', help='snapshot page cursor from next_cursor; inherits fixed filters')
-            c.add_argument('--after', help='opaque cursor/checkpoint; exclusive with since/until')
+            c.add_argument('--after', help='terminal after_cursor/checkpoint; exclusive with since/until')
             c.add_argument('--limit', type=int, help='0 bootstraps a watch; default 50 human, 500 JSON')
-            c.epilog = ('Start a watch: everledger events --limit 0 --json. Save the service checkpoint '
-                        'for after when supplied; next_cursor finishes pagination via the service cursor parameter. '
-                        'The feed never skips or repeats across cursors; a worker that acts before saving '
-                        'next_cursor delivers at least once. Filters may change between polls. On 409 '
-                        'cursor_invalid, alert once and resync from resync_since; this command retries once. '
-                        'snapshot_changed requires restarting from the last committed checkpoint. '
+            c.epilog = ('Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot '
+                        'with positive service limits and prints no entries. Save after_cursor (the service '
+                        'terminal checkpoint) only after has_more is false. While has_more is true, pass '
+                        'next_cursor to --cursor to finish the snapshot; page cursors retain the local view. '
+                        'Character/item/type/venue filters are local views over an unfiltered checkpoint '
+                        'and may change between polls. Limit bounds the scanned page, so a filtered page '
+                        'may be empty with has_more true. Times are sent as integer epoch seconds. '
+                        'On 409 cursor_invalid, alert once and resync from resync_since; retries can '
+                        'replay entries. snapshot_changed requires restarting from the last committed '
+                        'checkpoint. Act before saving progress for at-least-once delivery. '
                         'This CLI persists nothing.')
         c.add_argument('--json', action='store_true', help='one JSON document using API field names')
     return p
@@ -290,10 +294,10 @@ def char(args):
 
 
 def outcome(args):
-    params=outcomes.event_params(args)
     item=item_for(args.item) if args.item else None
     if args.command=='events':
-        params['item']=item.get('name') or str(item['id']) if item else None
+        params=outcomes.event_params(args)
+        params['item']=item
         if args.cursor:
             if any((args.after is not None, args.since, args.until, args.char, args.item, args.type, args.venue)):
                 raise Failure('--cursor inherits filters; supply only --cursor and --limit',2)
@@ -301,7 +305,7 @@ def outcome(args):
         data=outcomes.fetch_events(params)
         disclose_item_source(data,item)
         lines=outcomes.event_lines(outcomes.event_rows(data)) if data.get('available') is not False else [f"journal {data.get('state')}: {data.get('reason')}"]
-        emit(data,lines+[f"next_cursor: {data.get('next_cursor')} | has_more: {data.get('has_more')} | checkpoint: {data.get('checkpoint')}"],args.json)
+        emit(data,lines+[f"next_cursor: {data.get('next_cursor')} | has_more: {data.get('has_more')} | after_cursor: {data.get('after_cursor')} | checkpoint: {data.get('checkpoint')}"],args.json)
         return 0
     types={'sales':'sale','purchases':'purchase','expirations':'expiration'}
     data=outcomes.item_events(args,item,types[args.command])
@@ -338,7 +342,7 @@ def status(args):
         rows.append({'source':'catalogue','state':str(e)}); code=max(code,e.code)
     for label,path in [('roster','/characters'),('outcomes','/events'),('listings','/listings')]:
         try:
-            d=roster(path,{'limit':0} if label=='outcomes' else None)
+            d=outcomes.fetch_events({'limit':0}) if label=='outcomes' else roster(path)
             used+=sources(d)
             rows.append({'source':label,'state':d.get('state','reachable'),'sources':sources(d)})
             if label=='listings': code=max(code,stale_code(outcomes.listing_sources(d)))

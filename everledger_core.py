@@ -44,6 +44,12 @@ def time_selector(value):
         raise Failure('time must be 7d, 24h, a date, or an ISO timestamp', 2)
 
 
+def roster_seconds(value):
+    if isinstance(value, int) or isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return int(instant(value).timestamp())
+
+
 def age(value):
     if value is None:
         return None
@@ -86,6 +92,11 @@ def roster(path, params=None):
             token = Path(token_file).read_text().strip()
     if not token:
         raise Failure('configure EVERLEDGER_ROSTER_TOKEN or EVERLEDGER_ROSTER_TOKEN_FILE', 4)
+    params = dict(params or {})
+    if path == '/events':
+        for key in ('since', 'until'):
+            if params.get(key) is not None:
+                params[key] = roster_seconds(params[key])
     query = urllib.parse.urlencode({k: v for k, v in (params or {}).items() if v is not None})
     raw, _ = request(ROSTER + path + ('?' + query if query else ''), {'Authorization': 'Bearer ' + token})
     return json.loads(raw)

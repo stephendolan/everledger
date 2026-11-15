@@ -2,6 +2,9 @@
 
 The command reference below is generated from `--help`.
 
+See [Journalator consumer notes](docs/journalator-contract.md) for watch checkpoints,
+local filter views, and the live-service regression evidence.
+
 ```text
 usage: - [-h]
          {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify} ...
@@ -291,20 +294,26 @@ options:
   --since SINCE
   --until UNTIL
   --venue {auction,vendor}
-  --type TYPE           comma-separated domain types
+  --type TYPE           comma-separated purchase, sale, posting, expiration,
+                        cancellation
   --cursor CURSOR       snapshot page cursor from next_cursor; inherits fixed
                         filters
-  --after AFTER         opaque cursor/checkpoint; exclusive with since/until
+  --after AFTER         terminal after_cursor/checkpoint; exclusive with
+                        since/until
   --limit LIMIT         0 bootstraps a watch; default 50 human, 500 JSON
   --json                one JSON document using API field names
 
-Start a watch: everledger events --limit 0 --json. Save the service checkpoint
-for after when supplied; next_cursor finishes pagination via the service
-cursor parameter. The feed never skips or repeats across cursors; a worker
-that acts before saving next_cursor delivers at least once. Filters may change
-between polls. On 409 cursor_invalid, alert once and resync from resync_since;
-this command retries once. snapshot_changed requires restarting from the last
-committed checkpoint. This CLI persists nothing.
+Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot
+with positive service limits and prints no entries. Save after_cursor (the
+service terminal checkpoint) only after has_more is false. While has_more is
+true, pass next_cursor to --cursor to finish the snapshot; page cursors retain
+the local view. Character/item/type/venue filters are local views over an
+unfiltered checkpoint and may change between polls. Limit bounds the scanned
+page, so a filtered page may be empty with has_more true. Times are sent as
+integer epoch seconds. On 409 cursor_invalid, alert once and resync from
+resync_since; retries can replay entries. snapshot_changed requires restarting
+from the last committed checkpoint. Act before saving progress for at-least-
+once delivery. This CLI persists nothing.
 ```
 
 ## status

@@ -1,12 +1,26 @@
+import base64
+import json
 import sys
 
 from everledger_core import (Failure, character_path, item_basis, item_matches, money,
                              roster, recipes, sources, stale_code, time_selector)
 
 
+EVENT_TYPES = ('purchase', 'sale', 'posting', 'expiration', 'cancellation')
+
+
 def event_params(args):
-    params = {'char': args.char, 'venue': getattr(args, 'venue', None),
-              'type': getattr(args, 'type', None), 'limit': getattr(args, 'limit', None)}
+    types = getattr(args, 'type', None)
+    if types is not None:
+        types = ','.join(t.strip() for t in types.split(','))
+        if any(t not in EVENT_TYPES for t in types.split(',')):
+            raise Failure('--type must contain: ' + ', '.join(EVENT_TYPES), 2)
+    character = args.char
+    if character:
+        selected = roster(character_path(character))
+        character = selected.get('character', selected)['name']
+    params = {'char': character, 'venue': getattr(args, 'venue', None),
+              'type': types, 'limit': getattr(args, 'limit', None)}
     after = getattr(args, 'after', None)
     if after is not None:
         if not after:
@@ -33,36 +47,114 @@ def actor(event):
 
 def resync_params(error, params):
     body = (error.body or {}).get('response') or {}
-    if (error.body or {}).get('status') == 409 and body.get('error_code') == 'cursor_invalid' and body.get('resync_since'):
-        print('cursor_invalid: resynchronizing once from ' + body['resync_since'], file=sys.stderr)
+    if (error.body or {}).get('status') == 409 and body.get('error_code') == 'cursor_invalid' and body.get('resync_since') is not None:
+        print('cursor_invalid: resynchronizing once from ' + str(body['resync_since']), file=sys.stderr)
         return {**{k: v for k, v in params.items() if k not in ('after', 'cursor')},
                 'since': body['resync_since']}
     return None
 
 
+VIEW_KEYS = ('char', 'item', 'venue', 'type')
+PAGE_PREFIX = 'elpage1:'
+
+
+def page_cursor(cursor, view, until=None):
+    if not view and until is None:
+        return cursor
+    payload = json.dumps({'cursor': cursor, 'view': view, 'until': until}, separators=(',', ':')).encode()
+    return PAGE_PREFIX + base64.urlsafe_b64encode(payload).decode()
+
+
+def page_params(params):
+    params = dict(params)
+    cursor = params.get('cursor')
+    if cursor and cursor.startswith(PAGE_PREFIX):
+        try:
+            page = json.loads(base64.b64decode(cursor[len(PAGE_PREFIX):], altchars=b'-_', validate=True))
+            if not isinstance(page['cursor'], str) or not page['cursor'] or not isinstance(page['view'], dict):
+                raise ValueError()
+            if any(k not in VIEW_KEYS or not isinstance(v, (str, dict) if k == 'item' else str)
+                   for k, v in page['view'].items()):
+                raise ValueError()
+            if page.get('until') is not None and not isinstance(page['until'], (str, int)):
+                raise ValueError()
+            params.update(page['view'], cursor=page['cursor'], until=page.get('until'))
+        except (ValueError, KeyError, TypeError):
+            raise Failure('invalid snapshot page cursor', 2)
+    return params
+
+
+def in_view(event, view):
+    for key in ('type', 'venue'):
+        if view.get(key) and event.get(key) not in view[key].split(','):
+            return False
+    if view.get('char') and (actor(event) or '').casefold() != view['char'].casefold():
+        return False
+    item = view.get('item')
+    if isinstance(item, dict):
+        return item_matches(event, item)
+    if item:
+        recorded = event.get('item') or {}
+        return str(recorded.get('id')) == item or (recorded.get('name') or '').casefold() == item.casefold()
+    return True
+
+
+def event_page(params):
+    params = page_params(params)
+    view = {k: params[k] for k in VIEW_KEYS if params.get(k) is not None}
+    wire = {k: v for k, v in params.items() if k not in VIEW_KEYS}
+    if params.get('cursor'):
+        wire = {k: v for k, v in wire.items() if k not in ('since', 'until')}
+    data = dict(roster('/events', wire))
+    for key in ('events', 'entries'):
+        if key in data:
+            data[key] = [e for e in data[key] if in_view(e, view)]
+    more = data.get('has_more', False)
+    cursor = data.get('next_cursor')
+    if more:
+        if not cursor:
+            raise Failure('events pagination did not advance; refusing a partial tally')
+        data['next_cursor'] = page_cursor(cursor, view, params.get('until'))
+    else:
+        data['next_cursor'] = None
+    data['after_cursor'] = None if more else data.get('checkpoint')
+    return data
+
+
 def fetch_events(params):
-    try:
-        return roster('/events', params)
-    except Failure as e:
-        replacement = resync_params(e, params)
-        if replacement is None:
-            raise
-        return roster('/events', replacement)
+    bootstrap = params.get('limit') == 0
+    if bootstrap:
+        data = collect_events(params, discard=True)
+    else:
+        try:
+            return event_page(params)
+        except Failure as e:
+            replacement = resync_params(e, page_params(params))
+            if replacement is None:
+                raise
+            return event_page(replacement)
+    data.pop('events', None)
+    data['entries'] = []
+    if not data.get('checkpoint') and data.get('available') is not False:
+        raise Failure('finished bootstrap has no service checkpoint')
+    return data
 
 
-def collect_events(params):
+def collect_events(params, discard=False):
+    params = page_params(params)
     for attempt in range(2):
         try:
-            data = roster('/events', {**params, 'limit': 500})
-            events = list(event_rows(data))
+            data = event_page({**params, 'limit': 500})
+            events = [] if discard else list(event_rows(data))
             seen = set()
             while data.get('has_more'):
                 cursor = data.get('next_cursor')
                 if not cursor or cursor in seen:
                     raise Failure('events pagination did not advance; refusing a partial tally')
                 seen.add(cursor)
-                data = roster('/events', {'limit': 500, 'cursor': cursor})
-                events.extend(event_rows(data))
+                data = event_page({'limit': 500, 'cursor': cursor})
+                if not discard:
+                    events.extend(event_rows(data))
             data = {k: v for k, v in data.items() if k != 'entries'}
             return {**data, 'events': events}
         except Failure as e:
@@ -81,10 +173,10 @@ def item_events(args, item, types=None):
     params = event_params(args)
     if types:
         params['type'] = types
-    params['item'] = item.get('name') or str(item['id']) if item else getattr(args, 'item', None)
+    params['item'] = item or getattr(args, 'item', None)
     data = collect_events(params)
     if item:
-        data['events'] = [dict(e, match_basis=item_basis(e)) for e in data.get('events', []) if item_matches(e, item)]
+        data['events'] = [dict(e, match_basis=item_basis(e)) for e in data.get('events', [])]
     return data
 
 
