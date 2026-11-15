@@ -33,8 +33,8 @@ Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
 On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
 Ninja sale/price claims are Classic 1.12 baseline; vendor sightings may be seen
 in Forever. ForeverDB maps its own sell-row labels separately from sightings.
-Purchase quantity and faction are unavailable;
-all zones appear, including Horde. Listed prices are not used in craft margins.
+Ninja quantity/faction are unavailable; ForeverDB retains stack and side.
+All zones appear, including Horde; faction filtering is unavailable. Listed prices are not used in craft margins.
 Configuration: Python 3.11+ and curl; keep this executable beside everledger_*.py.
 EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
 EVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN
@@ -43,13 +43,26 @@ EVERLEDGER_MARKET defaults to forever.pvp.alliance.us.
 EVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.
 EVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.
 Set EVERLEDGER_FOREVERDB_API_KEY or EVERLEDGER_FOREVERDB_API_KEY_FILE
-(default: EVERLEDGER_DATA_DIR/foreverdb-api-key). No key: ForeverDB is dormant.
-Ninja stays active until a key is configured and a ForeverDB sync completes.
+(default: EVERLEDGER_DATA_DIR/foreverdb-api-key), or select vault transport with
+EVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb (no raw key required).
+EVERLEDGER_DYNAMIC_CREDENTIALS_DIR defaults to
+/opt/muse/skills/custom-connector-setup/bin; connector mode needs dynamic_credentials.
+Both transports send a browser User-Agent and refuse redirects.
+Ninja stays active until a key or connector is configured and a sync completes.
 Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
 retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
 Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
 ForeverDB vendors only: at most 36 requests per 24h, paced below 30/minute.
-Unfinished syncs resume on a later daily refresh; only complete indexes activate.
+List pages use limit 100 and offset; 1,014 vendors need 11 list + 1,014 detail
+requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
+At 36/day this takes at least 29 daily attempts; retries add requests.
+Retryable HTTP 502 gets one retry after at least retry_after (minimum 60s),
+within the daily cap. Unfinished syncs resume; only complete indexes activate.
+ForeverDB prices are per item only when stack price divides evenly by stack;
+otherwise show the total and quantity, e.g. 10c per 3. Limited stock is marked.
+With ForeverDB active, vendors adds a plain fallback-coverage count when the
+ninja cache knows additional distinct sellers; --in applies to both sets.
+Status names the transport and vendor/item record counts for each backend.
 Status and vendor lookups never make ForeverDB requests.
 Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
 margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
@@ -66,7 +79,7 @@ def parser():
         ('recipe', 'Catalogue facts and roster known-by annotation', [('item', {'nargs':'+'}), ('--skill', {'type':int})]),
         ('bridge', 'Catalogue skill-up bands across a range', [('profession', {}), ('start', {'type':int}), ('end', {'type':int})]),
         ('margins', 'AHledger craft margins; optional roster recipe/level scope', [('profession', {'nargs':'?'}), ('--level', {'type':int}), ('--char', {}), ('--known', {'help':argparse.SUPPRESS})]),
-        ('vendors', 'Vendor listed prices/locations; faction unavailable', [('item', {'nargs':'+'}), ('--in', {'dest':'zone','help':'zone/city substring; aliases IF, SW, Darn, Org, TB, UC'}), ('--char', {'help':'character scope; faction filtering unavailable'}), ('--all', {'action':'store_true','help':'all zones (also the default: faction unavailable)'})]),
+        ('vendors', 'Vendor listed prices/locations; ForeverDB includes faction', [('item', {'nargs':'+'}), ('--in', {'dest':'zone','help':'zone/city substring; aliases IF, SW, Darn, Org, TB, UC'}), ('--char', {'help':'character scope; faction filtering unavailable'}), ('--all', {'action':'store_true','help':'all zones (also the default; no faction filtering)'})]),
         ('char', 'Characters, profession ranks and known recipes', [('name', {'nargs':'?'}), ('profession', {'nargs':'?'}), ('--skill', {'type':int})]),
         ('listings', 'Recorded live auction listings and AHledger floor comparison', [('--char', {}), ('--item', {})]),
         ('positions', 'Inventory holdings/listings and AHledger floor; basis unknown without assignments', [('--char', {}), ('--item', {})]),
@@ -165,9 +178,12 @@ def price(args):
     coverage = f"{sales['coveredHours']}h coverage" if sales['coveredHours'] is not None else 'coverage unknown'
     lines = [f"{human(data['item']['name'])} (item {item['id']}) latest {human(stamp)}: median {money(latest['median'])}, min {money(latest['minBuyout'])}, listed {human(latest['quantity'])} in {human(latest['auctions'])} auctions | 7d median {money(latest['median7d'])} | {rate} over {coverage}"]
     if v['vendors']:
-        prices = [r['price_copper'] for r in v['vendors'] if r['price_copper'] is not None]
-        claim = 'ForeverDB sell-row labels' if v['backend'] == vendors.foreverdb.BACKEND else '1.12 baseline sale/price'
-        lines.append(f"vendor: listed price {money(min(prices) if prices else None)} | {claim}; purchase quantity unknown")
+        if v['backend'] == vendors.foreverdb.BACKEND:
+            offers = sorted({vendors.listed_price(row) + vendors.stock_label(row) for row in v['vendors']})
+            lines.append('vendor: listed price ' + '; '.join(offers) + ' | ForeverDB sell-row labels')
+        else:
+            prices = [r['price_copper'] for r in v['vendors'] if r['price_copper'] is not None]
+            lines.append(f"vendor: listed price {money(min(prices) if prices else None)} | 1.12 baseline sale/price; purchase quantity unknown")
     disclose_item_source(quote,item)
     emit(quote, lines, args.json)
     return stale_code(quote['sources'])
@@ -372,7 +388,9 @@ def status(args):
     rows.append(vendor_status)
     lines=[' | '.join([human(r['source'])] + ([human(r['backend'])] if r.get('backend') else []) + [human(r['state'])]) for r in rows]
     info = vendor_status['foreverdb']
-    lines.append(f"ForeverDB {info['state']} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {info['pending']}")
+    lines.append(f"ForeverDB {info['state']} | transport {info['transport'] or 'none'} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {info['pending']}")
+    ninja_coverage = vendor_status['coverage'][vendors.BACKEND]
+    lines.append(f"wowforever.ninja cache | {ninja_coverage['record_count']} vendor records | {ninja_coverage['item_count']} item records")
     if not vendor_status['cache_items'] and not vendor_status['published_at']:
         lines.append('vendors data: no cache yet')
     else:

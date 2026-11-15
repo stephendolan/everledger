@@ -1,14 +1,20 @@
 """Vendor-only, checkpointed ForeverDB sync; no request occurs during lookup/status."""
+import datetime as dt
 import fcntl
+import importlib
 import json
+import math
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
 
-from everledger_core import DATA_DIR, Failure, age, iso, now, request, source
+from everledger_core import DATA_DIR, Failure, age, iso, now, instant, source
 import everledger_foreverdb_mapping as mapping
 
 BACKEND = 'foreverdb.net'
@@ -16,6 +22,8 @@ BASE = 'https://foreverdb.net'
 CACHE = DATA_DIR / 'vendors' / BACKEND
 DAILY_REQUESTS = 36
 INTERVAL = 2.1  # At most 29 request starts in any 60-second window.
+FORMAT = 2
+USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 CREDIT = 'Data from ForeverDB.net (https://foreverdb.net)'
 
 
@@ -30,6 +38,59 @@ def api_key():
         return ''
     except (OSError, UnicodeError):
         raise Failure('ForeverDB API key file unreadable', 4) from None
+
+
+def transport():
+    if os.environ.get('EVERLEDGER_FOREVERDB_VIA_CONNECTOR', '').strip():
+        return 'connector-surrogate'
+    return 'env-key' if api_key() else None
+
+
+def connector_helper():
+    directory = os.environ.get('EVERLEDGER_DYNAMIC_CREDENTIALS_DIR', '/opt/muse/skills/custom-connector-setup/bin')
+    sys.path.insert(0, directory)
+    try:
+        module = importlib.import_module('dynamic_credentials')
+        return module.add_surrogate_to_request
+    except (ImportError, AttributeError):
+        raise Failure('ForeverDB connector mode requires dynamic_credentials.add_surrogate_to_request in EVERLEDGER_DYNAMIC_CREDENTIALS_DIR', 4) from None
+    except Exception:
+        raise Failure('ForeverDB connector helper could not be loaded', 4) from None
+    finally:
+        sys.path.pop(0)
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def request(url, headers):
+    req = urllib.request.Request(url, headers={**headers, 'User-Agent': USER_AGENT})
+    slug = os.environ.get('EVERLEDGER_FOREVERDB_VIA_CONNECTOR', '').strip()
+    if slug:
+        try:
+            modified = connector_helper()(req, slug, allowed_hosts=['foreverdb.net'])
+            if modified is not None:
+                req = modified
+        except Exception:
+            raise Failure('ForeverDB connector request preparation failed', 4) from None
+    req.add_header('User-Agent', USER_AGENT)
+    try:
+        with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
+            return response.read(), dict(response.headers)
+    except urllib.error.HTTPError as error:
+        try:
+            body = json.loads(error.read())
+        except (ValueError, UnicodeError):
+            body = None
+        raise Failure('ForeverDB HTTP error', 4, {'status': error.code, 'response': body}) from None
+    except (urllib.error.URLError, OSError):
+        raise Failure('ForeverDB transport failed', 4) from None
+
+
+class BudgetExhausted(Exception):
+    pass
 
 
 def read(name):
@@ -55,7 +116,8 @@ def write(name, data):
 
 
 def index():
-    return read('index.json') if api_key() else None
+    data = read('index.json') if transport() else None
+    return data if data and data.get('format') == FORMAT else None
 
 
 def snapshot(pending, previous):
@@ -68,16 +130,17 @@ def snapshot(pending, previous):
             entry['vendors'].append(sale['row'])
     for entry in items.values():
         entry['vendors'].sort(key=lambda row: (row['zone'].casefold(), row['name'].casefold(), row['npc_id']))
-    return {'backend': BACKEND, 'fetched_at': iso(now()), **pending['metadata'],
+    return {'format': FORMAT, 'backend': BACKEND, 'fetched_at': iso(now()), **pending['metadata'],
             'record_count': len(pending['details']), 'item_count': len(items),
             'items': items, 'details': pending['details'],
             'sync_requests': pending['total_requests']}
 
 
 def sync():
-    key = api_key()
-    if not key:
+    mode = transport()
+    if not mode:
         return {'configured': False, 'complete': False, 'requests': 0}
+    key = api_key() if mode == 'env-key' else None
     CACHE.mkdir(parents=True, exist_ok=True)
     with (CACHE / 'sync.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -85,18 +148,20 @@ def sync():
 
 
 def _sync(key):
-    previous = read('index.json')
+    previous = index()
     attempt = read('attempt.json')
     pending = read('pending.json')
     if attempt and age(attempt.get('finished_at') or attempt.get('last_request_at') or attempt['attempted_at']) < 86400:
         return {'configured': True, 'complete': previous is not None and pending is None,
                 'pending': pending is not None, 'requests': 0,
                 'deferred': 'daily sync limit', 'failed': attempt.get('failed', False)}
+    if pending and pending.get('format') != FORMAT:
+        pending = None
     if pending and previous and pending['sync_id'] == previous.get('sync_id'):
         (CACHE / 'pending.json').unlink()
         pending = None
     if pending is None:
-        pending = {'sync_id': uuid.uuid4().hex, 'started_at': iso(now()), 'next_page': 1, 'revisions': {},
+        pending = {'format': FORMAT, 'sync_id': uuid.uuid4().hex, 'started_at': iso(now()), 'next_offset': 0, 'vendor_ids': [],
                    'details': {}, 'metadata': None, 'total_requests': 0}
     if pending['sync_id'] == (attempt or {}).get('sync_id'):
         pending['total_requests'] = max(pending['total_requests'], attempt.get('total_requests', 0))
@@ -109,53 +174,74 @@ def _sync(key):
 
     def get(path):
         nonlocal last_start
-        if last_start is not None:
-            time.sleep(max(0, INTERVAL - (time.monotonic() - last_start)))
-        attempt['requests'] += 1
-        pending['total_requests'] += 1
-        attempt['total_requests'] = pending['total_requests']
-        attempt['last_request_at'] = iso(now())
-        write('attempt.json', attempt)
-        last_start = time.monotonic()
-        try:
-            raw, _ = request(BASE + path, {'X-API-Key': key})
-        except (Failure, OSError, ValueError) as error:
-            status = (error.body or {}).get('status') if isinstance(error, Failure) else None
-            raise Failure('ForeverDB sync failed' + (f' (HTTP {status})' if status else ''),
-                          4, {'status': status}) from None
-        try:
-            return json.loads(raw)
-        except (ValueError, UnicodeError):
-            mapping.invalid()
+        while True:
+            if attempt['requests'] >= DAILY_REQUESTS:
+                raise BudgetExhausted()
+            retry = pending.get('retry')
+            if retry:
+                time.sleep(max(0, (instant(retry['not_before']) - now()).total_seconds()))
+            if last_start is not None:
+                time.sleep(max(0, INTERVAL - (time.monotonic() - last_start)))
+            attempt['requests'] += 1
+            pending['total_requests'] += 1
+            attempt['total_requests'] = pending['total_requests']
+            attempt['last_request_at'] = iso(now())
+            write('attempt.json', attempt)
+            last_start = time.monotonic()
+            try:
+                headers = {'User-Agent': USER_AGENT}
+                if key:
+                    headers['X-API-Key'] = key
+                raw, _ = request(BASE + path, headers)
+            except (Failure, OSError, ValueError) as error:
+                body = (error.body or {}) if isinstance(error, Failure) else {}
+                status = body.get('status')
+                response = body.get('response')
+                if status == 502 and not retry and isinstance(response, dict) and response.get('retryable') is True:
+                    delay = response.get('retry_after', 60)
+                    if type(delay) not in (int, float) or not math.isfinite(delay) or delay < 0:
+                        delay = 60
+                    pending['retry'] = {'not_before': iso(now() + dt.timedelta(seconds=math.ceil(max(60, delay)) + 1))}
+                    write('pending.json', pending)
+                    continue
+                pending.pop('retry', None)
+                raise Failure('ForeverDB sync failed' + (f' (HTTP {status})' if status else ''),
+                              4, {'status': status}) from None
+            pending.pop('retry', None)
+            try:
+                return json.loads(raw)
+            except (ValueError, UnicodeError):
+                mapping.invalid()
 
     try:
-        while pending['next_page'] is not None and attempt['requests'] < DAILY_REQUESTS:
-            number = pending['next_page']
-            payload = get('/api/v1/vendors?' + urllib.parse.urlencode({'page': number, 'per_page': 100}))
-            revisions, following, metadata = mapping.page(payload, number)
-            if pending['metadata'] is not None and pending['metadata'] != metadata:
-                obsolete = True
-                mapping.invalid()
-            if pending['revisions'].keys() & revisions.keys():
-                mapping.invalid()
-            pending['metadata'] = metadata
-            pending['revisions'].update(revisions)
-            pending['next_page'] = following
-            write('pending.json', pending)
-        if pending['next_page'] is None:
-            for vendor_id, revision in pending['revisions'].items():
-                if vendor_id in pending['details']:
-                    continue
-                old = (previous or {}).get('details', {}).get(vendor_id)
-                if old and old['revision'] == revision:
-                    pending['details'][vendor_id] = old
-                elif attempt['requests'] < DAILY_REQUESTS:
-                    data = mapping.vendor(get('/api/v1/vendors/' + vendor_id), int(vendor_id))
-                    pending['details'][vendor_id] = {'revision': revision, 'data': data}
-                else:
-                    break
+        if key is None:
+            connector_helper()
+        try:
+            while pending['next_offset'] is not None and attempt['requests'] < DAILY_REQUESTS:
+                offset = pending['next_offset']
+                payload = get('/api/v1/vendors?' + urllib.parse.urlencode({'limit': mapping.PAGE_SIZE, 'offset': offset}))
+                vendor_ids, following, metadata = mapping.page(payload, offset)
+                if pending['metadata'] is not None and pending['metadata'] != metadata:
+                    obsolete = True
+                    mapping.invalid()
+                if set(pending['vendor_ids']) & set(vendor_ids):
+                    mapping.invalid()
+                pending['metadata'] = metadata
+                pending['vendor_ids'].extend(vendor_ids)
+                pending['next_offset'] = following
                 write('pending.json', pending)
-        complete = pending['next_page'] is None and len(pending['details']) == len(pending['revisions'])
+            if pending['next_offset'] is None:
+                for vendor_id in pending['vendor_ids']:
+                    if vendor_id in pending['details']:
+                        continue
+                    if attempt['requests'] >= DAILY_REQUESTS:
+                        break
+                    data = mapping.vendor(get('/api/v1/vendors/' + vendor_id), int(vendor_id))
+                    pending['details'][vendor_id] = {'data': data}
+                    write('pending.json', pending)
+        except BudgetExhausted:
+            pass
+        complete = pending['next_offset'] is None and len(pending['details']) == len(pending['vendor_ids'])
         if complete:
             data = snapshot(pending, previous)
             data['sync_id'] = pending['sync_id']
@@ -203,7 +289,7 @@ def provenance(data, rows, stale):
                    fetched_at=data['fetched_at'], stale=stale,
                    detail=f'{CREDIT}; sell-row labels: {counts["seen"]} seen in Forever, '
                    f'{counts["baseline"]} Classic-only baseline, {counts["unverified"]} unverified; '
-                   'vendor sightings separate; listed copper prices; faction unavailable')]
+                   'vendor sightings separate; listed stack prices and quantities; faction from side')]
 
 
 def index_sources(data):

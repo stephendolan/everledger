@@ -55,6 +55,8 @@ class CLI(unittest.TestCase):
                         EVERLEDGER_AHLEDGER_URL=base, EVERLEDGER_VENDOR_URL=base)
         self.env.pop('EVERLEDGER_FOREVERDB_API_KEY', None)
         self.env.pop('EVERLEDGER_FOREVERDB_API_KEY_FILE', None)
+        self.env.pop('EVERLEDGER_FOREVERDB_VIA_CONNECTOR', None)
+        self.env.pop('EVERLEDGER_DYNAMIC_CREDENTIALS_DIR', None)
         Handler.requests = []
         Handler.event_contract = None
         Handler.routes = {
@@ -643,7 +645,7 @@ def get(url, headers):
     from urllib.parse import urlsplit, parse_qs
     parsed = urlsplit(url)
     if parsed.path == '/api/v1/vendors':
-        data = fixture['pages'][int(parse_qs(parsed.query)['page'][0])-1]
+        data = fixture['pages'][int(parse_qs(parsed.query)['offset'][0])//100]
     else:
         data = fixture['details'][parsed.path.rsplit('/',1)[1]]
     return json.dumps(data).encode(), {}
@@ -666,13 +668,16 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         data = json.loads(self.run_cli('vendors', '2604', '--in', 'IF', '--json').stdout)
         self.assertEqual(data['backend'], 'foreverdb.net')
         self.assertEqual({v['name'] for v in data['vendors']}, {
-            'Poranna Snowbraid', 'Outfitter Eric', 'Burbik Gearspanner', 'Bombus Finespindle'})
+            'Poranna Snowbraid', 'Outfitter Eric', 'Bombus Finespindle'})
         other = json.loads(self.run_cli('vendors', '2604', '--in', 'Dun Morogh', '--json').stdout)
-        self.assertEqual([v['name'] for v in other['vendors']], ['Burbik Gearspanner'])
-        self.assertEqual(len(other['vendors'][0]['locations']), 2)
+        self.assertEqual(other['vendors'], [])
+        self.assertEqual(data['fallback_additional_sellers'], 1)
         human = self.run_cli('vendors', '2604').stdout
-        self.assertIn('Dun Morogh: 48.1, 59.2', human)
-        self.assertIn('sale/price Classic-only baseline; vendor seen', human)
+        self.assertIn('Ironforge: 43.4, 29.3 | Alliance', human)
+        self.assertIn('sale/price unverified; vendor seen', human)
+        filtered = self.run_cli('vendors', '2604', '--in', 'IF').stdout
+        self.assertIn('Fallback dataset knows 1 more seller for this item.', filtered)
+        self.assertEqual(sum(line.startswith('source:') for line in filtered.splitlines()), 1)
         self.assertIn('source: foreverdb.net', human)
         self.assertIn('Data from ForeverDB.net (https://foreverdb.net)', human)
         self.assertNotIn('each', human)
@@ -693,12 +698,18 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         info = json.loads(self.run_cli('status', '--json').stdout)
         row = next(row for row in info['status'] if row['source'] == 'vendors')
         self.assertEqual(row['backend'], 'foreverdb.net')
-        self.assertEqual(row['record_count'], 4)
+        self.assertEqual(row['record_count'], 5)
+        self.assertEqual(row['coverage']['wowforever.ninja']['record_count'], 89)
+        self.assertEqual(row['coverage']['wowforever.ninja']['item_count'], 1)
+        self.assertEqual(row['coverage']['foreverdb.net']['record_count'], 5)
+        self.assertEqual(row['coverage']['foreverdb.net']['item_count'], 3)
+        self.assertEqual(row['foreverdb']['transport'], 'env-key')
         self.assertIsNotNone(row['last_sync_at'])
         self.assertEqual(row['foreverdb']['state'], 'synced')
         detail = next(source['detail'] for source in info['sources'] if source.get('name') == 'foreverdb.net vendors')
         self.assertIn('3 seen in Forever', detail)
-        self.assertIn('1 Classic-only baseline', detail)
+        self.assertIn('0 Classic-only baseline', detail)
+        self.assertIn('1 unverified', detail)
         self.assertFalse(any('/api/v1/' in url for url in Handler.requests))
         self.market()
         # Restore the item catalogue for recipe and margin assertions after refresh.
@@ -708,6 +719,20 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         self.assertIn('Data from ForeverDB.net (https://foreverdb.net)', price)
         margins = json.loads(self.run_cli('margins', 'tailoring', '--json').stdout)
         self.assertEqual(margins['margins'][0]['cost_copper'], 88)
+
+    def test_foreverdb_price_displays_uneven_stack_and_limited_stock(self):
+        self.sync_foreverdb()
+        path = Path(self.tmp.name, 'vendors/foreverdb.net/index.json')
+        index = json.loads(path.read_text())
+        row = next(r for r in index['items']['2604']['vendors'] if r['npc_id'] == 8681)
+        row.update(price_copper=None, stack_price_copper=10, stack=3, limited=True, limitedStockCount=2)
+        path.write_text(json.dumps(index))
+        self.market()
+        output = self.run_cli('price', '2604').stdout
+        self.assertIn('10c per 3 | limited stock (2)', output)
+        self.assertEqual(sum(line.startswith('source:') for line in output.splitlines()), 1)
+        output = self.run_cli('vendors', '2604', '--in', 'IF').stdout
+        self.assertIn('10c per 3 | limited stock (2)', output)
 
     def test_foreverdb_no_key_and_before_sync_status(self):
         self.refresh_routes()

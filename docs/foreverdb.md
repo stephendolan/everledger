@@ -1,206 +1,171 @@
-# ForeverDB backend and key-day acceptance
+# ForeverDB backend
 
-Implemented locally without a key or a live ForeverDB request. API access is
-pending. The fixture suite verifies behavior against a synthetic contract; it
-does not establish compatibility with the actual service.
+The mapping follows read-only probes made by Muse on November 15, 2026 with
+client dev-0256, build 1.60.1.70938. No live ForeverDB calls were made while
+implementing or testing this change.
 
-## Mapping assumptions — all provisional
+## Mapping decisions
 
-The wire assumptions live in `everledger_foreverdb_mapping.py`.
+Lists are `{data, meta}` at `/api/v1/vendors?limit=100&offset=0`; pagination
+uses `meta.total` and offsets in steps of 100. Limit 500 was rejected live.
+Build and total must stay consistent across the checkpoint's list pages; a
+mismatch discards that checkpoint and restarts on the next eligible attempt.
+Details are `{data: {...vendor, sells}}`. There is no extraction timestamp in
+the observed envelope: `published_at` stays null, and local `fetched_at` records
+sync completion. A multi-day sync is a traversal, not an upstream atomic snapshot.
+The preserved one-day/seven-day cache-age rules measure time since index
+completion, not each detail's observation age. At today's cap, early details may
+be at least 28 days old when an index first publishes; completion does not
+establish that every sell was recently revalidated.
 
-- **PROVISIONAL:** List requests use `/api/v1/vendors?page=1&per_page=100`, then
-  consecutive numeric pages. The envelope has `vendors`, explicit `next_page`
-  (`null` terminates), `build`, and ISO `extracted_at`. All pages describe the
-  same extraction. No `seen=true` filter is sent: Classic-only vendors must also
-  be indexed. Unfiltered completeness requires live confirmation.
-- **PROVISIONAL:** Each list vendor has a positive integer `id` and a nonempty
-  `updated_at` revision. That revision covers **every** sell addition/removal,
-  price, label and location change. This is the critical assumption permitting
-  incremental sync; missing revisions fail closed. If the real list cannot
-  expose this, steady-state detail reuse is unsafe and needs redesign before
-  activation. Build/extraction metadata alone does not prove unchanged sells.
-- **PROVISIONAL:** `/api/v1/vendors/{id}` returns an unwrapped object with `id`,
-  `name`, optional `title`, optional `seen`, `locations`, and a **complete**
-  `sells` list. Each sell has integer `item_id`, optional item `name`,
-  `price_copper` (nonnegative integer copper or explicit null), and optional
-  `seen`. Null price stays unknown. No purchase quantity or faction is inferred.
-- **PROVISIONAL:** Vendor and sell `seen` values are independent booleans:
-  `true` means seen-in-Forever, `false` explicitly means Classic-only, and
-  missing/null means unverified. Sell labels map to each seller row's `basis`,
-  `sale_basis` and `price_basis`; vendor labels map only to `vendor_basis`.
-  A vendor sighting cannot promote its sells. String/numeric labels fail the
-  mapping rather than being coerced. The live gate must confirm whether the
-  real labels describe sightings, sells, prices, or a different scope.
-- **PROVISIONAL:** Locations are an ordered list of objects with `zone`,
-  `zone_slug`, `x`, `y`; coordinates are percentages or null. Every object is
-  retained in `locations`; every complete coordinate pair is also retained in
-  the existing `coords` list. The first location supplies the legacy sorting
-  `zone`/`zone_slug`. Zone filtering checks all locations and human output shows
-  them all. Verify actual location fields, coordinate units and multiplicity.
-- **PROVISIONAL:** The synthetic fixtures' field names, envelope, revision
-  strings, labels, location multiplicity and sell membership are illustrative,
-  not captured API observations. The four Red Dye seller names and listed 50c
-  are regression expectations; their real ForeverDB records still need checking.
+Each sell's `seenInForever: true` maps to seen; otherwise `classicData: true`
+maps to baseline; otherwise it is unverified. Vendor sightings never promote
+sells. Eric's Red Dye has both flags false. `side` supplies ForeverDB faction;
+ninja output keeps its existing faction-unavailable wording. Each vendor has
+one `locations` entry and one complete coordinate pair in `coords`, retaining
+zone and `mapId` (also on the seller row).
 
-The transport uses the documented `https://foreverdb.net` base and `X-API-Key`.
-Only vendor endpoints are requested; `/items` is never called. Mapping errors
-preserve the active index and report that the provisional shape needs checking.
+`stack_price_copper` retains the integer total `price`, and `stack` retains the
+purchase count. `price_copper` is exact per item only when the total divides
+evenly by stack (including stack 1); otherwise it is null. The API's floating
+`pricePerItem` is preserved in the raw sell but never rounded into copper.
+Both `vendors` and `price` print the stack total/count for uneven division,
+e.g. **10c per 3**. Exact divisions print per-item copper. `limited` and
+`limitedStockCount` survive in the index, and human output marks limited stock,
+including a count when supplied. Listed prices stay out of craft margins.
 
-## Sync and request counts
+An unknown item has `vendors: null` with `reason: "item not in dataset"`.
+Historical items whose last seller disappears retain `vendors: []` with null
+reason. Human absence wording is bounded to the index's knowledge.
 
-`everledger refresh catalogue` extends the shipped refresh path. It still
-rebuilds the profession catalogue. With a key, it also runs one vendor sync;
-without an active ForeverDB index it refreshes the previously queried ninja
-items as before. Lookups and status never request ForeverDB data.
+## Transport and activation
 
-Let **P** be the number of list pages, **N** the vendor count and **C** the count
-of new or revised vendors. Bootstrap requires **P + N** requests; a later full
-list traversal requires **P + C**, or **P** when nothing changed. Removed vendors
-require no detail request. An actual production total cannot be known without
-API access; no claim that the first sync fits a few dozen requests is made.
+`EVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb` selects connector-surrogate
+transport, taking precedence over key settings. Only this mode lazily imports
+`dynamic_credentials` from `EVERLEDGER_DYNAMIC_CREDENTIALS_DIR` (default
+`/opt/muse/skills/custom-connector-setup/bin`) and calls
+`add_surrogate_to_request(request, "custom.foreverdb", allowed_hosts=["foreverdb.net"])`.
+It never reads a raw key. A missing helper gives a clear sync error; status,
+help and other commands can still run without it. Status names the selected
+transport without displaying credentials.
 
-Each attempt allows at most **36 requests**, including failed requests, followed
-by a **24-hour cooldown after completion/failure**. Requests are sequential and
-paced at least 2.1 seconds apart (below 30/minute). There are no automatic retries.
-A file lock serializes concurrent refreshes; an attempt journal preserves the
-cooldown across processes and interruptions; the last request start is journaled
-before transport so an abrupt process stop cannot shorten it. Bootstrap/large updates span daily
-attempts, preserving completed list pages and details in a checkpoint. Approximate
-bootstrap duration is `ceil((P + N) / 36)` daily attempts; interrupted requests
-can add to that total. Steady-state churn or pagination can also require multiple
-days. This bounds spend even if the revision assumption proves false.
+Env-key mode retains `X-API-Key`: nonblank `EVERLEDGER_FOREVERDB_API_KEY` wins
+over `EVERLEDGER_FOREVERDB_API_KEY_FILE`, whose default is
+`$EVERLEDGER_DATA_DIR/foreverdb-api-key`. Both transports send a browser
+User-Agent and refuse redirects. Errors and cache files never include key or
+surrogate material; upstream error messages/bodies are suppressed.
 
-Fixture counts: 4 vendors across 2 pages require **6** requests initially,
-**2** unchanged, **3** with one changed vendor. A 40-vendor, one-page fixture
-requires **41** total: **36 + 5** across two daily attempts. The CLI JSON reports
-requests for each attempt and cumulative requests for the completed transaction;
-status reports the last attempt's actual count. The 12 existing profession-page
-requests are to ninja and are not ForeverDB API requests.
+Activation requires configuration AND a complete index in the current format.
+Old provisional indexes/checkpoints cannot activate. Removing configuration
+restores ninja immediately. Lookup and status make no ForeverDB requests.
+Transport/server failures can serve the prior index stale for up to seven days;
+HTTP 4xx or older indexes select ninja fallback. A successful fallback after a
+ForeverDB failure prints stale and exits 3; unavailable sources exit 4, matching
+the existing contract. Ordinary vendor answers become stale after one day.
 
-Validated checkpoints and the completed index are written through temporary
-files, flushed, then atomically replaced. Only a complete index activates;
-errors, interrupts and budget exhaustion leave the prior index intact. The
-checkpoint is separate from the active index. If pagination resumes into a new
-extraction, the obsolete checkpoint is discarded and the next eligible daily
-attempt restarts listing; it cannot trap all later attempts. Historical item records remain
-with an empty seller list after their final seller disappears. An item never
-observed has `vendors: null` and `reason: "item not in dataset"`; known empty is
-`vendors: []`, `reason: null`; sellers present is a nonempty list. Human absence
-wording remains “no known sellers in the vendor index,” never a universal claim.
+## Coverage
 
-## Selection and credentials
+ForeverDB is not a superset of ninja. Of the four known Ironforge Red Dye
+sellers, Poranna and Bombus are seen, Eric is unverified, and Burbik's sells
+omit Red Dye. With ForeverDB active, `vendors` compares distinct NPC IDs with
+the existing ninja item cache. `--in` scopes both sets before comparison.
+When additional sellers exist it adds, for example:
 
-A nonblank `EVERLEDGER_FOREVERDB_API_KEY` wins over the file selected by
-`EVERLEDGER_FOREVERDB_API_KEY_FILE`, which defaults to
-`EVERLEDGER_DATA_DIR/foreverdb-api-key` (`~/.everledger/foreverdb-api-key` normally).
-Absent/empty keys leave ForeverDB unavailable. No credential is stored in an
-index or printed; upstream error bodies and transport messages are suppressed.
+```text
+Fallback dataset knows 1 more seller for this item.
+```
 
-Ninja remains active until a key and a complete ForeverDB index both exist.
-ForeverDB then activates automatically. During a failed refresh, its previous
-index may serve stale for up to 7 days for transport/server failures; HTTP 4xx
-and older indexes select ninja fallback. Ninja's own refresh failures retain
-its existing 7-day stale-cache rule. A successful ninja fallback after a
-ForeverDB failure is marked stale to disclose the failure (exit 3). No qualifying
-fallback exits with a source error. Normal cached answers older than one day
-remain stale until refresh, matching the original cache behavior. Removing the
-key immediately restores ninja. The backend directories and provenance remain
-separate; no item answer combines rows from the two sources.
+This is a data line; the single `source:` footer remains intact. It does not
+merge fallback sellers or provenance into the answer, refresh ninja, or
+change exit codes. JSON exposes `fallback_additional_sellers`. No comparison
+cache means no claimed extra sellers. Cache entries for a different ninja URL
+are excluded. Status reports each backend's vendor/item record counts, with
+ninja vendors counted once across its cached items. These are local cache
+counts, not a claim of complete ninja coverage.
 
-Every ForeverDB answer, including `price` and `status`, includes
-“Data from ForeverDB.net (https://foreverdb.net)” in its source metadata/line.
-Status reports the active backend plus ForeverDB configuration, last successful
-sync, vendor/item record counts, pending state, and last attempt/count.
+## Sync request math and persistence
+
+No per-vendor revision exists in the observed API. Reusing details based on
+list metadata or build would miss changed sells, so every completed sync
+fetches every detail. For N vendors, bootstrap AND steady state need
+`ceil(N / 100) + N` requests: **11 + 1,014 = 1,025** today, requiring at least
+**29 daily attempts** at 36 requests each (28 × 36 + 17). Unchanged data costs
+the same. A five-vendor fixture needs 1 + 5 = 6 each time; a 40-vendor fixture
+needs 41 total, split as 36 + 5. Empty datasets still require one list request.
+
+Each attempt allows at most 36 requests, including failures/retries, with the
+existing 24-hour cooldown after completion/failure and sequential starts at
+least 2.1 seconds apart. A retryable HTTP 502 gets one retry after at least
+`retry_after`, with a minimum 60-second wait. If the cap prevents that retry,
+the checkpoint retains the wait and resumes on a later daily attempt. A second
+failure ends the attempt. All retries add to the total request math.
+
+A lock serializes syncs; the attempt journal records each request before
+transport, preserving cooldown even on abrupt exit. Checkpoints retain finished
+pages and details. Validated indexes publish with atomic replace only after
+all details finish. Interruptions, errors and budget exhaustion retain the prior
+index. The profession catalogue refresh still makes its existing ninja requests;
+those do not count toward the ForeverDB cap.
 
 ## Offline verification
 
-Run `python3 -m unittest discover -s tests` from the repository. Tests cover
-sync/index construction; the four Ironforge Red Dye sellers; independent vendor
-and sell provenance; unknown labels; all three absence states; cross-zone
-multiple locations; listed copper prices and attribution in `vendors`/`price`;
-AHledger-only margins; incremental change/removal; daily budgets and pacing;
-checkpoint resumption after a mid-detail interrupt; abrupt-exit cooldown;
-recovery after an extraction changes during pagination; honest pending reporting; atomic preservation of the
-old index; a failed index remaining ineligible through an unfinished retry; malformed mapping; credential precedence and redaction (including invalid header exceptions); keyless
-and pre-sync dormancy; stale-index and ninja fallback; and the real CLI refresh
-path with fixture transport. ForeverDB requests are replaced in-process; other
-CLI integrations use a local fixture server.
+```bash
+python3 -m unittest discover -s tests
+```
 
-## Live acceptance on key day — required before trusting the adapter
+Fixtures reconstruct the supplied real wire shapes rather than claiming full
+response captures. They cover list metadata for 1,014 vendors at limit 100,
+wrapped vendor 54 (Corina Steele, Gladius at 536c), the four Red Dye vendors
+with Burbik's omission and Eric unverified, and per-sell precedence. Coordinates
+and map IDs in these fixtures are representative; the NPC IDs match existing
+ninja ground truth. Item 9001 and uneven-stack cases are synthetic regressions.
+Tests cover exact prices and limited stock, cached coverage, status counts,
+502 success/failure and budget-boundary resumption, stubbed dynamic_credentials
+with no vault, outgoing UA in both transports, missing-module isolation, key
+precedence/redaction (including helper import/injection exceptions), daily caps/pacing, checkpoint resumption, atomic publication,
+stale fallback, and exact README/help agreement. Network integrations use only
+local fixture servers; all ForeverDB responses are replaced.
 
-1. From the repo, run the offline suite above. Keep the current ninja cache.
-   Put the newly approved key in the default file using a local editor; do not
-   paste it into terminal commands or logs:
+## Muse: first connector sync on the VM
 
-   ```bash
-   export EVERLEDGER_DATA_DIR="${EVERLEDGER_DATA_DIR:-$HOME/.everledger}"
-   umask 077
-   mkdir -p "$EVERLEDGER_DATA_DIR"
-   "${EDITOR:-vi}" "$EVERLEDGER_DATA_DIR/foreverdb-api-key"
-   chmod 600 "$EVERLEDGER_DATA_DIR/foreverdb-api-key"
-   ```
+Keep the existing ninja cache so coverage can be compared. From the deployed
+checkout (substitute its path if different):
 
-2. `./everledger status --json` must show ninja active and ForeverDB awaiting a
-   completed sync (assuming no previous completed ForeverDB index). This makes
-   no ForeverDB request. For the first live attempt, inspect the mapping boundary
-   with the debugger (this runs the same paced, budgeted refresh):
+```bash
+cd /home/devbox/repos/everledger
+export EVERLEDGER_DATA_DIR="${EVERLEDGER_DATA_DIR:-$HOME/.everledger}"
+export EVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb
+export EVERLEDGER_DYNAMIC_CREDENTIALS_DIR=/opt/muse/skills/custom-connector-setup/bin
+python3 -m unittest discover -s tests
+./everledger status --json
+./everledger refresh catalogue --json
+./everledger status --json
+```
 
-   ```bash
-   python3 -m pdb ./everledger refresh catalogue --json
-   ```
+Before completion, status should name connector-surrogate and ninja active.
+Each refresh reports at most 36 ForeverDB requests. Repeat the same refresh
+command after at least 24 hours from the previous attempt's end, keeping these
+environment settings, until `vendor_sync.complete` is true (at least 29 attempts
+at today's count). An immediate repeat must report zero requests. Do not raise
+the cap or delete cooldown/checkpoint files. No raw key export is needed.
 
-   At the debugger prompt, set `b everledger_foreverdb_mapping.py:46` and
-   `b everledger_foreverdb_mapping.py:66`, then `c`. At each mapping breakpoint
-   use `pp payload` to inspect the response, then `c` to continue. Do not inspect
-   transport locals or request headers. These line numbers are for this version;
-   after editing, use the first executable line in `page` and `vendor`.
-   Verify **every provisional
-   assumption above**, including revision coverage with ForeverDB's documented
-   guarantees or an observed changed sell. Unknown revision semantics are not
-   acceptance. If the shape differs, keep ninja active, correct only the mapping
-   and corresponding fixtures, rerun the suite, and wait for the next daily
-   attempt. Do not bypass the cooldown or increase the budget.
+After completion:
 
-3. Check `vendor_sync.requests <= 36`. If pending, run the same refresh command
-   after at least 24 hours from the prior attempt's end, repeating until complete.
-   Sum actual counts and compare with P + N (plus any failed/repeated requests).
-   Confirm status keeps ninja active until completion, then names foreverdb.net,
-   last sync time and the actual record counts. If bootstrap spans extraction
-   changes, verify the completed list/detail records describe a compatible
-   extraction before accepting them. An extraction mismatch during pagination
-   automatically discards the obsolete checkpoint and waits for the next daily
-   attempt to restart; the active index remains intact.
+```bash
+./everledger vendors 2604 --in IF
+./everledger vendors 2604 --in IF --json
+./everledger vendors 2488
+./everledger price 2604
+./everledger status --json
+```
 
-4. Run these commands and inspect the human output and JSON:
-
-   ```bash
-   ./everledger vendors 2604 --in IF
-   ./everledger vendors 2604 --in IF --json
-   ./everledger price 2604
-   ./everledger status --json
-   ```
-
-   Confirm Poranna Snowbraid, Outfitter Eric, Burbik Gearspanner and Bombus
-   Finespindle against actual API records. Check every returned location and
-   each sale's copper price/label without inferring faction or quantity. Confirm
-   backend attribution plus the credit/link on every output using ForeverDB.
-   Verify a real unknown item, a locally known item whose sellers disappeared,
-   and an item with sellers retain the three distinct JSON states and bounded
-   human wording. Use fixture coverage for a state absent from the live dataset.
-
-5. Run `./everledger refresh catalogue --json` again immediately: ForeverDB
-   requests must be zero. After the next eligible 24 hours run it once more:
-   expect P requests if unchanged, P + C when revisions changed. Check removals,
-   changed prices and labels are reflected and multi-location data survives.
-   An absent sell-change revision guarantee leaves acceptance incomplete.
-   Finish with the offline interrupt/fallback tests; do not deliberately generate
-   production API errors to prove failure handling.
+Inspect the sell labels and fallback coverage against the retained ninja cache.
+Later full syncs have the same 1,025-request minimum at today's vendor count.
 
 ## Learnings
 
-Vendor sightings and observed sales are separate claims; only the sell record's
-own label can strengthen sale/price provenance. A detail-per-vendor bootstrap
-cannot honestly promise a few dozen total requests, so its daily budget and
-multi-day completion must be explicit. The API's actual shape and revision
-semantics remain unverified; fixture success is preparation for acceptance,
-not evidence that the real API contract has been confirmed.
+The list has no safe sell revision: honest steady-state freshness costs a full
+detail traversal. Browser UA is required before authentication can succeed.
+Sell-level provenance and dataset coverage answer different questions; observed
+sales do not establish exhaustive seller coverage. Integer stack totals avoid
+false precision from floating per-item prices.

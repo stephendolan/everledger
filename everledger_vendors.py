@@ -130,13 +130,21 @@ def ninja_fallback(data):
 
 
 def lookup(item_id, refresh=False):
-    if refresh and foreverdb.api_key():
+    if refresh and foreverdb.transport():
         refresh_cached()
     data = active_index()
     if data is not None:
-        return foreverdb.lookup(item_id, data)
+        result = foreverdb.lookup(item_id, data)
+        path = CACHE / f'{item_id}.json'
+        try:
+            cached = json.loads(path.read_text())
+        except FileNotFoundError:
+            cached = {}
+        result['_fallback_vendors'] = (cached.get('vendors') or []) if cached.get('backend_url') == BASE else []
+        compare_coverage(result)
+        return result
     result = ninja_lookup(item_id, refresh=refresh)
-    if foreverdb.api_key() and (foreverdb.read('attempt.json') or {}).get('failed'):
+    if foreverdb.transport() and (foreverdb.read('attempt.json') or {}).get('failed'):
         ninja_fallback(result)
     return result
 
@@ -165,7 +173,7 @@ def refresh_cached():
 
 
 def backend_status():
-    configured = bool(foreverdb.api_key())
+    configured = bool(foreverdb.transport())
     completed = foreverdb.index() if configured else None
     attempt = (foreverdb.read('attempt.json') or {}) if configured else {}
     data = completed if usable_index(completed, attempt) else None
@@ -173,63 +181,98 @@ def backend_status():
     if attempt.get('failed'):
         state = 'sync failed; serving previous index' if data else 'sync failed; ninja fallback'
     info = {'backend': foreverdb.BACKEND, 'state': state,
+            'transport': foreverdb.transport(),
             'last_sync_at': completed['fetched_at'] if completed else None,
             'record_count': completed['record_count'] if completed else 0,
             'item_count': completed['item_count'] if completed else 0,
             'last_attempt_at': attempt.get('attempted_at'),
             'last_attempt_requests': attempt.get('requests', 0),
             'pending': foreverdb.read('pending.json') is not None if configured else False}
+    cached = [json.loads(path.read_text()) for path in CACHE.glob('*.json')]
+    cached = [item for item in cached if item.get('backend_url') == BASE]
+    ninja_rows = [row for item in cached for row in item.get('vendors') or []]
+    coverage = {BACKEND: {'record_count': len({row['npc_id'] for row in ninja_rows}), 'item_count': len(cached)},
+                foreverdb.BACKEND: {'record_count': info['record_count'], 'item_count': info['item_count']}}
     if data is not None:
         rows = [row for item in data['items'].values() for row in item['vendors']]
         summary = {'source': 'vendors', 'backend': foreverdb.BACKEND, 'state': state,
                    'cache_items': data['item_count'], 'published_at': data['published_at'],
                    'last_sync_at': data['fetched_at'], 'record_count': data['record_count'],
                    **{basis: sum(row['basis'] == basis for row in rows)
-                      for basis in ('seen', 'baseline', 'unverified')}, 'foreverdb': info}
+                      for basis in ('seen', 'baseline', 'unverified')}, 'foreverdb': info, 'coverage': coverage}
         return summary, foreverdb.index_sources(data)
-    cached = [json.loads(path.read_text()) for path in CACHE.glob('*.json')]
-    rows = [row for item in cached for row in item.get('vendors') or []]
+    rows = ninja_rows
     summary = {'source': 'vendors', 'backend': BACKEND, 'cache_items': len(cached),
                'published_at': max((item.get('published_at') or '' for item in cached), default=None),
                **{basis: sum(row['basis'] == basis for row in rows)
-                  for basis in ('seen', 'baseline', 'unverified')}, 'foreverdb': info}
+                  for basis in ('seen', 'baseline', 'unverified')}, 'foreverdb': info, 'coverage': coverage}
     return summary, [source(BACKEND, summary['published_at'],
                             detail=f'cache {len(cached)} items; ForeverDB {state}')]
 
 
 def public(data):
-    return {k: v for k, v in data.items() if k not in ('raw_item', 'raw_pins', 'backend_url')}
+    return {k: v for k, v in data.items() if k not in ('raw_item', 'raw_pins', 'backend_url', '_fallback_vendors')}
+
+
+def compare_coverage(data):
+    known = {row['npc_id'] for row in data['vendors'] or []}
+    data['fallback_additional_sellers'] = len({row['npc_id'] for row in data['_fallback_vendors']} - known)
+
+
+def listed_price(row):
+    from everledger_core import money
+    if row['price_copper'] is not None:
+        return money(row['price_copper'])
+    if row.get('stack_price_copper') is not None:
+        return f"{money(row['stack_price_copper'])} per {row['stack']}"
+    return 'unknown'
+
+
+def stock_label(row):
+    if not row.get('limited'):
+        return ''
+    count = row.get('limitedStockCount')
+    return ' | limited stock' + (f' ({count})' if count is not None else '')
 
 
 def select_zone(data, query):
     data = deepcopy(data)
     zones = sorted({p['zone'] for v in data['vendors'] or [] for p in v.get('locations', [v])})
     q = ALIASES.get(query.casefold(), query.casefold())
+    def matches_zone(vendor):
+        return any(q in p['zone'].casefold() or q in p['zone_slug'].casefold()
+                   for p in vendor.get('locations', [vendor]))
+
     if data['vendors'] is not None:
-        data['vendors'] = [v for v in data['vendors'] if any(q in p['zone'].casefold() or q in p['zone_slug'].casefold()
-                                        for p in v.get('locations', [v]))]
+        data['vendors'] = [v for v in data['vendors'] if matches_zone(v)]
+    if '_fallback_vendors' in data:
+        data['_fallback_vendors'] = [v for v in data['_fallback_vendors'] if matches_zone(v)]
+        compare_coverage(data)
     data['known_zones'] = zones
     return data
 
 
 def lines(data):
     rows = data['vendors']
+    count = data.get('fallback_additional_sellers', 0)
+    coverage = [f'Fallback dataset knows {count} more seller' + ('s' if count != 1 else '') + ' for this item.'] if count else []
     if not rows:
         message = 'vendor coverage unknown on wowforever.ninja' if data.get('reason') == 'no pins published' else 'no known sellers in the vendor index'
         result = [message]
         if data.get('known_zones'):
             result.append('known zones: ' + ', '.join(data['known_zones']))
-        return result
+        return result + coverage
     claim = 'sale/price from ForeverDB sell-row labels' if data['backend'] == foreverdb.BACKEND else 'sale and price: 1.12 baseline'
-    result = [f"{data['item']['name'] or data['item']['id']} — vendor listed prices ({claim}; faction unavailable)"]
+    faction = '; faction unavailable' if data['backend'] == BACKEND else ''
+    result = [f"{data['item']['name'] or data['item']['id']} — vendor listed prices ({claim}{faction})"]
     from everledger_core import money, human
     for v in rows:
         if data['backend'] == foreverdb.BACKEND:
             locations = '; '.join(f"{human(p['zone'])}: {human(p.get('x'))}, {human(p.get('y'))}" for p in v['locations']) or 'location unknown'
-            result.append(f"  {human(v['name'])} ({human(v['title'])}) | {locations} | listed price {money(v['price_copper'])} | sale/price {v['sale_basis']}; vendor {v['vendor_basis']}")
+            result.append(f"  {human(v['name'])} ({human(v['title'])}) | {locations} | {human(v['side'])} | listed price {listed_price(v)}{stock_label(v)} | sale/price {v['sale_basis']}; vendor {v['vendor_basis']}")
             continue
         coords = ', '.join(human(n) for n in v['coords'][0]) if v['coords'] else 'coordinates unknown'
         extra = f" (+{len(v['coords']) - 1} locations)" if len(v['coords']) > 1 else ''
         basis = {'seen': 'vendor seen in Forever', 'baseline': '1.12 baseline', 'unverified': 'unverified'}[v['basis']]
         result.append(f"  {human(v['zone'])}: {human(v['name'])} ({human(v['title'])}) {coords}{extra} | listed price {money(v['price_copper'])} | {basis}")
-    return result
+    return result + coverage

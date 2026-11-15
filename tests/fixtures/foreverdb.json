@@ -1,13 +1,225 @@
 {
-  "provisional": "Synthetic documented-shape fixture; envelope, field names, revision coverage and labels require live acceptance.",
+  "note": "Observed Nov 15 wire shapes and Red Dye membership/labels, vendor 54 Gladius at 536c. Coordinates/map IDs are representative fixture values; item 9001 is synthetic regression data. Red Dye NPC IDs match the existing ninja ground-truth fixture.",
   "pages": [
-    {"vendors": [{"id": 2691, "updated_at": "v1"}, {"id": 3072, "updated_at": "v1"}], "next_page": 2, "build": "1.60.1.70938", "extracted_at": "2026-11-13T00:00:00Z"},
-    {"vendors": [{"id": 5158, "updated_at": "v1"}, {"id": 5164, "updated_at": "v1"}], "next_page": null, "build": "1.60.1.70938", "extracted_at": "2026-11-13T00:00:00Z"}
+    {
+      "data": [
+        {
+          "id": 8681,
+          "name": "Outfitter Eric",
+          "title": "Speciality Tailoring Supplies",
+          "side": "Alliance",
+          "zone": "Ironforge",
+          "mapId": 87,
+          "x": 43.4,
+          "y": 29.3,
+          "seenInForever": true,
+          "source": "Seen in WoW Forever by ForeverDB players",
+          "reputationFaction": null
+        },
+        {
+          "id": 5154,
+          "name": "Poranna Snowbraid",
+          "title": "Tailoring Supplies",
+          "side": "Alliance",
+          "zone": "Ironforge",
+          "mapId": 87,
+          "x": 42.9,
+          "y": 28.3,
+          "seenInForever": true,
+          "source": "Seen in WoW Forever by ForeverDB players",
+          "reputationFaction": null
+        },
+        {
+          "id": 5163,
+          "name": "Burbik Gearspanner",
+          "title": "Trade Supplier",
+          "side": "Alliance",
+          "zone": "Ironforge",
+          "mapId": 87,
+          "x": 46.4,
+          "y": 26.9,
+          "seenInForever": true,
+          "source": "Seen in WoW Forever by ForeverDB players",
+          "reputationFaction": null
+        },
+        {
+          "id": 5128,
+          "name": "Bombus Finespindle",
+          "title": "Leatherworking Supplies",
+          "side": "Alliance",
+          "zone": "Ironforge",
+          "mapId": 87,
+          "x": 39.6,
+          "y": 34.5,
+          "seenInForever": true,
+          "source": "Seen in WoW Forever by ForeverDB players",
+          "reputationFaction": null
+        },
+        {
+          "id": 54,
+          "name": "Corina Steele",
+          "title": "Weaponsmith",
+          "side": "Alliance",
+          "zone": "Elwynn Forest",
+          "mapId": 37,
+          "x": 41.7,
+          "y": 65.5,
+          "seenInForever": true,
+          "source": "Seen in WoW Forever by ForeverDB players",
+          "reputationFaction": null
+        }
+      ],
+      "meta": {
+        "build": "1.60.1.70938",
+        "total": 5,
+        "limit": 100,
+        "offset": 0,
+        "next": null,
+        "attribution": "Data from ForeverDB.net (https://foreverdb.net)",
+        "attributionRequired": false,
+        "client": "dev-0256"
+      }
+    }
   ],
   "details": {
-    "2691": {"id": 2691, "name": "Outfitter Eric", "title": "Speciality Tailoring Supplies", "seen": true, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 43.4, "y": 29.3}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": true}, {"item_id": 9001, "name": "Retired Supply", "price_copper": 200, "seen": false}]},
-    "3072": {"id": 3072, "name": "Poranna Snowbraid", "title": "Tailoring Supplies", "seen": true, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 42.9, "y": 28.3}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": true}]},
-    "5158": {"id": 5158, "name": "Burbik Gearspanner", "title": "Trade Supplier", "seen": true, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 46.4, "y": 26.9}, {"zone": "Dun Morogh", "zone_slug": "dun-morogh", "x": 48.1, "y": 59.2}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": false}]},
-    "5164": {"id": 5164, "name": "Bombus Finespindle", "title": "Leatherworking Supplies", "seen": false, "locations": [{"zone": "Ironforge", "zone_slug": "ironforge", "x": 39.6, "y": 34.5}], "sells": [{"item_id": 2604, "name": "Red Dye", "price_copper": 50, "seen": true}]}
+    "8681": {
+      "data": {
+        "id": 8681,
+        "name": "Outfitter Eric",
+        "title": "Speciality Tailoring Supplies",
+        "side": "Alliance",
+        "zone": "Ironforge",
+        "mapId": 87,
+        "x": 43.4,
+        "y": 29.3,
+        "seenInForever": true,
+        "source": "Seen in WoW Forever by ForeverDB players",
+        "reputationFaction": null,
+        "sells": [
+          {
+            "itemId": 2604,
+            "name": "Red Dye",
+            "price": 50,
+            "stack": 1,
+            "pricePerItem": 50.0,
+            "limited": false,
+            "limitedStockCount": null,
+            "classicData": false,
+            "seenInForever": false
+          },
+          {
+            "itemId": 9001,
+            "name": "Synthetic retired supply",
+            "price": 200,
+            "stack": 1,
+            "pricePerItem": 200.0,
+            "limited": true,
+            "limitedStockCount": 2,
+            "classicData": true,
+            "seenInForever": false
+          }
+        ]
+      }
+    },
+    "5154": {
+      "data": {
+        "id": 5154,
+        "name": "Poranna Snowbraid",
+        "title": "Tailoring Supplies",
+        "side": "Alliance",
+        "zone": "Ironforge",
+        "mapId": 87,
+        "x": 42.9,
+        "y": 28.3,
+        "seenInForever": true,
+        "source": "Seen in WoW Forever by ForeverDB players",
+        "reputationFaction": null,
+        "sells": [
+          {
+            "itemId": 2604,
+            "name": "Red Dye",
+            "price": 50,
+            "stack": 1,
+            "pricePerItem": 50.0,
+            "limited": false,
+            "limitedStockCount": null,
+            "classicData": false,
+            "seenInForever": true
+          }
+        ]
+      }
+    },
+    "5163": {
+      "data": {
+        "id": 5163,
+        "name": "Burbik Gearspanner",
+        "title": "Trade Supplier",
+        "side": "Alliance",
+        "zone": "Ironforge",
+        "mapId": 87,
+        "x": 46.4,
+        "y": 26.9,
+        "seenInForever": true,
+        "source": "Seen in WoW Forever by ForeverDB players",
+        "reputationFaction": null,
+        "sells": []
+      }
+    },
+    "5128": {
+      "data": {
+        "id": 5128,
+        "name": "Bombus Finespindle",
+        "title": "Leatherworking Supplies",
+        "side": "Alliance",
+        "zone": "Ironforge",
+        "mapId": 87,
+        "x": 39.6,
+        "y": 34.5,
+        "seenInForever": true,
+        "source": "Seen in WoW Forever by ForeverDB players",
+        "reputationFaction": null,
+        "sells": [
+          {
+            "itemId": 2604,
+            "name": "Red Dye",
+            "price": 50,
+            "stack": 1,
+            "pricePerItem": 50.0,
+            "limited": false,
+            "limitedStockCount": null,
+            "classicData": false,
+            "seenInForever": true
+          }
+        ]
+      }
+    },
+    "54": {
+      "data": {
+        "id": 54,
+        "name": "Corina Steele",
+        "title": "Weaponsmith",
+        "side": "Alliance",
+        "zone": "Elwynn Forest",
+        "mapId": 37,
+        "x": 41.7,
+        "y": 65.5,
+        "seenInForever": true,
+        "source": "Seen in WoW Forever by ForeverDB players",
+        "reputationFaction": null,
+        "sells": [
+          {
+            "itemId": 2488,
+            "name": "Gladius",
+            "price": 536,
+            "stack": 1,
+            "pricePerItem": 536.0,
+            "limited": false,
+            "limitedStockCount": null,
+            "classicData": true,
+            "seenInForever": true
+          }
+        ]
+      }
+    }
   }
 }

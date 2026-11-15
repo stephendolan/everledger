@@ -18,7 +18,8 @@ positional arguments:
     bridge              Catalogue skill-up bands across a range
     margins             AHledger craft margins; optional roster recipe/level
                         scope
-    vendors             Vendor listed prices/locations; faction unavailable
+    vendors             Vendor listed prices/locations; ForeverDB includes
+                        faction
     char                Characters, profession ranks and known recipes
     listings            Recorded live auction listings and AHledger floor
                         comparison
@@ -58,8 +59,8 @@ Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
 On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
 Ninja sale/price claims are Classic 1.12 baseline; vendor sightings may be seen
 in Forever. ForeverDB maps its own sell-row labels separately from sightings.
-Purchase quantity and faction are unavailable;
-all zones appear, including Horde. Listed prices are not used in craft margins.
+Ninja quantity/faction are unavailable; ForeverDB retains stack and side.
+All zones appear, including Horde; faction filtering is unavailable. Listed prices are not used in craft margins.
 Configuration: Python 3.11+ and curl; keep this executable beside everledger_*.py.
 EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
 EVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN
@@ -68,13 +69,26 @@ EVERLEDGER_MARKET defaults to forever.pvp.alliance.us.
 EVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.
 EVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.
 Set EVERLEDGER_FOREVERDB_API_KEY or EVERLEDGER_FOREVERDB_API_KEY_FILE
-(default: EVERLEDGER_DATA_DIR/foreverdb-api-key). No key: ForeverDB is dormant.
-Ninja stays active until a key is configured and a ForeverDB sync completes.
+(default: EVERLEDGER_DATA_DIR/foreverdb-api-key), or select vault transport with
+EVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb (no raw key required).
+EVERLEDGER_DYNAMIC_CREDENTIALS_DIR defaults to
+/opt/muse/skills/custom-connector-setup/bin; connector mode needs dynamic_credentials.
+Both transports send a browser User-Agent and refuse redirects.
+Ninja stays active until a key or connector is configured and a sync completes.
 Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
 retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
 Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
 ForeverDB vendors only: at most 36 requests per 24h, paced below 30/minute.
-Unfinished syncs resume on a later daily refresh; only complete indexes activate.
+List pages use limit 100 and offset; 1,014 vendors need 11 list + 1,014 detail
+requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
+At 36/day this takes at least 29 daily attempts; retries add requests.
+Retryable HTTP 502 gets one retry after at least retry_after (minimum 60s),
+within the daily cap. Unfinished syncs resume; only complete indexes activate.
+ForeverDB prices are per item only when stack price divides evenly by stack;
+otherwise show the total and quantity, e.g. 10c per 3. Limited stock is marked.
+With ForeverDB active, vendors adds a plain fallback-coverage count when the
+ninja cache knows additional distinct sellers; --in applies to both sets.
+Status names the transport and vendor/item record counts for each backend.
 Status and vendor lookups never make ForeverDB requests.
 Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
 margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
@@ -153,7 +167,7 @@ options:
 usage: everledger vendors [-h] [--in ZONE] [--char CHAR] [--all] [--json]
                           item [item ...]
 
-Vendor listed prices/locations; faction unavailable
+Vendor listed prices/locations; ForeverDB includes faction
 
 positional arguments:
   item
@@ -162,7 +176,7 @@ options:
   -h, --help   show this help message and exit
   --in ZONE    zone/city substring; aliases IF, SW, Darn, Org, TB, UC
   --char CHAR  character scope; faction filtering unavailable
-  --all        all zones (also the default: faction unavailable)
+  --all        all zones (also the default; no faction filtering)
   --json       one JSON document using API field names
 ```
 
@@ -366,16 +380,22 @@ options:
 
 ## ForeverDB backend
 
-Ninja is the default until a key is configured and a full ForeverDB sync completes.
-Run `everledger refresh catalogue` to sync; unfinished work resumes on a later
-daily refresh. API shapes and revision semantics remain provisional. See the
-[backend report and exact key-day acceptance steps](docs/foreverdb.md) for mapping
-assumptions, request counts, fallback behavior and fixture coverage.
+Ninja is the default until a key or connector is configured and a full ForeverDB
+sync completes. Run `everledger refresh catalogue`; unfinished work resumes on
+later daily refreshes. The mapping follows the API shapes probed November 15,
+2026. Both bootstrap and steady state require 1,025 requests at today's 1,014
+vendors, at least 29 daily attempts. No per-vendor sell revision is available.
+See the [backend report and exact connector setup commands](docs/foreverdb.md)
+for mapping, price/stack rules, request counts, coverage comparison and fixtures.
+
+ForeverDB results disclose additional distinct sellers already in the ninja
+cache in one plain line, scoped by `--in` when supplied. Status reports vendor
+and item record counts for both backends and the selected transport.
 
 ## Credits
 
 - **Prices from AHledger** (https://ahledger.com). All auction house prices, listing counts, and sales estimates come from AHledger's API for the `forever.pvp.alliance.us` market.
 - **Recipe data from wowforever.ninja** (https://wowforever.ninja), which publishes WoW: Forever client data. Its vendor and world data derive in part from the cMaNGOS classic-db baseline and are GPL-3.0 with attribution; the catalogue built by this tool inherits that. Treat baseline rows as unconfirmed until checked against the live game: Forever moves vendors and sources.
-- **Data from [ForeverDB.net](https://foreverdb.net)**. The optional ForeverDB adapter indexes vendor data extracted from the Forever client. It stays dormant without a key and a completed sync; the API mapping is provisional pending live acceptance.
+- **Data from [ForeverDB.net](https://foreverdb.net)**. The optional ForeverDB adapter indexes vendor data extracted from the Forever client. It activates after a key or connector is configured and a complete sync finishes; wire shapes follow the November 15, 2026 probes.
 
 World of Warcraft and WoW: Forever are not affiliated with this project. This is a personal, non-commercial tool.

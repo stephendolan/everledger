@@ -1,26 +1,12 @@
-"""Provisional ForeverDB wire mapping. Confirm every assumption on key day.
-
-PROVISIONAL: list envelope is {vendors: [{id, updated_at}], next_page,
-build, extracted_at}; page/per_page are numeric, terminal next_page is null.
-updated_at is a nonempty revision covering locations, labels AND the full sells
-list (including removals/prices). build/extracted_at describe one consistent
-extraction across pages. No seen filter: Classic-only records must survive.
-
-PROVISIONAL: detail is an unwrapped {id, name, title?, seen?, locations, sells}.
-Locations are [{zone, zone_slug, x, y}] with percentage coordinates or nulls.
-Sells are [{item_id, name?, price_copper, seen?}]; prices are integer copper or
-null, with no purchase quantity inference. IDs are positive JSON integers.
-PROVISIONAL: boolean seen true means seen-in-Forever, false means Classic-only;
-missing/null is unverified. Vendor and sell labels are independent; a vendor
-sighting never promotes its sales or prices. There is no faction inference.
-"""
 from copy import deepcopy
 
 from everledger_core import Failure
 
+PAGE_SIZE = 100
+
 
 def invalid():
-    raise Failure('ForeverDB provisional API shape mismatch; confirm mapping before syncing', 4)
+    raise Failure('ForeverDB API shape mismatch; check vendor mapping before syncing', 4)
 
 
 def identifier(value):
@@ -36,68 +22,73 @@ def text(value):
 
 
 def basis(record):
-    value = record.get('seen')
-    if value is not None and type(value) is not bool:
-        invalid()
-    return 'unverified' if value is None else 'seen' if value else 'baseline'
+    for field in ('seenInForever', 'classicData'):
+        if record.get(field) is not None and type(record[field]) is not bool:
+            invalid()
+    return 'seen' if record.get('seenInForever') is True else 'baseline' if record.get('classicData') is True else 'unverified'
 
 
-def page(payload, number):
-    if not isinstance(payload, dict) or not isinstance(payload.get('vendors'), list):
+def page(payload, offset):
+    if not isinstance(payload, dict) or not isinstance(payload.get('data'), list) or not isinstance(payload.get('meta'), dict):
         invalid()
-    if 'next_page' not in payload:
+    meta = payload['meta']
+    total = meta.get('total')
+    if type(total) is not int or total < 0 or meta.get('limit') != PAGE_SIZE or meta.get('offset') != offset:
         invalid()
-    following = payload['next_page']
-    if following is not None and (type(following) is not int or following != number + 1):
+    if len(payload['data']) != min(PAGE_SIZE, max(0, total - offset)):
         invalid()
-    revisions = {}
-    for vendor in payload['vendors']:
-        if not isinstance(vendor, dict):
+    ids = []
+    for row in payload['data']:
+        if not isinstance(row, dict):
             invalid()
-        key = str(identifier(vendor.get('id')))
-        if key in revisions:
+        key = str(identifier(row.get('id')))
+        if key in ids:
             invalid()
-        revisions[key] = text(vendor.get('updated_at'))
-    return revisions, following, {'build': text(payload.get('build')),
-                                 'published_at': text(payload.get('extracted_at'))}
+        ids.append(key)
+    following = offset + PAGE_SIZE if offset + len(ids) < total else None
+    return ids, following, {'build': text(meta.get('build')), 'vendor_total': total,
+                            'published_at': None}
 
 
 def vendor(payload, expected_id):
-    if not isinstance(payload, dict) or identifier(payload.get('id')) != expected_id:
+    if not isinstance(payload, dict) or not isinstance(payload.get('data'), dict):
+        invalid()
+    payload = payload['data']
+    if identifier(payload.get('id')) != expected_id or not isinstance(payload.get('sells'), list):
         invalid()
     name = text(payload.get('name'))
-    if not isinstance(payload.get('locations'), list) or not isinstance(payload.get('sells'), list):
-        invalid()
-    locations = []
-    for location in payload['locations']:
-        if not isinstance(location, dict):
+    zone = text(payload.get('zone'))
+    location = {'zone': zone, 'zone_slug': zone.casefold().replace(' ', '-'),
+                'mapId': payload.get('mapId'), 'x': payload.get('x'), 'y': payload.get('y')}
+    for axis in ('x', 'y'):
+        value = location[axis]
+        if value is not None and (type(value) not in (int, float) or not 0 <= value <= 100):
             invalid()
-        text(location.get('zone'))
-        text(location.get('zone_slug'))
-        for axis in ('x', 'y'):
-            value = location.get(axis)
-            if value is not None and (type(value) not in (int, float) or not 0 <= value <= 100):
-                invalid()
-        locations.append(deepcopy(location))
-    first = locations[0] if locations else {'zone': 'Unknown', 'zone_slug': 'unknown'}
     rows = []
     for sale in payload['sells']:
         if not isinstance(sale, dict):
             invalid()
-        item_id = identifier(sale.get('item_id'))
-        price = sale.get('price_copper')
-        if 'price_copper' not in sale or (price is not None and (type(price) is not int or price < 0)):
+        item_id = identifier(sale.get('itemId'))
+        price, stack = sale.get('price'), identifier(sale.get('stack'))
+        if price is not None and (type(price) is not int or price < 0):
+            invalid()
+        if 'price' not in sale or type(sale.get('limited')) is not bool:
+            invalid()
+        stock = sale.get('limitedStockCount')
+        if stock is not None and (type(stock) is not int or stock < 0):
             invalid()
         claim = basis(sale)
         label = {'seen': 'seen in Forever', 'baseline': 'Classic-only baseline',
                  'unverified': 'unverified'}[claim]
         rows.append({'item': {'id': item_id, 'name': sale.get('name')}, 'row': {
             'npc_id': expected_id, 'name': name, 'title': payload.get('title', ''),
-            'zone': first['zone'], 'zone_slug': first['zone_slug'],
-            'locations': deepcopy(locations),
-            'coords': [[p['x'], p['y']] for p in locations if p.get('x') is not None and p.get('y') is not None],
-            'price_copper': price, 'price_raw': price,
-            'status_raw': sale.get('seen'), 'status': claim, 'basis': claim,
+            'zone': zone, 'zone_slug': location['zone_slug'], 'mapId': location['mapId'],
+            'side': payload.get('side'), 'locations': [deepcopy(location)],
+            'coords': [[location['x'], location['y']]] if location['x'] is not None and location['y'] is not None else [],
+            'price_copper': price // stack if price is not None and price % stack == 0 else None,
+            'stack_price_copper': price, 'stack': stack, 'price_raw': price,
+            'limited': sale['limited'], 'limitedStockCount': stock,
+            'status_raw': sale.get('seenInForever'), 'status': claim, 'basis': claim,
             'vendor_basis': basis(payload), 'sale_basis': label, 'price_basis': label,
-            'raw': {'vendor_seen': payload.get('seen'), 'sell': deepcopy(sale)}}})
+            'raw': {'vendor_seen': payload.get('seenInForever'), 'sell': deepcopy(sale)}}})
     return {'sells': rows}
