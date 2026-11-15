@@ -220,7 +220,7 @@ def bridge(args):
         live.sort(key=priority)
         segments.append({'from_level':a,'to_level':b,'recipes':live[:12]})
         lines.append(f'{a}-{b}:')
-        lines += [f"  {r['name']} {catalogue.color_at(r['bands'],a)} learn {r['bands']['learn']} grey {r['bands']['grey']} {r['source_type']}" for r in live[:12]]
+        lines += [f"  {r['name']} {catalogue.color_at(r['bands'],a)} learn {r['bands']['learn']} grey {human(r['bands']['grey'])} {human(r['source_type'])}" for r in live[:12]]
     emit({'profession':prof,'segments':segments,'sources':[catalogue_source(cat)]},lines,args.json)
     return 0
 
@@ -295,7 +295,7 @@ def char(args):
         argv=[args.name]+([args.profession] if args.profession else [])+(['--skill',str(args.skill)] if args.skill is not None else [])
         _,lines=capture(catalogue.cmd_char,cat,argv,data)
     else:
-        lines=[f"{c.get('name')} | level {c.get('level')} {c.get('race')} {c.get('class')} | gold {money(c.get('gold_copper'))}" for c in data.get('characters',[])] or ['no characters recorded']
+        lines=[f"{human(c.get('name'))} | level {human(c.get('level'))} {human(c.get('race'))} {human(c.get('class'))} | gold {money(c.get('gold_copper'))}" for c in data.get('characters',[])] or ['no characters recorded']
     emit({**data,'sources':used},lines,args.json)
     return 0
 
@@ -338,7 +338,7 @@ def outcome(args):
 
 
 def status(args):
-    rows=[]; used=[]; code=0
+    rows=[]; used=[]; roster_sources=[]; code=0
     try:
         cat=load_catalogue()
         checked,lines=capture(catalogue.cmd_verify,cat,[])
@@ -351,6 +351,7 @@ def status(args):
         try:
             d=outcomes.fetch_events({'limit':0}) if label=='outcomes' else roster(path)
             used+=sources(d)
+            roster_sources+=sources(d)
             rows.append({'source':label,'state':d.get('state','reachable'),'sources':sources(d)})
             if label=='listings': code=max(code,stale_code(outcomes.listing_sources(d)))
         except Failure as e:
@@ -369,11 +370,14 @@ def status(args):
     used += vendor_sources
     code = max(code, stale_code(vendor_sources))
     rows.append(vendor_status)
-    lines=[f"{r['source']} | {r.get('backend','')} | {r['state']}" for r in rows]
+    lines=[' | '.join([human(r['source'])] + ([human(r['backend'])] if r.get('backend') else []) + [human(r['state'])]) for r in rows]
     info = vendor_status['foreverdb']
     lines.append(f"ForeverDB {info['state']} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {info['pending']}")
-    lines.append(f"vendors data {vendor_status['published_at']} | cache {vendor_status['cache_items']} items | {vendor_status['seen']} seen, {vendor_status['baseline']} baseline, {vendor_status['unverified']} unverified")
-    emit({'status':rows,'sources':used},lines,args.json)
+    if not vendor_status['cache_items'] and not vendor_status['published_at']:
+        lines.append('vendors data: no cache yet')
+    else:
+        lines.append(f"vendors data {human(vendor_status['published_at'])} | cache {vendor_status['cache_items']} items | {vendor_status['seen']} seen, {vendor_status['baseline']} baseline, {vendor_status['unverified']} unverified")
+    emit({'status':rows,'sources':used},lines,args.json, source_families={'roster service':roster_sources})
     return code
 
 

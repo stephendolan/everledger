@@ -155,8 +155,14 @@ def collect_events(params, discard=False):
         try:
             data = event_page({**params, 'limit': 500})
             events = [] if discard else list(event_rows(data))
+            used_sources = []
             seen = set()
-            while data.get('has_more'):
+            while True:
+                for entry in sources(data):
+                    if entry not in used_sources:
+                        used_sources.append(entry)
+                if not data.get('has_more'):
+                    break
                 cursor = data.get('next_cursor')
                 if not cursor or cursor in seen:
                     raise Failure('events pagination did not advance; refusing a partial tally')
@@ -165,7 +171,7 @@ def collect_events(params, discard=False):
                 if not discard:
                     events.extend(event_rows(data))
             data = {k: v for k, v in data.items() if k != 'entries'}
-            return recount({**data, 'events': events})
+            return recount({**data, 'events': events, 'sources': used_sources})
         except Failure as e:
             if attempt:
                 raise

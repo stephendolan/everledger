@@ -306,6 +306,81 @@ class CLI(unittest.TestCase):
                     self.assertIn('Journalator.lua', lines[-1])
                     self.assertIn('2020-01-01', lines[-1])
 
+    def test_status_without_vendor_cache_has_no_nulls(self):
+        self.market()
+        Handler.routes['/'] = (200, '')
+        Handler.routes['/characters'][1]['state'] = None
+        result = self.run_cli('status', code=1)
+        self.assertNotRegex(result.stdout, r'\b(?:None|null)\b|\|\s*\|')
+        self.assertIn('vendors data: no cache yet', result.stdout)
+        data = json.loads(self.run_cli('status', '--json', code=1).stdout)
+        vendor = next(row for row in data['status'] if row['source'] == 'vendors')
+        self.assertIsNone(vendor['published_at'])
+        self.assertEqual(vendor['cache_items'], 0)
+
+    def test_status_groups_roster_files_only_in_human_footer(self):
+        self.market()
+        Handler.routes['/'] = (200, '')
+        files = [{'file':f'/saved/File{i}.lua', 'mtime':NOW, 'file_age_seconds':i * 10}
+                 for i in range(19)]
+        for route in ('/characters', '/events', '/listings'):
+            Handler.routes[route][1]['sources'] = files
+        human = self.run_cli('status', code=1).stdout
+        footer = human.splitlines()[-1]
+        self.assertEqual(human.count('source:'), 1)
+        self.assertIn('roster service (19 files; oldest age 180s, newest 0s)', footer)
+        self.assertNotIn('.lua', footer)
+        for distinct in ('wowforever.ninja profession index pages', 'AHledger', 'wowforever.ninja'):
+            self.assertIn(distinct, footer)
+        data = json.loads(self.run_cli('status', '--json', code=1).stdout)
+        self.assertEqual([s for s in data['sources'] if 'file' in s], files * 3)
+
+    def test_aggregate_pages_union_sources_and_keep_age_range(self):
+        self.market()
+        old = {'file':'Journalator.lua', 'mtime':'2026-11-14T20:00:00Z', 'file_age_seconds':900}
+        recent = dict(old, mtime='2026-11-14T20:14:00Z', file_age_seconds=60)
+        shared = {'file':'Other.lua', 'mtime':NOW, 'file_age_seconds':300}
+        rows = [self.event(t, 1, 90, id=t, proceeds_copper=90)
+                for t in ('sale', 'purchase', 'expiration')]
+        Handler.routes['/events'] = (200, {'entries':rows, 'has_more':True,
+            'next_cursor':'second', 'sources':[old, shared]})
+        Handler.routes['/events?limit=500&cursor=second'] = (200, {
+            'entries':[dict(row, id=row['id']+'2') for row in rows],
+            'has_more':False, 'checkpoint':'terminal', 'sources':[recent, shared]})
+        for args in [('events','--limit','0'), ('sales',), ('purchases',),
+                     ('expirations',), ('net','2604'), ('positions',)]:
+            with self.subTest(command=args):
+                data = json.loads(self.run_cli(*args, '--json').stdout)
+                self.assertEqual([s for s in data['sources'] if 'file' in s], [old, shared, recent])
+                footer = self.run_cli(*args).stdout.splitlines()[-1]
+                self.assertIn('age 60-900s', footer)
+                self.assertIn('2026-11-14T20:00:00Z..2026-11-14T20:14:00Z', footer)
+                self.assertEqual(footer.count('Other.lua'), 1)
+                if args[0] in ('sales', 'purchases', 'expirations'):
+                    self.assertEqual(len(data[args[0]]), 2)
+
+    def test_character_and_catalogue_unknowns_do_not_leak_nulls(self):
+        ch = {'name':'Slade', 'level':None, 'hearth':None, 'professions':[
+            {'name':'Tailoring', 'skill':5, 'max_skill':None, 'skill_available':True},
+            {'name':'Mining', 'skill_available':False, 'reason':None}]}
+        Handler.routes['/characters'] = (200, {'characters':[ch], 'sources':[]})
+        Handler.routes['/characters/Slade'] = (200, {'character':ch, 'sources':[]})
+        path = Path(self.tmp.name, 'catalogue.json')
+        cat = json.loads(path.read_text())
+        recipe = cat['professions']['tailoring']['recipes'][0]
+        recipe['bands'].update(yellow=None, green=None, grey=None)
+        recipe['source_type'] = None
+        cat['professions']['leatherworking'] = {'stated_count':1, 'recipes':[{
+            **recipe, 'name':'Cloudy Gustwoven Boots', 'bands':{**recipe['bands'], 'learn':55}}]}
+        path.write_text(json.dumps(cat))
+        for args in [('char',), ('char','Slade'), ('char','Slade','tailoring'),
+                     ('bridge','tailoring','1','20'), ('recipe','Red Shirt'), ('verify',)]:
+            with self.subTest(command=args):
+                result = self.run_cli(*args, code=1 if args[0] == 'verify' else 0)
+                self.assertNotRegex(result.stdout, r'\b(?:None|null)\b')
+        data = json.loads(self.run_cli('char','--json').stdout)
+        self.assertIsNone(data['characters'][0]['level'])
+
     def test_readme_command_reference_matches_help(self):
         readme = (ROOT / 'README.md').read_text()
         for command in ('', 'price','recipe','bridge','margins','vendors','char','listings',
@@ -739,13 +814,14 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
 
     def test_aggregate_resync_discards_prior_pages_and_keeps_filters(self):
         sale=self.event('sale',1,90,proceeds_copper=90)
-        Handler.routes['/events']=(200,{'events':[sale],'has_more':True,'next_cursor':'bad-page','sources':[]})
+        Handler.routes['/events']=(200,{'events':[sale],'has_more':True,'next_cursor':'bad-page','sources':[{'file':'discarded.lua','file_age_seconds':999}]})
         Handler.routes['/events?limit=500&cursor=bad-page']=(409,{'error_code':'cursor_invalid','resync_since':'2026-11-14T00:00:00Z'})
         Handler.routes['/events?limit=500&since=1794614400']=(200,{
             'events':[dict(sale,id='restart')],'has_more':False,'next_cursor':'new-terminal','sources':[]})
         r=self.run_cli('sales','--char','Slade','--item','2604','--json')
         d=json.loads(r.stdout)
         self.assertEqual(d['proceeds_copper'],90)
+        self.assertNotIn('discarded.lua', json.dumps(d['sources']))
         self.assertEqual([e['id'] for e in d['sales']],['restart'])
         self.assertEqual(r.stderr.count('resynchronizing'),1)
 

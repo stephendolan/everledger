@@ -1,4 +1,4 @@
-from everledger_core import money, roster, character_path, recipes as all_recipes
+from everledger_core import human, money, roster, character_path, recipes as all_recipes
 
 ANCHORS = [("tailoring", "White Swashbuckler's Shirt", 125, "Trainer"),
            ("tailoring", "Bolt of Silk Cloth", 100, "Trainer"),
@@ -57,14 +57,14 @@ def cmd_char(cat, args, data=None):
     name = args[0]
     data = data if data is not None else roster(character_path(name))
     ch = data.get("character", data)
-    print(f"{ch.get('name')} | level {ch.get('level')} {ch.get('race')} {ch.get('class')} | {ch.get('faction')} {ch.get('realm')} | gold {money(ch.get('gold_copper'))} | hearth {(ch.get('hearth') or {}).get('location')}")
+    print(f"{human(ch.get('name'))} | level {human(ch.get('level'))} {human(ch.get('race'))} {human(ch.get('class'))} | {human(ch.get('faction'))} {human(ch.get('realm'))} | gold {money(ch.get('gold_copper'))} | hearth {human((ch.get('hearth') or {}).get('location'))}")
     print(f"  (roster snapshot generated {(data.get('generated_at') or '?')[:16]}Z; professions updated {(ch.get('professions_updated_at') or '?')[:16]}Z)")
     want = args[1].lower() if len(args) > 1 else None
     for p in ch.get("professions", []):
         if p.get("skill_available"):
-            print(f"  {p['name']}: {p['skill']}/{p['max_skill']}")
+            print(f"  {p['name']}: {human(p['skill'])}/{human(p['max_skill'])}")
         else:
-            print(f"  {p['name']}: skill unavailable from roster ({p.get('reason')}); open the profession window in game, or pass --skill")
+            print(f"  {p['name']}: skill unavailable from roster ({human(p.get('reason'))}); open the profession window in game, or pass --skill")
         rec = p.get("recipes") or {}
         if rec.get("available") and rec.get("known") is not None:
             print(f"    known recipes: {len(rec['known'])} (roster, DataStore_Crafts)")
@@ -85,7 +85,7 @@ def cmd_char(cat, args, data=None):
             ups.sort(key=lambda r: (crank.get(color_at(r["bands"], sk), 3), -r["bands"]["learn"]))
             print(f"    skill-up options at {sk}:" + (" (TRAIN = not known; training/pattern cost applies)" if k_avail else ""))
             for r in ups[:8]:
-                print(f"      {tag(r)}{r['name']:<34} {color_at(r['bands'], sk):<6} learn {r['bands']['learn']:<4} grey {r['bands']['grey']}  {r['source_type'] or '?'}")
+                print(f"      {tag(r)}{r['name']:<34} {color_at(r['bands'], sk):<6} learn {r['bands']['learn']:<4} grey {human(r['bands']['grey'])}  {r['source_type'] or '?'}")
             nxt = sorted([r for r in blk["recipes"] if sk < r["bands"]["learn"] <= sk + 30], key=lambda r: r["bands"]["learn"])
             print(f"    next unlocks (to {sk + 30}):")
             for r in nxt[:8]:
@@ -111,6 +111,6 @@ def cmd_verify(cat, _args):
         r = next((x for x in cat["professions"].get(prof, {}).get("recipes", []) if x["name"] == name), None)
         good = bool(r) and r["bands"]["learn"] == learn and (src is None or r["source_type"] == src)
         ok = ok and good
-        print(f"{'PASS' if good else 'FAIL'} anchor {name}: learn {r['bands']['learn'] if r else '?'}, source {r['source_type'] if r else '?'}")
+        print(f"{'PASS' if good else 'FAIL'} anchor {name}: learn {r['bands']['learn'] if r else '?'}, source {human(r['source_type']) if r else '?'}")
     print("catalogue built:", cat["generated_at"], "| source:", cat["source"])
     return 0 if ok else 1

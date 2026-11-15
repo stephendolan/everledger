@@ -121,13 +121,16 @@ def human(value):
     return 'unknown' if value is None or value == '' else str(value)
 
 
-def source_lines(items):
+def source_lines(items, families=None):
     groups = {}
     for s in items:
         name = s.get('name') or Path(s.get('file') or s.get('path') or 'roster').name
+        family = next((label for label, members in (families or {}).items() if s in members), None)
+        name = family or name
         when = s.get('saved_at') or s.get('scanned_at') or s.get('mtime') or s.get('updated_at')
         seconds = s.get('scan_age_seconds', s.get('file_age_seconds', s.get('age_seconds', age(when))))
-        group = groups.setdefault(name, {'times': set(), 'ages': set(), 'credits': set()})
+        group = groups.setdefault(name, {'times': set(), 'ages': set(), 'credits': set(), 'files': set(), 'family': family})
+        group['files'].add(s.get('file') or s.get('path') or s.get('name') or 'unknown')
         group['times'].add(human(when))
         group['ages'].add(seconds)
         detail = s.get('detail') or ''
@@ -137,6 +140,12 @@ def source_lines(items):
     for name, group in groups.items():
         times = sorted(group['times'])
         known_ages = sorted(a for a in group['ages'] if a is not None)
+        if group['family']:
+            freshness = f'oldest age {known_ages[-1]}s, newest {known_ages[0]}s' if known_ages else 'age unknown'
+            if known_ages and None in group['ages']:
+                freshness += ', some unknown'
+            summaries.append(f"{name} ({len(group['files'])} files; {freshness})")
+            continue
         span = str(known_ages[0]) if known_ages else 'unknown'
         if len(known_ages) > 1:
             span += '-' + str(known_ages[-1])
@@ -149,7 +158,7 @@ def source_lines(items):
     print('source: ' + ('; '.join(summaries) or 'unknown (age unknown)'))
 
 
-def emit(data, lines, as_json, stale=None):
+def emit(data, lines, as_json, stale=None, source_families=None):
     if as_json:
         print(json.dumps(data, ensure_ascii=False))
     else:
@@ -161,7 +170,7 @@ def emit(data, lines, as_json, stale=None):
                         if 'Journalator' not in str(s.get('file') or s.get('name') or ''))
         if stale:
             print('stale: data exceeds its freshness limit')
-        source_lines(items)
+        source_lines(items, source_families)
 
 
 def stale_code(items):
