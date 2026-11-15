@@ -22,3 +22,7 @@ path = "rust-tests/golden.rs"
 [[test]]
 name = "boundaries"
 path = "rust-tests/boundaries.rs"
+
+[[test]]
+name = "oracle_probe"
+path = "rust-tests/oracle_probe.rs"

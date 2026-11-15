@@ -14,7 +14,7 @@ import tempfile
 
 from parity.oracle import ROOT, loopback
 
-ORIGIN = '2026-11-15T12:00:00Z'
+ORIGIN = os.environ.get('EVERLEDGER_PARITY_ORIGIN', '2026-11-15T12:00:00Z')
 # All policy exemptions live here. Selection is explicit per step or based on
 # the oracle's diagnostic grammar, never on the candidate's diagnostic text.
 ALLOWLIST = {
@@ -181,6 +181,8 @@ def compare(left, right, policy=None):
             sanctioned = False
         if policy == 'help' and row['field'] == 'stdout':
             sanctioned = bool(left['stdout']) and bool(right['stdout'])
+        if row['field'] == 'stderr' and left['stderr'].strip() and not right['stderr'].strip():
+            sanctioned = False
         row['class'] = policy if sanctioned else None
     state = 'unexplained' if any(row['class'] is None for row in differences) else 'sanctioned' if differences else 'identical'
     return state, differences

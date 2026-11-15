@@ -8,6 +8,8 @@ python3 parity/run.py target/debug/everledger --report /tmp/rust-parity.json
 python3 parity/run.py target/debug/everledger --scenario live_checkpoint --scenario 'foreverdb/*502*'
 python3 parity/run.py parity/oracle-candidate --list
 python3 -m unittest parity.test_parity -v
+python3 parity/argv_surface.py target/debug/everledger
+EVERLEDGER_PARITY_ORIGIN=2026-11-15T12:34:56.789012Z python3 parity/run.py target/debug/everledger
 ```
 
 The Rust executable needs the `parity-seams` feature. `oracle-candidate` is an
@@ -112,7 +114,8 @@ The candidate's `parity-seams` build implements these variables. Release
 builds contain none of these overrides:
 
 - `EVERLEDGER_SEAM_NOW`: UTC ISO-8601 origin with `Z` suffix. The corpus uses
-  `2026-11-15T12:00:00Z`.
+  `2026-11-15T12:00:00Z`; `EVERLEDGER_PARITY_ORIGIN` gives the runner another
+  origin, and a fractional one exercises sub-second age and pacing arithmetic.
 - `EVERLEDGER_SEAM_SLEEP_LOG`: each sleep returns immediately, appends the
   Python `repr` of its float seconds plus a newline, and advances elapsed time.
 - `EVERLEDGER_SEAM_FOREVERDB_URL`: loopback base replacing ForeverDB. A seam
@@ -145,7 +148,8 @@ messages can exempt stderr differences. An explicitly selected shape-drift
 case also permits changed stdout when the candidate provides a non-empty
 boundary diagnostic and preserves the exit status. Contract Failure text, resync notices,
 deprecation warnings, and the catalogue-age warning remain exact. An exemption
-never absorbs a different exit status, request, sleep, or file. Help wording
+never absorbs a different exit status, request, sleep, or file, nor a candidate
+that prints nothing where the oracle printed a diagnostic. Help wording
 is exempt, while its exit status and non-empty stdout are required. Equal
 bytes always score identical, even on an exemptible step.
 
@@ -157,3 +161,11 @@ for abrupt-exit cooldown and must be rejected. The suite also compares the wrapp
 three scenarios without time-dependent observations, tests clock inheritance
 in a real Python child, exercises exact-query routing and redirect refusal,
 and checks normalization and allowlist boundaries.
+
+## Argument surface
+
+`argv_surface.py` runs about a thousand argument vectors through the oracle and
+a candidate and compares how each side classifies them: rejected by the argument
+parser, answered with help, or accepted. It covers missing values, repeated and
+abbreviated options, split positionals, negative numbers, and separators, which
+the replayed tests barely touch.
