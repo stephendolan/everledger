@@ -1,6 +1,38 @@
 use crate::{Failure, Result};
 use std::{collections::HashMap, path::PathBuf};
 
+/// A credential as configured. Formatting it never shows the value; `expose`
+/// is the one way to read it.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Secret(String);
+impl Secret {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl From<&str> for Secret {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+impl From<String> for Secret {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() {
+            "Secret(unset)"
+        } else {
+            "Secret(redacted)"
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub data_dir: PathBuf,
@@ -8,9 +40,9 @@ pub struct Config {
     pub ahledger_url: String,
     pub market: String,
     pub vendor_url: String,
-    pub roster_token: String,
+    pub roster_token: Secret,
     pub roster_token_file: Option<PathBuf>,
-    pub foreverdb_api_key: String,
+    pub foreverdb_api_key: Secret,
     pub foreverdb_api_key_file: PathBuf,
     pub foreverdb_connector: String,
     pub dynamic_credentials_dir: PathBuf,
@@ -69,7 +101,7 @@ impl Config {
         }
     }
     pub fn roster_token(&self) -> Result<String> {
-        let mut token = self.roster_token.clone();
+        let mut token = self.roster_token.expose().to_owned();
         if token.is_empty()
             && let Some(path) = &self.roster_token_file
         {

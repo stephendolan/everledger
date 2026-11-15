@@ -674,3 +674,20 @@ fn nesting_overflow_is_a_failure() {
     let input = format!("{}0{}", "[".repeat(10000), "]".repeat(10000));
     assert_eq!(document::parse(&input).unwrap_err().code, ExitCode::Error);
 }
+#[test]
+fn configured_credentials_cannot_be_formatted() {
+    let config = everledger::config::Config::from_values(
+        &[
+            ("EVERLEDGER_ROSTER_TOKEN", "roster-credential"),
+            ("EVERLEDGER_FOREVERDB_API_KEY", "foreverdb-credential"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect(),
+    );
+    let printed = format!("{config:?}");
+    assert!(!printed.contains("roster-credential"), "{printed}");
+    assert!(!printed.contains("foreverdb-credential"), "{printed}");
+    assert!(printed.contains("Secret(redacted)"));
+    assert_eq!(config.roster_token.expose(), "roster-credential");
+}

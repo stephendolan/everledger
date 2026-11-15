@@ -388,7 +388,10 @@ python3 scripts/update_command_reference.py target/release/everledger
 
 The Rust tests check every reference block against the binary's help. See
 [the parity harness](parity/README.md) for differential verification against the
-Python oracle, argument-surface checks, and the isolated fixture setup.
+Python oracle, argument-surface checks, and the isolated fixture setup;
+[the architecture notes](docs/architecture.md) for the crate's conventions; and
+[the register of differences](docs/rust-port-differences.md) for every place the
+binary deliberately departs from the Python reference.
 
 ## Credits
 

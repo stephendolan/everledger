@@ -30,7 +30,7 @@ impl Transport {
             return Ok(Some(Self::ConnectorSurrogate));
         }
         let key = if !c.foreverdb_api_key.is_empty() {
-            c.foreverdb_api_key.clone()
+            c.foreverdb_api_key.expose().to_owned()
         } else {
             match std::fs::read_to_string(&c.foreverdb_api_key_file) {
                 Ok(k) => k.trim().into(),
