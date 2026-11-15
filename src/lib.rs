@@ -1,0 +1,25 @@
+#![forbid(unsafe_code)]
+
+pub mod catalogue;
+pub mod cli;
+pub mod clock;
+pub mod commands;
+pub mod config;
+pub mod document;
+pub mod http;
+pub mod human;
+pub mod market;
+pub mod primitives;
+pub mod provenance;
+pub mod roster;
+pub mod time;
+pub mod types;
+
+pub use types::{Copper, EpochSeconds, ExitCode, Failure, Result};
+
+pub struct Context<'a> {
+    pub clock: &'a dyn clock::Clock,
+    pub http: &'a dyn http::Http,
+    pub config: &'a config::Config,
+    pub catalogue: &'a catalogue::CatalogueStore,
+}

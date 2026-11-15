@@ -1,0 +1,240 @@
+[
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "verify"
+  ],
+  "code": 1,
+  "stdout": "PASS tailoring: 1/1 recipes\nFAIL anchor White Swashbuckler's Shirt: learn ?, source ?\nFAIL anchor Bolt of Silk Cloth: learn ?, source ?\nFAIL anchor Bolt of Woolen Cloth: learn ?, source ?\nFAIL anchor Red Woolen Boots: learn ?, source ?\nFAIL anchor Dark Silk Shirt: learn ?, source ?\nFAIL anchor Robes of Arcana: learn ?, source ?\nFAIL anchor Cloudy Gustwoven Boots: learn ?, source ?\ncatalogue built: 2026-11-14T20:20:00Z | source: wowforever.ninja profession index pages\nsource: wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "stderr": "deprecated verify; use: everledger status\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "verify",
+   "--json"
+  ],
+  "code": 1,
+  "stdout": "{\"ok\": false, \"checks\": [\"PASS tailoring: 1/1 recipes\", \"FAIL anchor White Swashbuckler's Shirt: learn ?, source ?\", \"FAIL anchor Bolt of Silk Cloth: learn ?, source ?\", \"FAIL anchor Bolt of Woolen Cloth: learn ?, source ?\", \"FAIL anchor Red Woolen Boots: learn ?, source ?\", \"FAIL anchor Dark Silk Shirt: learn ?, source ?\", \"FAIL anchor Robes of Arcana: learn ?, source ?\", \"FAIL anchor Cloudy Gustwoven Boots: learn ?, source ?\", \"catalogue built: 2026-11-14T20:20:00Z | source: wowforever.ninja profession index pages\"], \"sources\": [{\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}]}\n",
+  "stderr": "deprecated verify; use: everledger status\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "1",
+   "20"
+  ],
+  "code": 0,
+  "stdout": "tailoring bridge 1 -> 20\n1-20:\n  Red Shirt orange learn 1 grey 30 Trainer\nsource: wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "1",
+   "20",
+   "--json"
+  ],
+  "code": 0,
+  "stdout": "{\"profession\": \"tailoring\", \"segments\": [{\"from_level\": 1, \"to_level\": 20, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}], \"sources\": [{\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}]}\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "TAILORING",
+   "1",
+   "40"
+  ],
+  "code": 0,
+  "stdout": "tailoring bridge 1 -> 40\n1-40:\n  Red Shirt orange learn 1 grey 30 Trainer\nsource: wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "TAILORING",
+   "1",
+   "40",
+   "--json"
+  ],
+  "code": 0,
+  "stdout": "{\"profession\": \"tailoring\", \"segments\": [{\"from_level\": 1, \"to_level\": 40, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}], \"sources\": [{\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}]}\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "bad",
+   "1",
+   "20"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "bad",
+   "1",
+   "20",
+   "--json"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "20",
+   "1"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": 10, \"green\": 20, \"grey\": 30}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": \"Trainer\"}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "20",
+   "1",
+   "--json"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "verify"
+  ],
+  "code": 1,
+  "stdout": "PASS tailoring: 1/1 recipes\nPASS leatherworking: 1/1 recipes\nFAIL anchor White Swashbuckler's Shirt: learn ?, source ?\nFAIL anchor Bolt of Silk Cloth: learn ?, source ?\nFAIL anchor Bolt of Woolen Cloth: learn ?, source ?\nFAIL anchor Red Woolen Boots: learn ?, source ?\nFAIL anchor Dark Silk Shirt: learn ?, source ?\nFAIL anchor Robes of Arcana: learn ?, source ?\nPASS anchor Cloudy Gustwoven Boots: learn 55, source unknown\ncatalogue built: 2026-11-14T20:20:00Z | source: wowforever.ninja profession index pages\nsource: wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "stderr": "deprecated verify; use: everledger status\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "verify",
+   "--json"
+  ],
+  "code": 1,
+  "stdout": "{\"ok\": false, \"checks\": [\"PASS tailoring: 1/1 recipes\", \"PASS leatherworking: 1/1 recipes\", \"FAIL anchor White Swashbuckler's Shirt: learn ?, source ?\", \"FAIL anchor Bolt of Silk Cloth: learn ?, source ?\", \"FAIL anchor Bolt of Woolen Cloth: learn ?, source ?\", \"FAIL anchor Red Woolen Boots: learn ?, source ?\", \"FAIL anchor Dark Silk Shirt: learn ?, source ?\", \"FAIL anchor Robes of Arcana: learn ?, source ?\", \"PASS anchor Cloudy Gustwoven Boots: learn 55, source unknown\", \"catalogue built: 2026-11-14T20:20:00Z | source: wowforever.ninja profession index pages\"], \"sources\": [{\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}]}\n",
+  "stderr": "deprecated verify; use: everledger status\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "1",
+   "20"
+  ],
+  "code": 0,
+  "stdout": "tailoring bridge 1 -> 20\n1-20:\n  Red Shirt orange learn 1 grey unknown unknown\nsource: wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "1",
+   "20",
+   "--json"
+  ],
+  "code": 0,
+  "stdout": "{\"profession\": \"tailoring\", \"segments\": [{\"from_level\": 1, \"to_level\": 20, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}], \"sources\": [{\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}]}\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "TAILORING",
+   "1",
+   "40"
+  ],
+  "code": 0,
+  "stdout": "tailoring bridge 1 -> 40\n1-40:\n  Red Shirt orange learn 1 grey unknown unknown\nsource: wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "TAILORING",
+   "1",
+   "40",
+   "--json"
+  ],
+  "code": 0,
+  "stdout": "{\"profession\": \"tailoring\", \"segments\": [{\"from_level\": 1, \"to_level\": 40, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}], \"sources\": [{\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}]}\n",
+  "stderr": ""
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "bad",
+   "1",
+   "20"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "bad",
+   "1",
+   "20",
+   "--json"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "20",
+   "1"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ },
+ {
+  "catalogue": "{\"generated_at\": \"2026-11-14T20:20:00Z\", \"source\": \"wowforever.ninja profession index pages\", \"professions\": {\"tailoring\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Red Shirt\", \"bands\": {\"learn\": 1, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}, \"leatherworking\": {\"stated_count\": 1, \"recipes\": [{\"spell_id\": 1, \"name\": \"Cloudy Gustwoven Boots\", \"bands\": {\"learn\": 55, \"yellow\": null, \"green\": null, \"grey\": null}, \"result\": {\"item_id\": 100, \"name\": \"Red Shirt\", \"qty\": 1}, \"reagents\": [{\"item_id\": 2604, \"name\": \"Red Dye\", \"qty\": 1}], \"source_type\": null}]}}}",
+  "args": [
+   "bridge",
+   "tailoring",
+   "20",
+   "1",
+   "--json"
+  ],
+  "code": 2,
+  "stdout": "",
+  "stderr": "bridge requires a catalogue profession and start < end\n"
+ }
+]

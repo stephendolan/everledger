@@ -1,0 +1,24 @@
+[package]
+name = "everledger"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+
+[features]
+default = []
+parity-seams = []
+
+[dependencies]
+clap = { version = "=4.5.60", features = ["string"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.149", features = ["float_roundtrip", "arbitrary_precision"] }
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls", "platform-verifier"] }
+jiff = { version = "=0.2.45", features = ["serde"] }
+
+[[test]]
+name = "golden"
+path = "rust-tests/golden.rs"
+
+[[test]]
+name = "boundaries"
+path = "rust-tests/boundaries.rs"

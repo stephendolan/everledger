@@ -1,0 +1,842 @@
+[
+ {
+  "tz": "UTC",
+  "value": "2026-11-15",
+  "age": 43200,
+  "instant": "2026-11-15T00:00:00.000000+00:00",
+  "iso": "2026-11-15T00:00:00Z",
+  "seconds": 1794700800,
+  "selector": "2026-11-15T00:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "20261115",
+  "age": 43200,
+  "instant": "2026-11-15T00:00:00.000000+00:00",
+  "iso": "2026-11-15T00:00:00Z",
+  "seconds": 20261115,
+  "selector": "2026-11-15T00:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-W46-7",
+  "age": 43200,
+  "instant": "2026-11-15T00:00:00.000000+00:00",
+  "iso": "2026-11-15T00:00:00Z",
+  "seconds": 1794700800,
+  "selector": "2026-11-15T00:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026W467",
+  "age": 43200,
+  "instant": "2026-11-15T00:00:00.000000+00:00",
+  "iso": "2026-11-15T00:00:00Z",
+  "seconds": 1794700800,
+  "selector": "2026-11-15T00:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-W46",
+  "age": 561600,
+  "instant": "2026-11-09T00:00:00.000000+00:00",
+  "iso": "2026-11-09T00:00:00Z",
+  "seconds": 1794182400,
+  "selector": "2026-11-09T00:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34",
+  "age": 0,
+  "instant": "2026-11-15T12:34:00.000000+00:00",
+  "iso": "2026-11-15T12:34:00Z",
+  "seconds": 1794746040,
+  "selector": "2026-11-15T12:34:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15 12:34:56.123456789Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.123456+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "20261115T123456,1234567+0230",
+  "age": 6904,
+  "instant": "2026-11-15T10:04:56.123456+00:00",
+  "iso": "2026-11-15T10:04:56Z",
+  "seconds": 1794737096,
+  "selector": "2026-11-15T10:04:56Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15x12:34:56",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.000000+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.000000+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12.5",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.500000+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34.5",
+  "age": 0,
+  "instant": "2026-11-15T12:34:00.500000+00:00",
+  "iso": "2026-11-15T12:34:00Z",
+  "seconds": 1794746040,
+  "selector": "2026-11-15T12:34:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34:56+02:30:15.123456",
+  "age": 6919,
+  "instant": "2026-11-15T10:04:40.876544+00:00",
+  "iso": "2026-11-15T10:04:40Z",
+  "seconds": 1794737080,
+  "selector": "2026-11-15T10:04:40Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34:56+00:00:00.5",
+  "age": 0,
+  "instant": "2026-11-15T12:34:55.500000+00:00",
+  "iso": "2026-11-15T12:34:55Z",
+  "seconds": 1794746095,
+  "selector": "2026-11-15T12:34:55Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34:56Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.000000+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34:56z",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:34:56.123456789012345678901234567890Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.123456+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T24:00",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:60",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:00:60",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-02-29",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-1-1",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-319",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:00Zjunk",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:00:00.123456Z",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.123456+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-15T12:00:00.123457Z",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.123457+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "1969-12-31T23:59:59.9Z",
+  "age": 1794744000,
+  "instant": "1969-12-31T23:59:59.900000+00:00",
+  "iso": "1969-12-31T23:59:59Z",
+  "seconds": 0,
+  "selector": "1969-12-31T23:59:59Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-11-01T01:30:00",
+  "age": 1247400,
+  "instant": "2026-11-01T01:30:00.000000+00:00",
+  "iso": "2026-11-01T01:30:00Z",
+  "seconds": 1793496600,
+  "selector": "2026-11-01T01:30:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "2026-03-08T02:30:00",
+  "age": 21807000,
+  "instant": "2026-03-08T02:30:00.000000+00:00",
+  "iso": "2026-03-08T02:30:00Z",
+  "seconds": 1772937000,
+  "selector": "2026-03-08T02:30:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "7d",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-08T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "24h",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-14T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "0h",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "UTC",
+  "value": "bad",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "UTC",
+  "value": "",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15",
+  "age": 25200,
+  "instant": "2026-11-15T05:00:00.000000+00:00",
+  "iso": "2026-11-15T05:00:00Z",
+  "seconds": 1794718800,
+  "selector": "2026-11-15T05:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "20261115",
+  "age": 25200,
+  "instant": "2026-11-15T05:00:00.000000+00:00",
+  "iso": "2026-11-15T05:00:00Z",
+  "seconds": 20261115,
+  "selector": "2026-11-15T05:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-W46-7",
+  "age": 25200,
+  "instant": "2026-11-15T05:00:00.000000+00:00",
+  "iso": "2026-11-15T05:00:00Z",
+  "seconds": 1794718800,
+  "selector": "2026-11-15T05:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026W467",
+  "age": 25200,
+  "instant": "2026-11-15T05:00:00.000000+00:00",
+  "iso": "2026-11-15T05:00:00Z",
+  "seconds": 1794718800,
+  "selector": "2026-11-15T05:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-W46",
+  "age": 543600,
+  "instant": "2026-11-09T05:00:00.000000+00:00",
+  "iso": "2026-11-09T05:00:00Z",
+  "seconds": 1794200400,
+  "selector": "2026-11-09T05:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34",
+  "age": 0,
+  "instant": "2026-11-15T17:34:00.000000+00:00",
+  "iso": "2026-11-15T17:34:00Z",
+  "seconds": 1794764040,
+  "selector": "2026-11-15T17:34:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15 12:34:56.123456789Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.123456+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "20261115T123456,1234567+0230",
+  "age": 6904,
+  "instant": "2026-11-15T10:04:56.123456+00:00",
+  "iso": "2026-11-15T10:04:56Z",
+  "seconds": 1794737096,
+  "selector": "2026-11-15T10:04:56Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15x12:34:56",
+  "age": 0,
+  "instant": "2026-11-15T17:34:56.000000+00:00",
+  "iso": "2026-11-15T17:34:56Z",
+  "seconds": 1794764096,
+  "selector": "2026-11-15T17:34:56Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12",
+  "age": 0,
+  "instant": "2026-11-15T17:00:00.000000+00:00",
+  "iso": "2026-11-15T17:00:00Z",
+  "seconds": 1794762000,
+  "selector": "2026-11-15T17:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12.5",
+  "age": 0,
+  "instant": "2026-11-15T17:00:00.500000+00:00",
+  "iso": "2026-11-15T17:00:00Z",
+  "seconds": 1794762000,
+  "selector": "2026-11-15T17:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34.5",
+  "age": 0,
+  "instant": "2026-11-15T17:34:00.500000+00:00",
+  "iso": "2026-11-15T17:34:00Z",
+  "seconds": 1794764040,
+  "selector": "2026-11-15T17:34:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34:56+02:30:15.123456",
+  "age": 6919,
+  "instant": "2026-11-15T10:04:40.876544+00:00",
+  "iso": "2026-11-15T10:04:40Z",
+  "seconds": 1794737080,
+  "selector": "2026-11-15T10:04:40Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34:56+00:00:00.5",
+  "age": 0,
+  "instant": "2026-11-15T12:34:55.500000+00:00",
+  "iso": "2026-11-15T12:34:55Z",
+  "seconds": 1794746095,
+  "selector": "2026-11-15T12:34:55Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34:56Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.000000+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34:56z",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:34:56.123456789012345678901234567890Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.123456+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T24:00",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:60",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:00:60",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-02-29",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-1-1",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-319",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:00Zjunk",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:00:00.123456Z",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.123456+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-15T12:00:00.123457Z",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.123457+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "1969-12-31T23:59:59.9Z",
+  "age": 1794744000,
+  "instant": "1969-12-31T23:59:59.900000+00:00",
+  "iso": "1969-12-31T23:59:59Z",
+  "seconds": 0,
+  "selector": "1969-12-31T23:59:59Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-11-01T01:30:00",
+  "age": 1233000,
+  "instant": "2026-11-01T05:30:00.000000+00:00",
+  "iso": "2026-11-01T05:30:00Z",
+  "seconds": 1793511000,
+  "selector": "2026-11-01T05:30:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "2026-03-08T02:30:00",
+  "age": 21789000,
+  "instant": "2026-03-08T07:30:00.000000+00:00",
+  "iso": "2026-03-08T07:30:00Z",
+  "seconds": 1772955000,
+  "selector": "2026-03-08T07:30:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "7d",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-08T12:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "24h",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-14T12:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "0h",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "America/New_York",
+  "value": "bad",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "America/New_York",
+  "value": "",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15",
+  "age": 63900,
+  "instant": "2026-11-14T18:15:00.000000+00:00",
+  "iso": "2026-11-14T18:15:00Z",
+  "seconds": 1794680100,
+  "selector": "2026-11-14T18:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "20261115",
+  "age": 63900,
+  "instant": "2026-11-14T18:15:00.000000+00:00",
+  "iso": "2026-11-14T18:15:00Z",
+  "seconds": 20261115,
+  "selector": "2026-11-14T18:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-W46-7",
+  "age": 63900,
+  "instant": "2026-11-14T18:15:00.000000+00:00",
+  "iso": "2026-11-14T18:15:00Z",
+  "seconds": 1794680100,
+  "selector": "2026-11-14T18:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026W467",
+  "age": 63900,
+  "instant": "2026-11-14T18:15:00.000000+00:00",
+  "iso": "2026-11-14T18:15:00Z",
+  "seconds": 1794680100,
+  "selector": "2026-11-14T18:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-W46",
+  "age": 582300,
+  "instant": "2026-11-08T18:15:00.000000+00:00",
+  "iso": "2026-11-08T18:15:00Z",
+  "seconds": 1794161700,
+  "selector": "2026-11-08T18:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34",
+  "age": 18660,
+  "instant": "2026-11-15T06:49:00.000000+00:00",
+  "iso": "2026-11-15T06:49:00Z",
+  "seconds": 1794725340,
+  "selector": "2026-11-15T06:49:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15 12:34:56.123456789Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.123456+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "20261115T123456,1234567+0230",
+  "age": 6904,
+  "instant": "2026-11-15T10:04:56.123456+00:00",
+  "iso": "2026-11-15T10:04:56Z",
+  "seconds": 1794737096,
+  "selector": "2026-11-15T10:04:56Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15x12:34:56",
+  "age": 18604,
+  "instant": "2026-11-15T06:49:56.000000+00:00",
+  "iso": "2026-11-15T06:49:56Z",
+  "seconds": 1794725396,
+  "selector": "2026-11-15T06:49:56Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12",
+  "age": 20700,
+  "instant": "2026-11-15T06:15:00.000000+00:00",
+  "iso": "2026-11-15T06:15:00Z",
+  "seconds": 1794723300,
+  "selector": "2026-11-15T06:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12.5",
+  "age": 20699,
+  "instant": "2026-11-15T06:15:00.500000+00:00",
+  "iso": "2026-11-15T06:15:00Z",
+  "seconds": 1794723300,
+  "selector": "2026-11-15T06:15:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34.5",
+  "age": 18659,
+  "instant": "2026-11-15T06:49:00.500000+00:00",
+  "iso": "2026-11-15T06:49:00Z",
+  "seconds": 1794725340,
+  "selector": "2026-11-15T06:49:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34:56+02:30:15.123456",
+  "age": 6919,
+  "instant": "2026-11-15T10:04:40.876544+00:00",
+  "iso": "2026-11-15T10:04:40Z",
+  "seconds": 1794737080,
+  "selector": "2026-11-15T10:04:40Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34:56+00:00:00.5",
+  "age": 0,
+  "instant": "2026-11-15T12:34:55.500000+00:00",
+  "iso": "2026-11-15T12:34:55Z",
+  "seconds": 1794746095,
+  "selector": "2026-11-15T12:34:55Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34:56Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.000000+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34:56z",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:34:56.123456789012345678901234567890Z",
+  "age": 0,
+  "instant": "2026-11-15T12:34:56.123456+00:00",
+  "iso": "2026-11-15T12:34:56Z",
+  "seconds": 1794746096,
+  "selector": "2026-11-15T12:34:56Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T24:00",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:60",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:00:60",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-02-29",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-1-1",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-319",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:00Zjunk",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:00:00.123456Z",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.123456+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-15T12:00:00.123457Z",
+  "age": 0,
+  "instant": "2026-11-15T12:00:00.123457+00:00",
+  "iso": "2026-11-15T12:00:00Z",
+  "seconds": 1794744000,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "1969-12-31T23:59:59.9Z",
+  "age": 1794744000,
+  "instant": "1969-12-31T23:59:59.900000+00:00",
+  "iso": "1969-12-31T23:59:59Z",
+  "seconds": 0,
+  "selector": "1969-12-31T23:59:59Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-11-01T01:30:00",
+  "age": 1268100,
+  "instant": "2026-10-31T19:45:00.000000+00:00",
+  "iso": "2026-10-31T19:45:00Z",
+  "seconds": 1793475900,
+  "selector": "2026-10-31T19:45:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "2026-03-08T02:30:00",
+  "age": 21827700,
+  "instant": "2026-03-07T20:45:00.000000+00:00",
+  "iso": "2026-03-07T20:45:00Z",
+  "seconds": 1772916300,
+  "selector": "2026-03-07T20:45:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "7d",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-08T12:00:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "24h",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-14T12:00:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "0h",
+  "age": null,
+  "instant": null,
+  "selector": "2026-11-15T12:00:00Z"
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "bad",
+  "age": null,
+  "instant": null,
+  "selector": null
+ },
+ {
+  "tz": "Asia/Kathmandu",
+  "value": "",
+  "age": null,
+  "instant": null,
+  "selector": null
+ }
+]

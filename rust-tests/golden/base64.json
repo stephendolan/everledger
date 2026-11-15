@@ -1,0 +1,50 @@
+[
+ {
+  "value": "",
+  "encoded": ""
+ },
+ {
+  "value": "Hello WORLD",
+  "encoded": "SGVsbG8gV09STEQ="
+ },
+ {
+  "value": "Straße",
+  "encoded": "U3RyYcOfZQ=="
+ },
+ {
+  "value": "İIıi",
+  "encoded": "xLBJxLFp"
+ },
+ {
+  "value": "ΣΟΣ",
+  "encoded": "zqPOn86j"
+ },
+ {
+  "value": "ΟΣ́",
+  "encoded": "zp_Oo8yB"
+ },
+ {
+  "value": "ΟΣ Α",
+  "encoded": "zp_OoyDOkQ=="
+ },
+ {
+  "value": "ΑΣ.",
+  "encoded": "zpHOoy4="
+ },
+ {
+  "value": "ΑΣ’",
+  "encoded": "zpHOo-KAmQ=="
+ },
+ {
+  "value": "ᾈ ﬃ K",
+  "encoded": "4b6IIO-sgyDihKo="
+ },
+ {
+  "value": "東京😀",
+  "encoded": "5p2x5Lqs8J-YgA=="
+ },
+ {
+  "value": "a/b?x=1 +%é~",
+  "encoded": "YS9iP3g9MSArJcOpfg=="
+ }
+]
