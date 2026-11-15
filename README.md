@@ -1,45 +1,37 @@
 # everledger
 
-The command reference below is generated from `--help`.
+everledger is a standalone Rust CLI for WoW: Forever prices, crafting, vendors,
+characters and journal outcomes. This README is its command reference, generated
+verbatim from the binary's `--help`.
 
 See [Journalator consumer notes](docs/journalator-contract.md) for watch checkpoints,
 local filter views, and the live-service regression evidence.
 
 ```text
-usage: everledger [-h]
-                  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify} ...
-
 everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.
 
-positional arguments:
-  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify}
-    price               AHledger quote plus vendor listed prices
-    recipe              Catalogue facts and roster known-by annotation
-    bridge              Catalogue skill-up bands across a range
-    margins             AHledger craft margins; optional roster recipe/level
-                        scope
-    vendors             Vendor listed prices/locations; ForeverDB includes
-                        faction
-    char                Characters, profession ranks and known recipes
-    listings            Recorded live auction listings and AHledger floor
-                        comparison
-    positions           Inventory holdings/listings and AHledger floor; basis
-                        unknown without assignments
-    sales               Sales proceeds (defaults to auction)
-    purchases           Auction and vendor purchases
-    expirations         Expired auctions with market repost inputs
-    net                 Item auction cash/count diagnostic; profit basis stays
-                        unknown
-    events              Typed journal feed; prints next_cursor, has_more and
-                        service checkpoint
-    status              Reachability/freshness of AHledger, roster, outcomes,
-                        catalogue and vendors
-    refresh             Rebuild catalogue and refresh the configured vendor
-                        backend
-    verify              Deprecated catalogue anchor check (use status)
+Usage: everledger <COMMAND>
 
-options:
-  -h, --help            show this help message and exit
+Commands:
+  price        AHledger quote plus vendor listed prices
+  recipe       Catalogue facts and roster known-by annotation
+  bridge       Catalogue skill-up bands across a range
+  margins      AHledger craft margins; optional roster recipe/level scope
+  vendors      Vendor listed prices/locations; ForeverDB includes faction
+  char         Characters, profession ranks and known recipes
+  listings     Recorded live auction listings and AHledger floor comparison
+  positions    Inventory holdings/listings and AHledger floor; basis unknown without assignments
+  sales        Sales proceeds (defaults to auction)
+  purchases    Auction and vendor purchases
+  expirations  Expired auctions with market repost inputs
+  net          Item auction cash/count diagnostic; profit basis stays unknown
+  events       Typed journal feed; prints next_cursor, has_more and service checkpoint
+  status       Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
+  refresh      Rebuild catalogue and refresh the configured vendor backend
+  verify       Deprecated catalogue anchor check (use status)
+
+Options:
+  -h, --help  Print help
 
 Selectors: --char accepts a unique first or full character name.
 Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
@@ -62,7 +54,8 @@ Ninja sale/price claims are Classic 1.12 baseline; vendor sightings may be seen
 in Forever. ForeverDB maps its own sell-row labels separately from sightings.
 Ninja quantity/faction are unavailable; ForeverDB retains stack and side.
 All zones appear, including Horde; faction filtering is unavailable. Listed prices are not used in craft margins.
-Configuration: Python 3.11+ and curl; keep this executable beside everledger_*.py.
+Configuration: standalone everledger binary.
+Only connector transport needs python3 and the dynamic_credentials helper.
 EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
 EVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN
 or EVERLEDGER_ROSTER_TOKEN_FILE for bearer authentication.
@@ -99,284 +92,259 @@ char NAME auctions prints listings --char NAME on stderr and exits 2.
 ## price
 
 ```text
-usage: everledger price [-h] [--json] item [item ...]
-
 AHledger quote plus vendor listed prices
 
-positional arguments:
-  item
+Usage: everledger price [OPTIONS] <ITEM>...
 
-options:
-  -h, --help  show this help message and exit
-  --json      one JSON document using API field names
+Arguments:
+  <ITEM>...  
+
+Options:
+      --json  one JSON document using API field names
+  -h, --help  Print help
 ```
 
 ## recipe
 
 ```text
-usage: everledger recipe [-h] [--skill SKILL] [--json] item [item ...]
-
 Catalogue facts and roster known-by annotation
 
-positional arguments:
-  item
+Usage: everledger recipe [OPTIONS] <ITEM>...
 
-options:
-  -h, --help     show this help message and exit
-  --skill SKILL
-  --json         one JSON document using API field names
+Arguments:
+  <ITEM>...  
+
+Options:
+      --skill <SKILL>  
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## bridge
 
 ```text
-usage: everledger bridge [-h] [--json] profession start end
-
 Catalogue skill-up bands across a range
 
-positional arguments:
-  profession
-  start
-  end
+Usage: everledger bridge [OPTIONS] <PROFESSION> <START> <END>
 
-options:
-  -h, --help  show this help message and exit
-  --json      one JSON document using API field names
+Arguments:
+  <PROFESSION>  
+  <START>       
+  <END>         
+
+Options:
+      --json  one JSON document using API field names
+  -h, --help  Print help
 ```
 
 ## margins
 
 ```text
-usage: everledger margins [-h] [--level LEVEL] [--char CHAR] [--json]
-                          [profession]
-
 AHledger craft margins; optional roster recipe/level scope
 
-positional arguments:
-  profession
+Usage: everledger margins [OPTIONS] [PROFESSION]
 
-options:
-  -h, --help     show this help message and exit
-  --level LEVEL
-  --char CHAR
-  --json         one JSON document using API field names
+Arguments:
+  [PROFESSION]  
+
+Options:
+      --level <LEVEL>  
+      --char <CHAR>    
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## vendors
 
 ```text
-usage: everledger vendors [-h] [--in ZONE] [--char CHAR] [--all] [--json]
-                          item [item ...]
-
 Vendor listed prices/locations; ForeverDB includes faction
 
-positional arguments:
-  item
+Usage: everledger vendors [OPTIONS] <ITEM>...
 
-options:
-  -h, --help   show this help message and exit
-  --in ZONE    zone/city substring; aliases IF, SW, Darn, Org, TB, UC
-  --char CHAR  character scope; faction filtering unavailable
-  --all        all zones (also the default; no faction filtering)
-  --json       one JSON document using API field names
+Arguments:
+  <ITEM>...  
+
+Options:
+      --in <ZONE>    zone/city substring; aliases IF, SW, Darn, Org, TB, UC
+      --char <CHAR>  character scope; faction filtering unavailable
+      --all          all zones (also the default; no faction filtering)
+      --json         one JSON document using API field names
+  -h, --help         Print help
 ```
 
 ## char
 
 ```text
-usage: everledger char [-h] [--skill SKILL] [--json] [name] [profession]
-
 Characters, profession ranks and known recipes
 
-positional arguments:
-  name
-  profession
+Usage: everledger char [OPTIONS] [NAME] [PROFESSION]
 
-options:
-  -h, --help     show this help message and exit
-  --skill SKILL
-  --json         one JSON document using API field names
+Arguments:
+  [NAME]        
+  [PROFESSION]  
+
+Options:
+      --skill <SKILL>  
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## listings
 
 ```text
-usage: everledger listings [-h] [--char CHAR] [--item ITEM] [--json]
-
 Recorded live auction listings and AHledger floor comparison
 
-options:
-  -h, --help   show this help message and exit
-  --char CHAR
-  --item ITEM
-  --json       one JSON document using API field names
+Usage: everledger listings [OPTIONS]
+
+Options:
+      --char <CHAR>  
+      --item <ITEM>  
+      --json         one JSON document using API field names
+  -h, --help         Print help
 ```
 
 ## positions
 
 ```text
-usage: everledger positions [-h] [--char CHAR] [--item ITEM] [--json]
+Inventory holdings/listings and AHledger floor; basis unknown without assignments
 
-Inventory holdings/listings and AHledger floor; basis unknown without
-assignments
+Usage: everledger positions [OPTIONS]
 
-options:
-  -h, --help   show this help message and exit
-  --char CHAR
-  --item ITEM
-  --json       one JSON document using API field names
+Options:
+      --char <CHAR>  
+      --item <ITEM>  
+      --json         one JSON document using API field names
+  -h, --help         Print help
 ```
 
 ## sales
 
 ```text
-usage: everledger sales [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                        [--until UNTIL] [--venue {auction,vendor}] [--json]
-
 Sales proceeds (defaults to auction)
 
-options:
-  -h, --help            show this help message and exit
-  --item ITEM
-  --char CHAR
-  --since SINCE
-  --until UNTIL
-  --venue {auction,vendor}
-  --json                one JSON document using API field names
+Usage: everledger sales [OPTIONS]
+
+Options:
+      --item <ITEM>    
+      --char <CHAR>    
+      --since <SINCE>  
+      --until <UNTIL>  
+      --venue <VENUE>  [default: auction] [possible values: auction, vendor]
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## purchases
 
 ```text
-usage: everledger purchases [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                            [--until UNTIL] [--venue {auction,vendor}]
-                            [--json]
-
 Auction and vendor purchases
 
-options:
-  -h, --help            show this help message and exit
-  --item ITEM
-  --char CHAR
-  --since SINCE
-  --until UNTIL
-  --venue {auction,vendor}
-  --json                one JSON document using API field names
+Usage: everledger purchases [OPTIONS]
+
+Options:
+      --item <ITEM>    
+      --char <CHAR>    
+      --since <SINCE>  
+      --until <UNTIL>  
+      --venue <VENUE>  [possible values: auction, vendor]
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## expirations
 
 ```text
-usage: everledger expirations [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                              [--until UNTIL] [--json]
-
 Expired auctions with market repost inputs
 
-options:
-  -h, --help     show this help message and exit
-  --item ITEM
-  --char CHAR
-  --since SINCE
-  --until UNTIL
-  --json         one JSON document using API field names
+Usage: everledger expirations [OPTIONS]
+
+Options:
+      --item <ITEM>    
+      --char <CHAR>    
+      --since <SINCE>  
+      --until <UNTIL>  
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## net
 
 ```text
-usage: everledger net [-h] [--char CHAR] [--since SINCE] [--until UNTIL]
-                      [--json]
-                      item [item ...]
-
 Item auction cash/count diagnostic; profit basis stays unknown
 
-positional arguments:
-  item
+Usage: everledger net [OPTIONS] <ITEM>...
 
-options:
-  -h, --help     show this help message and exit
-  --char CHAR
-  --since SINCE
-  --until UNTIL
-  --json         one JSON document using API field names
+Arguments:
+  <ITEM>...  
+
+Options:
+      --char <CHAR>    
+      --since <SINCE>  
+      --until <UNTIL>  
+      --json           one JSON document using API field names
+  -h, --help           Print help
 ```
 
 ## events
 
 ```text
-usage: everledger events [-h] [--item ITEM] [--char CHAR] [--since SINCE]
-                         [--until UNTIL] [--venue {auction,vendor}]
-                         [--type TYPE] [--cursor CURSOR] [--after AFTER]
-                         [--limit LIMIT] [--json]
-
 Typed journal feed; prints next_cursor, has_more and service checkpoint
 
-options:
-  -h, --help            show this help message and exit
-  --item ITEM
-  --char CHAR
-  --since SINCE
-  --until UNTIL
-  --venue {auction,vendor}
-  --type TYPE           comma-separated purchase, sale, posting, expiration,
-                        cancellation
-  --cursor CURSOR       snapshot page cursor from next_cursor; inherits fixed
-                        filters
-  --after AFTER         terminal after_cursor/checkpoint; exclusive with
-                        since/until
-  --limit LIMIT         0 bootstraps a watch; default 50 human, 500 JSON
-  --json                one JSON document using API field names
+Usage: everledger events [OPTIONS]
 
-Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot
-with positive service limits and prints no entries. Save after_cursor (the
-service terminal checkpoint) only after has_more is false. While has_more is
-true, pass next_cursor to --cursor to finish the snapshot; page cursors retain
-the local view. Character/item/type/venue filters are local views over an
-unfiltered checkpoint and may change between polls. Limit bounds the scanned
-page, so a filtered page may be empty with has_more true. Times are sent as
-integer epoch seconds. On 409 cursor_invalid, alert once and resync from
-resync_since; retries can replay entries. snapshot_changed requires restarting
-from the last committed checkpoint. Act before saving progress for at-least-
-once delivery. This CLI persists nothing.
+Options:
+      --item <ITEM>        
+      --char <CHAR>        
+      --since <SINCE>      
+      --until <UNTIL>      
+      --venue <VENUE>      [possible values: auction, vendor]
+      --type <EVENT_TYPE>  comma-separated purchase, sale, posting, expiration, cancellation
+      --cursor <CURSOR>    snapshot page cursor from next_cursor; inherits fixed filters
+      --after <AFTER>      terminal after_cursor/checkpoint; exclusive with since/until
+      --limit <LIMIT>      0 bootstraps a watch; default 50 human, 500 JSON
+      --json               one JSON document using API field names
+  -h, --help               Print help
+
+Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot with positive service limits and prints no entries. Save after_cursor (the service terminal checkpoint) only after has_more is false. While has_more is true, pass next_cursor to --cursor to finish the snapshot; page cursors retain the local view. Character/item/type/venue filters are local views over an unfiltered checkpoint and may change between polls. Limit bounds the scanned page, so a filtered page may be empty with has_more true. Times are sent as integer epoch seconds. On 409 cursor_invalid, alert once and resync from resync_since; retries can replay entries. snapshot_changed requires restarting from the last committed checkpoint. Act before saving progress for at-least-once delivery. This CLI persists nothing.
 ```
 
 ## status
 
 ```text
-usage: everledger status [-h] [--json]
-
 Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
 
-options:
-  -h, --help  show this help message and exit
-  --json      one JSON document using API field names
+Usage: everledger status [OPTIONS]
+
+Options:
+      --json  one JSON document using API field names
+  -h, --help  Print help
 ```
 
 ## refresh
 
 ```text
-usage: everledger refresh [-h] [--json] [{catalogue}]
-
 Rebuild catalogue and refresh the configured vendor backend
 
-positional arguments:
-  {catalogue}
+Usage: everledger refresh [OPTIONS] [TARGET]
 
-options:
-  -h, --help   show this help message and exit
-  --json       one JSON document using API field names
+Arguments:
+  [TARGET]  [possible values: catalogue]
+
+Options:
+      --json  one JSON document using API field names
+  -h, --help  Print help
 ```
 
 ## verify
 
 ```text
-usage: everledger verify [-h] [--json]
-
 Deprecated catalogue anchor check (use status)
 
-options:
-  -h, --help  show this help message and exit
-  --json      one JSON document using API field names
+Usage: everledger verify [OPTIONS]
+
+Options:
+      --json  one JSON document using API field names
+  -h, --help  Print help
 ```
 
 ## ForeverDB backend
@@ -392,6 +360,25 @@ for mapping, price/stack rules, request counts, coverage comparison and fixtures
 ForeverDB results disclose additional distinct sellers already in the ninja
 cache in one plain line, scoped by `--in` when supplied. Status reports vendor
 and item record counts for both backends and the selected transport.
+
+## Build and verification
+
+Build the release binary and run the Rust tests:
+
+```sh
+cargo build --release
+cargo test
+```
+
+Regenerate the command reference from the built binary:
+
+```sh
+python3 scripts/update_command_reference.py target/release/everledger
+```
+
+The Rust tests check every reference block against the binary's help. See
+[the parity harness](parity/README.md) for differential verification against the
+Python oracle, argument-surface checks, and the isolated fixture setup.
 
 ## Credits
 
