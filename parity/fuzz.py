@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Differential fuzz: random well-formed fixture worlds, oracle against candidate.
 
-Usage: python3 parity/fuzz.py CANDIDATE [--cases N] [--seed S] [--commands a,b,c]
+Usage: python3 parity/fuzz.py CANDIDATE [--suite read|sync] [--cases N] [--seed S] [--commands a,b,c]
 
 The replayed corpus is fixed, so an implementation can pass it by fitting it.
 Each case here builds a random world inside the shapes the oracle's contract
@@ -452,15 +452,178 @@ def invocation(rng, items, names, cat, cursors):
                             ('--item', wanted), ('--char', who), ('--limit', str(rng.choice([1, 2, 3, 500, 600])))), *window()]
 
 
-def run(candidate, cases, seed, commands, only, invocations):
+CATALOGUE_PAGES = ['alchemy', 'blacksmithing', 'enchanting', 'engineering', 'leatherworking', 'tailoring',
+                   'cooking', 'first-aid', 'fishing', 'mining', 'herbalism', 'skinning']
+MARKUP_NAMES = ['Red Shirt', 'White Swashbuckler&#39;s Shirt', 'Fish &amp; Chips', '&quot;Lucky&quot; Charm', 'Élixir of Fortitude',
+                'Bolt&nbsp;of Cloth', 'Rune &lt;Major&gt;', 'Caf&eacute; Robe', 'Tr&#xE8;s Belt', 'Plain &amp;amp; Simple']
+
+
+def profession_page(rng, prof):
+    """One profession index page in the markup build_catalogue.py reads, with the rows it skips."""
+    rows, recipes = [], 0
+    for index in range(rng.choice([0, 0, 1, 3, 6])):
+        learn = rng.randrange(1, 300)
+        bands = f'<span class="o">{learn}</span>'
+        for css in rng.choice([[], ['y'], ['y', 'g'], ['y', 'g', 'x']]):
+            learn += rng.randrange(1, 30)
+            bands += rng.choice(['', ' ', '\n  ']) + f'<span class="{css}">{learn}</span>'
+        name = rng.choice(MARKUP_NAMES)
+        link = f'<a href="/professions/{prof}/{rng.randrange(1, 99999)}-slug/" class="r">{name}</a>'
+        item = lambda: (f'<a href="/items/{rng.randrange(1, 99999)}-item-slug/" class="q{rng.randrange(0, 5)}">'
+                        + rng.choice(['', '<img src="/i.png" alt="">', '<img src="/i.png" alt=""> '])
+                        + rng.choice(MARKUP_NAMES) + '</a>' + rng.choice(['', '', ' × 2', '×5', ' ×  12']))
+        result = rng.choice([item(), item(), item(), rng.choice(MARKUP_NAMES), '<i>Enchant Bracer</i>'])
+        reagents = rng.choice([', ', '<br>', ' ']).join(item() for _ in range(rng.randrange(0, 4)))
+        source = rng.choice(['Trainer', 'Pattern &middot; Drop', 'Pattern · Vendor', '', ' Quest ', '<b>Automatic</b>'])
+        kind = rng.choice(['recipe'] * 6 + ['no-source-cell', 'no-bands', 'short', 'trainer-row'])
+        cell = lambda body: rng.choice(['<td role="cell">', '<td class="c" role="cell">', '<td role="cell" data-x="1">']) + body + '</td>'
+        opening = rng.choice(['<tr role="row">', '<tr role="row" class="odd">'])
+        if kind == 'recipe':
+            rows.append(opening + cell(bands) + cell(link) + cell(result) + cell(reagents) + cell(source) + '</tr>')
+            recipes += 1
+        elif kind == 'no-source-cell':
+            rows.append(opening + cell(bands) + cell(link) + cell(result) + cell(reagents) + '</tr>')
+            recipes += 1
+        elif kind == 'no-bands':
+            rows.append(opening + cell('') + cell(link) + cell(result) + cell(reagents) + cell(source) + '</tr>')
+        elif kind == 'short':
+            rows.append(opening + cell(bands) + cell(link) + cell(result) + '</tr>')
+        else:
+            rows.append(opening + cell('Trainer Bob') + cell('Stormwind') + '</tr>')
+    stated = recipes + rng.choice([0, 0, 0, 1])
+    return f'<html><body><h2>Recipes ({stated})</h2>\n<table>' + '\n'.join(rows) + '</table></body></html>'
+
+
+def vendor_dataset(rng):
+    """ForeverDB list pages and details inside the mapping's accepted shapes."""
+    count = rng.choice([0, 1, 3, 5, 8, 30, 40, 45, 120])
+    ids = rng.sample(range(1, 90000), count)
+    item_ids = rng.sample(range(100, 30000), 6)
+    flag = lambda: rng.choice([True, True, False, None, 'absent'])
+
+    def flagged(target, key):
+        value = flag()
+        if value != 'absent':
+            target[key] = value
+
+    def detail(vendor):
+        data = {'id': vendor, 'name': rng.choice(['Poranna Snowbraid', 'Outfitter Eric', 'Élise', 'burbik']) + f' {vendor}',
+                'zone': rng.choice(['Ironforge', 'Stormwind City', 'Orgrimmar', 'Dun Morogh', 'The Barrens']),
+                'mapId': rng.choice([87, 84, None, '1'])}
+        for axis in ('x', 'y'):
+            data[axis] = rng.choice([None, 0, 100, 43.4, 29, round(rng.uniform(0, 100), 1)])
+        side = rng.choice(['Alliance', 'Horde', 'Both', None, 'absent'])
+        if side != 'absent':
+            data['side'] = side
+        title = rng.choice(['Tailoring Supplies', '', None, 'absent'])
+        if title != 'absent':
+            data['title'] = title
+        flagged(data, 'seenInForever')
+        flagged(data, 'classicData')
+        sells = []
+        for item in rng.sample(item_ids, rng.randrange(0, 4)):
+            stack = rng.choice([1, 1, 1, 3, 5, 20])
+            price = rng.choice([None, 0, 50, 536, 10, 12, 99999, stack * rng.randrange(1, 500)])
+            sale = {'itemId': item, 'price': price, 'stack': stack, 'limited': rng.random() < 0.3,
+                    'pricePerItem': rng.choice([0.5, 3.3333333333, 50, 1e-05])}
+            name = rng.choice([f'Item {item}', None, 'absent'])
+            if name != 'absent':
+                sale['name'] = name
+            stock = rng.choice([None, 0, 2, 'absent'])
+            if stock != 'absent':
+                sale['limitedStockCount'] = stock
+            flagged(sale, 'seenInForever')
+            flagged(sale, 'classicData')
+            sells.append(sale)
+        data['sells'] = sells
+        return {'data': data}
+
+    build = rng.choice(['1.60.1.70938', 'fixture'])
+    pages = [{'data': [{'id': n, 'name': 'listed'} for n in ids[start:start + 100]],
+              'meta': {'build': build, 'total': count, 'limit': 100, 'offset': start,
+                       'next': start + 100 if start + 100 < count else None}}
+             for start in range(0, max(count, 1), 100)]
+    return {'pages': pages, 'details': {str(n): detail(n) for n in ids}}, item_ids
+
+
+def sync_script(rng):
+    """Scripted ForeverDB responses for one attempt, keyed by request index."""
+    script = {}
+    for _ in range(rng.choice([0, 0, 0, 1, 1, 2])):
+        script[rng.choice([1, 1, 2, 3, 5, 9, 20, 36])] = rng.choice([
+            {'status': 502, 'body': {'retryable': True, 'retry_after': rng.choice([0, 30, 60, 75, 90.5, -5, 'soon'])}},
+            {'status': 502, 'body': {'retryable': True}},
+            {'status': 502, 'body': {'retryable': False}},
+            {'status': 502, 'body': 'upstream unavailable'},
+            {'status': 503, 'body': {'echo': 'secret-fixture'}},
+            {'status': 401, 'body': {'error': 'unauthorized'}},
+            {'status': 429, 'body': {}},
+            {'status': 302, 'headers': {'Location': '/elsewhere'}},
+            {'body': 'not json at all'},
+            {'body': {}},
+            {'body': {'data': {'id': 'x'}, 'meta': {}}},
+        ])
+    return script
+
+
+def sync_case(engine, rng, label, commands):
+    routes = {'/': (200, ''), '/characters': (200, {'characters': [], 'sources': []}),
+              '/listings': (200, {'listings': [], 'sources': []}),
+              '/events': (200, {'events': [], 'next_cursor': None, 'checkpoint': 'terminal', 'has_more': False, 'sources': []}),
+              f'/v1/pricetable/{MARKET}': (200, f'market|version|{int(T0.timestamp())}|2')}
+    for prof in CATALOGUE_PAGES:
+        routes[f'/professions/{prof}/'] = (200, profession_page(rng, prof))
+    vocabulary = types.SimpleNamespace(routes=routes, requests=[], event_contract=None)
+    fixture = Fixture(vocabulary)
+    fixture.forever, item_ids = vendor_dataset(rng)
+    try:
+        with tempfile.TemporaryDirectory(prefix='everledger-fuzz-') as directory, \
+                tempfile.TemporaryDirectory(prefix='everledger-fuzz-key-') as keys:
+            env = {k: v for k, v in os.environ.items() if not k.startswith('EVERLEDGER_')}
+            env.update(TZ='UTC', EVERLEDGER_ROSTER_TOKEN='fixture')
+            credential = rng.choice(['env', 'env', 'env', 'file', 'none'])
+            if credential == 'env':
+                env['EVERLEDGER_FOREVERDB_API_KEY'] = rng.choice(['secret-fixture', ' secret-fixture \n'])
+            elif credential == 'file':
+                # Outside the data directory, whose every file is checked for the key.
+                Path(keys, 'key').write_text(' secret-fixture\n')
+                env['EVERLEDGER_FOREVERDB_API_KEY_FILE'] = str(Path(keys, 'key'))
+            engine.start_scenario()
+            attempt = Path(directory, 'vendors/foreverdb.net/attempt.json')
+            step = 0
+            for _ in range(rng.randrange(2, 6)):
+                fixture.scripts = sync_script(rng)
+                for argv in ([['refresh', 'catalogue', '--json']]
+                             + [['vendors', str(rng.choice(item_ids + [999999])), *rng.choice([[], ['--json'], ['--in', 'IF']])]
+                                for _ in range(rng.choice([0, 1, 2]))]
+                             + ([['status', '--json']] if rng.random() < 0.3 else [])):
+                    if commands and argv[0] not in commands:
+                        continue
+                    engine.step(f'{label}/{step}', argv, env, fixture, directory, forbidden=('secret-fixture',))
+                    step += 1
+                if attempt.exists() and rng.random() < 0.75:
+                    state = json.loads(attempt.read_text())
+                    state.update(attempted_at='2020-01-01T00:00:00Z', finished_at='2020-01-01T00:00:00Z')
+                    attempt.write_text(json.dumps(state))
+    finally:
+        fixture.close()
+
+
+def run(candidate, cases, seed, commands, only, invocations, suite):
     engine = Engine(candidate)
     failures = []
     try:
         for case in range(cases):
-            label = f'fuzz/{seed}/{case}'
-            if only and not label.startswith(only) and only != label:
+            label = f'fuzz-{suite}/{seed}/{case}'
+            if only and only != label:
                 continue
             rng = random.Random(seed * 100003 + case)
+            if suite == 'sync':
+                try:
+                    sync_case(engine, rng, label, commands)
+                except Exception as error:
+                    failures.append(f'{label}: harness failure: {error!r}')
+                continue
             routes, contract, cat, items, names = world(rng)
             vocabulary = types.SimpleNamespace(routes=routes, requests=[], event_contract=contract)
             fixture = Fixture(vocabulary)
@@ -500,14 +663,17 @@ def main():
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--invocations', type=int, default=14)
     parser.add_argument('--commands', default='', help='comma-separated commands to keep')
-    parser.add_argument('--only', default='', help='one case label, for example fuzz/1/17')
+    parser.add_argument('--only', default='', help='one case label, for example fuzz-read/1/17')
+    parser.add_argument('--suite', choices=['read', 'sync'], default='read',
+                        help='read: catalogue, roster, market, vendor and journal commands; '
+                             'sync: catalogue build and ForeverDB sync attempts')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     candidate = Path(args.candidate).resolve()
     if not candidate.is_file():
         parser.error('candidate does not exist: ' + str(candidate))
     engine, failures = run([str(candidate)], args.cases, args.seed, set(filter(None, args.commands.split(','))),
-                           args.only, args.invocations)
+                           args.only, args.invocations, args.suite)
     print(f'{"command":<12} {"cases":>7} {"identical":>10} {"sanctioned":>11} {"unexplained":>12}')
     for name, counts in sorted(engine.scoreboard().items()):
         print(f'{name:<12} {counts["cases"]:7} {counts["identical"]:10} {counts["sanctioned"]:11} {counts["unexplained"]:12}')

@@ -182,9 +182,17 @@ replayed corpus. The corpus is fixed and can be fitted; the fuzz cannot.
 
 ```sh
 python3 parity/fuzz.py target/seams/debug/everledger --cases 40 --seed 1
-python3 parity/fuzz.py target/seams/debug/everledger --only fuzz/1/17 --report /tmp/case.json
+python3 parity/fuzz.py target/seams/debug/everledger --only fuzz-read/1/17 --report /tmp/case.json
 python3 parity/fuzz.py target/seams/debug/everledger --commands events,sales,net
+python3 parity/fuzz.py target/seams/debug/everledger --suite sync --cases 30
 ```
+
+The `sync` suite drives `refresh catalogue` through several attempts per case:
+random profession pages for the catalogue build, a random ForeverDB dataset of
+up to 120 vendors, scripted failures at random request indices (retryable and
+plain 502, 503, 401, 302, bodies that are not JSON or not the mapped shape),
+and a day passing or not between attempts. Every step also asserts the fixture
+key is absent from stdout, stderr, and every file.
 
 A world never leaves the contract, so the oracle never fails internally on
 one, and every difference is a finding. `--seed` and `--only` reproduce a case.
