@@ -197,3 +197,17 @@ key is absent from stdout, stderr, and every file.
 
 A world never leaves the contract, so the oracle never fails internally on
 one, and every difference is a finding. `--seed` and `--only` reproduce a case.
+
+## Production size
+
+`scale.py` builds a ForeverDB index of 1,014 vendors (about 35 MB) and a
+checkpoint four details short of complete, both with the oracle's own mapping
+and snapshot code. It compares lookups, `status`, and the final sync attempt
+through the engine, and prints each side's wall time. The replayed corpus and
+the fuzz use small datasets, so this is the only check of parity and speed at
+the size a finished sync produces.
+
+```sh
+cargo build --release --features parity-seams --target-dir target/seams
+python3 parity/scale.py target/seams/release/everledger
+```
