@@ -1,0 +1,11 @@
+# Everything cargo runs for this crate (tests, benches, `cargo run`) reaches
+# loopback only. A request to any other host is sent to this closed port and
+# fails, so a test can never spend a real service's request budget. The built
+# binary is unaffected: run target/release/everledger to reach real services.
+[env]
+HTTP_PROXY = { value = "http://127.0.0.1:9", force = true }
+HTTPS_PROXY = { value = "http://127.0.0.1:9", force = true }
+http_proxy = { value = "http://127.0.0.1:9", force = true }
+https_proxy = { value = "http://127.0.0.1:9", force = true }
+NO_PROXY = { value = "127.0.0.1,localhost,::1", force = true }
+no_proxy = { value = "127.0.0.1,localhost,::1", force = true }
