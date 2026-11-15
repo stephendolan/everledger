@@ -32,6 +32,9 @@ const SANCTIONED_TIME_INPUTS: [(&str, &str); 3] = [
     ),
 ];
 
+/// Python reads any Unicode decimal digit as a number; the port reads ASCII digits.
+const NON_ASCII_DIGITS: &str = "non-ASCII digits are not numbers";
+
 #[derive(Default)]
 struct Tally {
     checked: usize,
@@ -68,15 +71,27 @@ fn primitives_match_the_live_oracle() {
         };
         let kind = record["kind"].as_str().unwrap().to_owned();
         let text_of = |key: &str| record[key].as_str().map(str::to_owned);
-        let sanction = record["input"].as_str().and_then(|input| {
-            SANCTIONED_TIME_INPUTS
-                .iter()
-                .find(|(sanctioned, _)| {
-                    *sanctioned == input
-                        && matches!(kind.as_str(), "instant" | "time_selector" | "age")
-                })
-                .map(|(_, reason)| *reason)
-        });
+        let sanction = record["input"]
+            .as_str()
+            .and_then(|input| {
+                SANCTIONED_TIME_INPUTS
+                    .iter()
+                    .find(|(sanctioned, _)| {
+                        *sanctioned == input
+                            && matches!(kind.as_str(), "instant" | "time_selector" | "age")
+                    })
+                    .map(|(_, reason)| *reason)
+            })
+            .or_else(|| {
+                let digits = match kind.as_str() {
+                    "time_selector" => record["input"].as_str(),
+                    "roster_seconds" => record["value"].as_str(),
+                    _ => None,
+                };
+                digits
+                    .filter(|text| !text.is_ascii())
+                    .map(|_| NON_ASCII_DIGITS)
+            });
         let mut check = |label: String, actual: String, expected: String| {
             let tally = tallies.entry(kind.clone()).or_default();
             tally.checked += 1;
@@ -328,6 +343,7 @@ fn primitives_match_the_live_oracle() {
     for (input, reason) in SANCTIONED_TIME_INPUTS {
         println!("sanctioned {input:?}: {reason}");
     }
+    println!("sanctioned relative selectors and epoch strings: {NON_ASCII_DIGITS}");
     println!("{unrepresentable} records skipped: unpaired surrogates cannot be Rust strings");
     assert_eq!(failed, 0, "{failed} probe cases differ from the oracle");
 }

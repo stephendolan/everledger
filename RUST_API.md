@@ -220,9 +220,8 @@ Jiff civil values and timezone offsets support the complete range, including
 Python's last day beyond jiff's absolute Timestamp range. Naive inputs use `TZ`
 or the system timezone, with Python's default fold/gap offsets. Fractions truncate
 to microseconds. The three sanctioned CPython artifacts are recorded in the
-independent probe. A compact private decimal-zero lookup retains Unicode digits
-for time selectors and roster epoch strings; these are separate from CLI integer
-arguments and are exercised by the unchanged probe.
+independent probe. Relative selectors and roster epoch strings read ASCII digits,
+like CLI integer arguments; non-ASCII digits are a sanctioned difference.
 
 The virtual clock stores one f64 elapsed value. Each sleep validates its new
 wall time before committing state or logging. Monotonic readings use elapsed;
