@@ -320,6 +320,50 @@ class CLI(unittest.TestCase):
         self.assertIsNone(vendor['published_at'])
         self.assertEqual(vendor['cache_items'], 0)
 
+    def test_status_pending_uses_words_and_keeps_json_booleans(self):
+        self.market()
+        Handler.routes['/'] = (200, '')
+        self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+        pending_path = Path(self.tmp.name, 'vendors/foreverdb.net/pending.json')
+        pending_path.parent.mkdir(parents=True)
+        for pending, word in ((False, 'no'), (True, 'yes')):
+            with self.subTest(pending=pending):
+                if pending:
+                    pending_path.write_text('{}')
+                human = self.run_cli('status', code=1).stdout
+                self.assertIn(f'pending {word}', human)
+                self.assertIn('last sync never', human)
+                self.assertNotRegex(human, r'\b(?:True|False|None|null)\b|\?Z')
+                data = json.loads(self.run_cli('status', '--json', code=1).stdout)
+                vendor = next(row for row in data['status'] if row['source'] == 'vendors')
+                self.assertIs(vendor['foreverdb']['pending'], pending)
+                self.assertIsNone(vendor['foreverdb']['last_sync_at'])
+
+    def test_character_timestamps_use_unknown_and_preserve_known_values(self):
+        for generated, updated in ((None, None), (NOW, None), (None, NOW),
+                                   (NOW, NOW), ('2026-11-15T09:10:11-05:00', '2026-11-15T09:10:11-05:00')):
+            with self.subTest(generated=generated, updated=updated):
+                Handler.routes['/characters/Slade'] = (200, {'generated_at': generated,
+                    'character': {'name': 'Slade', 'professions_updated_at': updated}})
+                human = self.run_cli('char', 'Slade').stdout
+                self.assertIn(f"roster snapshot generated {generated or 'unknown'}; professions updated {updated or 'unknown'}", human)
+                self.assertNotRegex(human, r'\?Z|unknownZ|\b(?:None|null)\b')
+                data = json.loads(self.run_cli('char', 'Slade', '--json').stdout)
+                self.assertEqual(data['generated_at'], generated)
+                self.assertEqual(data['character']['professions_updated_at'], updated)
+
+    def test_event_pagination_status_uses_words_and_keeps_json_booleans(self):
+        for more, word in ((False, 'no'), (True, 'yes')):
+            with self.subTest(has_more=more):
+                Handler.routes['/events'] = (200, {'entries': [], 'has_more': more,
+                    'next_cursor': 'second' if more else None, 'checkpoint': None if more else 'terminal'})
+                human = self.run_cli('events').stdout
+                self.assertIn(f'has_more: {word}', human)
+                self.assertNotRegex(human, r'\b(?:True|False|None|null)\b')
+                data = json.loads(self.run_cli('events', '--json').stdout)
+                self.assertIs(data['has_more'], more)
+                self.assertIsNone(data['after_cursor'] if more else data['next_cursor'])
+
     def test_status_groups_roster_files_only_in_human_footer(self):
         self.market()
         Handler.routes['/'] = (200, '')
@@ -584,6 +628,7 @@ class CLI(unittest.TestCase):
         d=json.loads(self.run_cli('listings','--json').stdout)
         self.assertEqual(d['listings'][0]['buyout_copper'],200)
         self.assertTrue(d['listings'][0]['undercut'])
+        self.assertIn('undercut yes', self.run_cli('listings').stdout)
         Handler.routes['/characters']=(200,{'characters':[{'name':'Slade Undertow'}],'sources':[]})
         Handler.routes['/characters/Slade%20Undertow/inventory']=(200,{
             'bags':{'available':True,'items':[{'item_id':2604,'name':'Red Dye','count':4}]},

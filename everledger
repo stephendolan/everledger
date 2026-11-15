@@ -20,6 +20,7 @@ Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
 until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
 JSON uses API field names, integer copper totals and UTC ISO timestamps.
 Human unknown values print as unknown; JSON keeps nulls and full provenance.
+Human booleans print as yes/no; JSON keeps booleans.
 Human output ends with one source: summary of sources, save/data times and ages.
 Stale data has one stale: notice after all rows, before the source summary.
 Old journal saves show their age without a stale notice or exit-code change.
@@ -388,7 +389,7 @@ def status(args):
     rows.append(vendor_status)
     lines=[' | '.join([human(r['source'])] + ([human(r['backend'])] if r.get('backend') else []) + [human(r['state'])]) for r in rows]
     info = vendor_status['foreverdb']
-    lines.append(f"ForeverDB {info['state']} | transport {info['transport'] or 'none'} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {info['pending']}")
+    lines.append(f"ForeverDB {info['state']} | transport {info['transport'] or 'none'} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {human(info['pending'])}")
     ninja_coverage = vendor_status['coverage'][vendors.BACKEND]
     lines.append(f"wowforever.ninja cache | {ninja_coverage['record_count']} vendor records | {ninja_coverage['item_count']} item records")
     if not vendor_status['cache_items'] and not vendor_status['published_at']:

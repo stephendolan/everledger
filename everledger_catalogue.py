@@ -58,7 +58,7 @@ def cmd_char(cat, args, data=None):
     data = data if data is not None else roster(character_path(name))
     ch = data.get("character", data)
     print(f"{human(ch.get('name'))} | level {human(ch.get('level'))} {human(ch.get('race'))} {human(ch.get('class'))} | {human(ch.get('faction'))} {human(ch.get('realm'))} | gold {money(ch.get('gold_copper'))} | hearth {human((ch.get('hearth') or {}).get('location'))}")
-    print(f"  (roster snapshot generated {(data.get('generated_at') or '?')[:16]}Z; professions updated {(ch.get('professions_updated_at') or '?')[:16]}Z)")
+    print(f"  (roster snapshot generated {human(data.get('generated_at'))}; professions updated {human(ch.get('professions_updated_at'))})")
     want = args[1].lower() if len(args) > 1 else None
     for p in ch.get("professions", []):
         if p.get("skill_available"):

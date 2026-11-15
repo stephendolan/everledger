@@ -46,6 +46,7 @@ Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
 until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
 JSON uses API field names, integer copper totals and UTC ISO timestamps.
 Human unknown values print as unknown; JSON keeps nulls and full provenance.
+Human booleans print as yes/no; JSON keeps booleans.
 Human output ends with one source: summary of sources, save/data times and ages.
 Stale data has one stale: notice after all rows, before the source summary.
 Old journal saves show their age without a stale notice or exit-code change.

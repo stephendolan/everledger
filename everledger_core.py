@@ -118,6 +118,8 @@ def source(name, timestamp=None, **extra):
 
 
 def human(value):
+    if isinstance(value, bool):
+        return 'yes' if value else 'no'
     return 'unknown' if value is None or value == '' else str(value)
 
 
