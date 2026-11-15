@@ -6,7 +6,8 @@ Usage: python3 parity/argv_surface.py CANDIDATE
 Each argv is classified on both sides as rejected by the argument parser itself,
 answered with help, or accepted. What an accepted command then does is the
 differential runner's concern. Every source URL points at a closed loopback
-port, so nothing leaves the machine. Exits 1 when any classification differs.
+port, so nothing leaves the machine. Exits 1 when any classification differs
+outside the sanctioned integer forms that `sanctioned` names.
 """
 import json, os, random, shutil, socket, subprocess, sys, tempfile
 from pathlib import Path
@@ -115,21 +116,60 @@ def classify_candidate(code, out, err):
     return 'accepted'
 
 
-results, mismatches = [], []
+INTEGER_OPTIONS = ('--limit', '--skill', '--level')
+I64 = range(-2**63, 2**63)
+
+
+def sanctioned(argv):
+    """Name the sanctioned reason a candidate may reject an argv that argparse accepts.
+
+    The port types command-line integers as i64 written in ASCII digits. Python's
+    int() also takes any Unicode decimal digit and has no upper bound.
+    """
+    values = []
+    for index, arg in enumerate(argv):
+        for option in INTEGER_OPTIONS:
+            if arg == option and index + 1 < len(argv):
+                values.append(argv[index + 1])
+            elif arg.startswith(option + '='):
+                values.append(arg.split('=', 1)[1])
+    if argv[:1] == ['bridge']:
+        values += argv[2:4]
+    for value in values:
+        try:
+            number = int(value)
+        except ValueError:
+            continue
+        if not value.isascii():
+            return 'non-ASCII digits in an integer argument'
+        if number not in I64:
+            return 'integer argument beyond i64'
+    return None
+
+
+results, mismatches, exempt = [], [], []
 for argv in unique:
     code, out, err = run(str(ROOT / 'everledger'), argv)
     ccode, cout, cerr = run(CANDIDATE, argv)
     row = {'argv': argv, 'oracle': classify_oracle(code, out, err), 'oracle_code': code,
            'candidate': classify_candidate(ccode, cout, cerr), 'candidate_code': ccode}
     results.append(row)
-    if row['candidate'] != row['oracle']:
+    if row['candidate'] == row['oracle']:
+        continue
+    reason = sanctioned(argv) if (row['oracle'], row['candidate']) == ('accepted', 'parser-reject') else None
+    if reason:
+        exempt.append(dict(row, sanctioned=reason))
+    else:
         mismatches.append(row)
 shutil.rmtree(tmp, ignore_errors=True)
 summary = {}
 for row in results:
     summary[row['oracle']] = summary.get(row['oracle'], 0) + 1
 print('cases', len(results), 'oracle classes', summary)
+print('sanctioned', len(exempt))
+for row in exempt:
+    print('  ', json.dumps(row, ensure_ascii=False))
 print('mismatches', len(mismatches))
 for row in mismatches:
-    print('  ', json.dumps(row))
+    print('  ', json.dumps(row, ensure_ascii=False))
 sys.exit(1 if mismatches else 0)

@@ -168,4 +168,6 @@ and checks normalization and allowlist boundaries.
 a candidate and compares how each side classifies them: rejected by the argument
 parser, answered with help, or accepted. It covers missing values, repeated and
 abbreviated options, split positionals, negative numbers, and separators, which
-the replayed tests barely touch.
+the replayed tests barely touch. The port types command-line integers as i64 in
+ASCII digits, so a candidate may reject the Unicode-digit and unbounded integers
+that Python's `int()` accepts; the script reports each such case as sanctioned.
