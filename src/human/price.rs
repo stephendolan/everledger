@@ -27,6 +27,25 @@ pub fn render(id: i64, q: &MarketQuote, r: &RoundedQuote, vendors: &VendorAnswer
         copper_money(r.median_7d)
     )];
     match vendors {
+        VendorAnswer::Foreverdb(a) => {
+            if !a.rows().is_empty() {
+                let offers = a
+                    .rows()
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "{}{}",
+                            super::vendors::listed_price(r),
+                            super::vendors::stock_label(r)
+                        )
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                lines.push(format!(
+                    "vendor: listed price {} | ForeverDB sell-row labels",
+                    offers.into_iter().collect::<Vec<_>>().join("; ")
+                ));
+            }
+        }
         VendorAnswer::Ninja(a) => {
             let rows = a.coverage().rows();
             if !rows.is_empty() {

@@ -185,7 +185,7 @@ pub fn build(context: &Context<'_>) -> Result<Catalogue> {
             } else {
                 Document::object([
                     ("item_id", Document::Null),
-                    ("name", p.text(&cells[2]).into()),
+                    ("name", p.text(&p.text(&cells[2])).into()),
                     ("qty", 1i64.into()),
                 ])
             };
