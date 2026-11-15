@@ -6,9 +6,16 @@ use crate::{
 use serde::Deserialize;
 use std::process::{Command, Stdio};
 pub const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-#[derive(Clone, Debug)]
+/// ```compile_fail
+/// fn log_key(key: &everledger::foreverdb::transport::ApiKey) {
+///     let _ = format!("{key:?}");
+/// }
+/// ```
+#[derive(Clone)]
+pub struct ApiKey(String);
+#[derive(Clone)]
 pub enum Transport {
-    EnvKey(String),
+    EnvKey(ApiKey),
     ConnectorSurrogate,
 }
 impl Transport {
@@ -31,7 +38,7 @@ impl Transport {
                 Err(_) => return Err(Failure::unreachable("ForeverDB API key file unreadable")),
             }
         };
-        Ok((!key.is_empty()).then_some(Self::EnvKey(key)))
+        Ok((!key.is_empty()).then_some(Self::EnvKey(ApiKey(key))))
     }
     pub fn validate(&self, context: &Context<'_>) -> Result<()> {
         match self {
@@ -45,7 +52,7 @@ impl Transport {
             Self::EnvKey(key) => {
                 let mut req = Request::get(url)
                     .header("User-Agent", USER_AGENT)
-                    .header("X-API-Key", key);
+                    .header("X-API-Key", &key.0);
                 req.redirects = Redirects::Refuse;
                 context.http.request(&req).map(|r| r.body)
             }

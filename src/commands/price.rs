@@ -118,6 +118,16 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                 Document::Array(sources.into_iter().map(|s| s.into_document()).collect()),
             )?;
         }
+        VendorAnswer::Foreverdb(a) => {
+            quote.set("vendors", a.sellers_document()?)?;
+            quote.set("vendor_reason", Document::from(a.reason()))?;
+            let mut sources = crate::provenance::sources(&quote)?;
+            sources.extend(a.sources()?);
+            quote.set(
+                "sources",
+                Document::Array(sources.into_iter().map(Payload::into_document).collect()),
+            )?;
+        }
     }
     let lines = crate::human::price::render(item.id, v, &rounded, &vendors);
     crate::catalogue::disclose_item_source(&mut quote, Some(&item), context)?;

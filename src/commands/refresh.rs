@@ -23,31 +23,12 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         &catalogue,
         context.clock,
     )?];
-    let synced = match crate::foreverdb::sync(context) {
-        Ok(result) => result,
-        Err(error) => {
-            context
-                .diagnostics
-                .warn(&crate::human::refresh::retaining(&error))?;
-            if crate::foreverdb::active_index(context)?.is_none() {
-                return Err(error);
-            }
-            Payload::decode(
-                Document::object([
-                    ("configured", true.into()),
-                    ("complete", false.into()),
-                    ("failed", true.into()),
-                ]),
-                "ForeverDB sync",
-            )?
-        }
-    };
-    if let Some(index) = crate::foreverdb::active_index(context)? {
-        used.extend(crate::foreverdb::index_sources(&index, context)?);
-    }
+    let (vendor_sources, synced) = crate::vendors::refresh_cached(context)?;
+    let has_vendor_sources = !vendor_sources.is_empty();
+    used.extend(vendor_sources);
     let lines = crate::human::refresh::lines(synced.view());
     let mut code = crate::provenance::stale_code(&used);
-    if synced.view().failed && used.len() == 1 {
+    if synced.view().failed && !has_vendor_sources {
         code = crate::ExitCode::Unreachable;
     }
     let data = Document::object([

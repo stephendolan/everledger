@@ -37,9 +37,15 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                 a.select_zone(q)?;
             }
         }
+        VendorAnswer::Foreverdb(a) => {
+            if let Some(q) = args.zone.as_deref().filter(|s| !s.is_empty()) {
+                a.select_zone(q)?;
+            }
+        }
     }
     let mut data = match &answer {
         VendorAnswer::Ninja(a) => a.public(),
+        VendorAnswer::Foreverdb(a) => a.public(),
     };
     crate::catalogue::disclose_item_source(&mut data, Some(&item), context)?;
     let lines = crate::human::vendors::render(&answer);

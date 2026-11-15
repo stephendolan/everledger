@@ -8,6 +8,11 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+#[path = "vendors_foreverdb.rs"]
+mod foreverdb_answer;
+pub use foreverdb_answer::ForeverdbAnswer;
+#[path = "vendor_status.rs"]
+pub mod status;
 pub const BACKEND: &str = "wowforever.ninja";
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -154,15 +159,7 @@ impl NinjaAnswer {
             .map(|r| r.zone.clone())
             .collect::<BTreeSet<_>>();
         let query = crate::primitives::casefold(query);
-        let q = match query.as_str() {
-            "if" => "ironforge",
-            "sw" => "stormwind",
-            "darn" => "darnassus",
-            "org" => "orgrimmar",
-            "tb" => "thunder bluff",
-            "uc" => "undercity",
-            _ => &query,
-        };
+        let q = zone_query(&query);
         let docs = self
             .payload
             .document()
@@ -218,12 +215,26 @@ impl NinjaAnswer {
 #[derive(Clone, Debug)]
 pub enum VendorAnswer {
     Ninja(NinjaAnswer),
+    Foreverdb(ForeverdbAnswer),
 }
 pub fn lookup(item_id: i64, refresh: bool, context: &Context<'_>) -> Result<VendorAnswer> {
-    Ok(VendorAnswer::Ninja(ninja_lookup(
-        item_id, refresh, context,
-    )?))
+    if refresh && crate::foreverdb::transport::Transport::select(context.config)?.is_some() {
+        refresh_cached(context)?;
+    }
+    if let Some(index) = crate::foreverdb::active_index(context)? {
+        return Ok(VendorAnswer::Foreverdb(ForeverdbAnswer::lookup(
+            item_id, &index, context,
+        )?));
+    }
+    let mut answer = ninja_lookup(item_id, refresh, context)?;
+    if crate::foreverdb::transport::Transport::select(context.config)?.is_some()
+        && crate::foreverdb::attempt(context)?.is_some_and(|a| a.failed)
+    {
+        ninja_fallback(&mut answer, context)?;
+    }
+    Ok(VendorAnswer::Ninja(answer))
 }
+
 fn price_space(c: char) -> bool {
     c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}')
 }
@@ -491,12 +502,7 @@ pub fn ninja_lookup(item_id: i64, refresh: bool, context: &Context<'_>) -> Resul
         Ok(s) => {
             let d = crate::document::parse(&s)?;
             if d.truthy() {
-                #[derive(Deserialize)]
-                struct Origin {
-                    backend_url: Option<String>,
-                }
-                let origin: Origin = d.decode("ninja cache origin")?;
-                if origin.backend_url.as_deref() == Some(&context.config.vendor_url) {
+                if cache_matches(&d, context)? {
                     Some(NinjaAnswer::decode(d)?)
                 } else {
                     None
@@ -562,4 +568,118 @@ pub fn ninja_lookup(item_id: i64, refresh: bool, context: &Context<'_>) -> Resul
 }
 pub fn sources(answer: &NinjaAnswer) -> Result<Vec<Source>> {
     crate::provenance::sources(answer.payload.document())
+}
+
+#[derive(Deserialize)]
+struct CacheOrigin {
+    backend_url: Option<String>,
+}
+fn cache_matches(document: &Document, context: &Context<'_>) -> Result<bool> {
+    let origin: CacheOrigin = document.decode("ninja cache origin")?;
+    Ok(origin.backend_url.as_deref() == Some(&context.config.vendor_url))
+}
+#[derive(Deserialize)]
+struct CachedCoverage {
+    vendors: Option<Vec<Seller>>,
+    published_at: Option<String>,
+}
+fn cache_paths(context: &Context<'_>) -> Result<Vec<std::path::PathBuf>> {
+    let dir = context.config.data_dir.join("vendors").join(BACKEND);
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e.into()),
+    };
+    let mut paths = vec![];
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+fn ninja_fallback(answer: &mut NinjaAnswer, context: &Context<'_>) -> Result<()> {
+    if crate::time::age(Some(&answer.payload.view().fetched_at), context.clock)
+        .is_some_and(|a| a > 7 * 86400)
+    {
+        return Err(Failure::unreachable(
+            "ForeverDB sync failed; ninja fallback cache is older than 7d",
+        ));
+    }
+    answer.payload.set("stale", true)?;
+    let mut sources = crate::provenance::sources(answer.payload.document())?;
+    for source in &mut sources {
+        source.set("stale", true)?;
+        let detail = source
+            .view()
+            .detail
+            .as_deref()
+            .ok_or_else(|| Failure::shape("ninja provenance", "missing detail"))?;
+        source.set("detail", crate::human::vendors::fallback_detail(detail))?;
+    }
+    answer.payload.set(
+        "sources",
+        Document::Array(sources.into_iter().map(Payload::into_document).collect()),
+    )?;
+    Ok(())
+}
+pub fn refresh_cached(
+    context: &Context<'_>,
+) -> Result<(Vec<Source>, crate::foreverdb::SyncResult)> {
+    let (synced, failure) = match crate::foreverdb::sync(context) {
+        Ok(synced) => (synced, None),
+        Err(error) => {
+            context
+                .diagnostics
+                .warn(&crate::human::refresh::retaining(&error))?;
+            (
+                Payload::decode(
+                    Document::object([
+                        ("configured", true.into()),
+                        ("complete", false.into()),
+                        ("failed", true.into()),
+                    ]),
+                    "ForeverDB sync",
+                )?,
+                Some(error),
+            )
+        }
+    };
+    if let Some(index) = crate::foreverdb::active_index(context)? {
+        return Ok((crate::foreverdb::index_sources(&index, context)?, synced));
+    }
+    let paths = cache_paths(context)?;
+    if paths.is_empty()
+        && let Some(error) = failure
+    {
+        return Err(error);
+    }
+    let mut used = vec![];
+    for path in paths {
+        let id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| Failure::shape("ninja cache path", "invalid item id"))?;
+        let mut answer = ninja_lookup(id, true, context)?;
+        if failure.is_some() || synced.view().failed {
+            ninja_fallback(&mut answer, context)?;
+        }
+        used.extend(sources(&answer)?);
+    }
+    Ok((used, synced))
+}
+
+fn zone_query(query: &str) -> &str {
+    match query {
+        "if" => "ironforge",
+        "sw" => "stormwind",
+        "darn" => "darnassus",
+        "org" => "orgrimmar",
+        "tb" => "thunder bluff",
+        "uc" => "undercity",
+        _ => query,
+    }
 }

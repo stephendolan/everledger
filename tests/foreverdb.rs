@@ -207,3 +207,76 @@ fn mapping_rejects_wrong_shapes_and_retains_exact_stack_price() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn unlinked_catalogue_results_follow_both_oracle_cleaning_passes() -> Result<()> {
+    struct Pages;
+    impl Http for Pages {
+        fn request(&self, _: &Request) -> Result<Response> {
+            let rows=["Rune &lt;Major&gt;", "Plain &amp;amp; Simple"].into_iter().enumerate().map(|(i,name)| format!(r#"<tr role="row"><td role="cell"><a href="/professions/alchemy/{}-recipe/">Recipe</a></td><td role="cell"><span class="o">1</span></td><td role="cell">{name}</td><td role="cell"></td></tr>"#,i+1)).collect::<String>();
+            Ok(Response {
+                body: format!("Recipes (2){rows}").into_bytes(),
+                headers: vec![],
+            })
+        }
+    }
+    let dir = Directory::new();
+    let config = dir.config();
+    let clock = VirtualClock::new(instant("2026-11-15T12:00:00Z")?);
+    let catalogue = everledger::catalogue::CatalogueStore::default();
+    let diagnostics = WriterDiagnostics::<Vec<u8>>::default();
+    let context = Context {
+        config: &config,
+        clock: &clock,
+        http: &Pages,
+        catalogue: &catalogue,
+        diagnostics: &diagnostics,
+    };
+    let built = everledger::catalogue_build::build(&context)?;
+    let recipes = &built
+        .view()
+        .professions
+        .get("alchemy")
+        .expect("alchemy")
+        .recipes;
+    assert_eq!(recipes[0].result.name, "Rune");
+    assert_eq!(recipes[1].result.name, "Plain & Simple");
+    Ok(())
+}
+
+#[test]
+fn foreverdb_ignores_comparison_caches_from_a_different_ninja_url() -> Result<()> {
+    let dir = Directory::new();
+    let config = dir.config();
+    let http = Fixture {
+        config: &config,
+        total: 1,
+        requests: RefCell::new(vec![]),
+        fail_at: None,
+    };
+    let catalogue = everledger::catalogue::CatalogueStore::default();
+    let diagnostics = WriterDiagnostics::<Vec<u8>>::default();
+    let clock = VirtualClock::new(instant("2026-11-15T12:00:00Z")?);
+    let context = Context {
+        config: &config,
+        http: &http,
+        clock: &clock,
+        catalogue: &catalogue,
+        diagnostics: &diagnostics,
+    };
+    assert!(foreverdb::sync(&context)?.view().complete);
+    let path = config.data_dir.join("vendors/wowforever.ninja");
+    std::fs::create_dir_all(&path)?;
+    std::fs::write(
+        path.join("2604.json"),
+        r#"{"backend_url":"http://127.0.0.1:9999","vendors":"unrelated shape","published_at":false}"#,
+    )?;
+    assert!(matches!(
+        everledger::vendors::lookup(2604, false, &context)?,
+        everledger::vendors::VendorAnswer::Foreverdb(_)
+    ));
+    let (status, _) = everledger::vendors::status::backend_status(&context)?;
+    assert_eq!(status.view().coverage.ninja.item_count, 0);
+    assert_eq!(http.requests.borrow().len(), 2);
+    Ok(())
+}

@@ -55,6 +55,28 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         .diagnostics
         .warn("deprecated verify; use: everledger status")?;
     let cat = load_catalogue(context)?;
+    let (ok, lines) = check_catalogue(cat);
+    let data = Document::object([
+        ("ok", Document::from(ok)),
+        (
+            "checks",
+            Document::Array(lines.iter().cloned().map(Document::from).collect()),
+        ),
+        (
+            "sources",
+            Document::Array(vec![catalogue_source(cat, context.clock)?.into_document()]),
+        ),
+    ]);
+    let mut out = CommandOutput::new(data, lines);
+    out.code = if ok {
+        ExitCode::Answer
+    } else {
+        ExitCode::Error
+    };
+    Ok(out)
+}
+
+pub fn check_catalogue(cat: &crate::catalogue::Catalogue) -> (bool, Vec<String>) {
     let mut checks = vec![];
     for (prof, block) in &cat.view().professions.0 {
         checks.push(Check::Count {
@@ -77,22 +99,5 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     }
     let ok = checks.iter().all(Check::good);
     let lines = human::verify::render(&checks, cat);
-    let data = Document::object([
-        ("ok", Document::from(ok)),
-        (
-            "checks",
-            Document::Array(lines.iter().cloned().map(Document::from).collect()),
-        ),
-        (
-            "sources",
-            Document::Array(vec![catalogue_source(cat, context.clock)?.into_document()]),
-        ),
-    ]);
-    let mut out = CommandOutput::new(data, lines);
-    out.code = if ok {
-        ExitCode::Answer
-    } else {
-        ExitCode::Error
-    };
-    Ok(out)
+    (ok, lines)
 }
