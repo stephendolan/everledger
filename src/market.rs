@@ -65,9 +65,8 @@ pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
         &format!("AHledger {}", context.config.market),
         Some(&timestamp),
         context.clock,
-    );
+    )?;
     let stale = crate::time::age(Some(&timestamp), context.clock).is_some_and(|s| s > 900);
-    s.document.set("stale", stale);
-    s.view.stale = Some(stale);
+    s.set("stale", stale)?;
     Ok((prices, s))
 }

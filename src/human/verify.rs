@@ -1,4 +1,4 @@
-use crate::{catalogue::Catalogue, commands::verify::Check, document::Document, primitives::human};
+use crate::{catalogue::Catalogue, commands::verify::Check, human::text};
 pub fn render(checks: &[Check<'_>], cat: &Catalogue) -> Vec<String> {
     let mut lines = checks
         .iter()
@@ -13,10 +13,7 @@ pub fn render(checks: &[Check<'_>], cat: &Catalogue) -> Vec<String> {
                 } => format!("{status} {profession}: {actual}/{stated} recipes"),
                 Check::Anchor { name, recipe, .. } => {
                     let (learn, source) = match recipe {
-                        Some(r) => (
-                            r.bands.learn.to_string(),
-                            human(&Document::from(r.source_type.clone())),
-                        ),
+                        Some(r) => (r.bands.learn.to_string(), text(r.source_type.as_deref())),
                         None => ("?".into(), "?".into()),
                     };
                     format!("{status} anchor {name}: learn {learn}, source {source}")
@@ -26,8 +23,8 @@ pub fn render(checks: &[Check<'_>], cat: &Catalogue) -> Vec<String> {
         .collect::<Vec<_>>();
     lines.push(format!(
         "catalogue built: {} | source: {}",
-        cat.view.generated_at,
-        cat.view
+        cat.view().generated_at,
+        cat.view()
             .source
             .as_ref()
             .map(String::as_str)

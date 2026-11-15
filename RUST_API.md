@@ -1,270 +1,310 @@
 # Rust foundation API
 
-The crate uses Rust 1.100.0, edition 2024, and forbids unsafe code. `cargo build`
-produces `target/debug/everledger`. The executable parses arguments, constructs
-collaborators, calls the library, and returns its exit code.
+Rust 1.100.0, edition 2024, is pinned in `rust-toolchain.toml`. The library and
+thin executable forbid unsafe code. `cargo build` produces
+`target/debug/everledger`. All sixteen oracle commands are registered;
+`bridge` and `verify` are implemented. Other commands return a named
+`Failure` until their owner implements them.
 
-## Command ownership and implementation
+## Command ownership and typed arguments
 
-All sixteen oracle commands are registered. `verify` and `bridge` run end to end;
-the other fourteen return `<command>: not yet ported` with exit 1.
+A command owns `src/commands/<command>.rs`, its human rendering in
+`src/human/<command>.rs`, and its tests. Both modules are already registered.
+Implementation needs no edits to registration or the manifest. Tests may live
+inside the command module or in automatically discovered `tests/<command>.rs`.
+`parity/` and the independent probe corpus are reviewer-owned.
 
-Each command owns `src/commands/<command>.rs`, its rendering module
-`src/human/<command>.rs`, and its tests. All rendering modules are already declared.
-Implementing a command needs no changes to registration, shared modules, or the
-manifest. Command-specific boundary structs and serde decoding belong in that
-command's files. New command integration tests can live in `tests/<command>.rs`,
-which Cargo discovers automatically beside the existing Python tests. Unit tests
-can live in the command module itself. `parity/` belongs to the harness worker.
+Every command declares its own argument struct with `#[derive(clap::Args)]`:
 
 ```rust
-pub fn run(args: &clap::ArgMatches, context: &everledger::Context<'_>)
-    -> everledger::Result<everledger::commands::CommandOutput>;
+#[derive(clap::Args, Debug, Clone)]
+#[command(args_override_self = true)]
+pub struct Args {
+    #[arg(allow_negative_numbers = true)]
+    pub profession: String,
+    #[arg(value_parser = crate::cli::parse_integer, allow_negative_numbers = true)]
+    pub start: i64,
+    #[arg(value_parser = crate::cli::parse_integer, allow_negative_numbers = true)]
+    pub end: i64,
+    #[arg(long)]
+    pub json: bool,
+}
 
+pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput>;
+```
+
+`cli::Command` is a derived subcommand enum holding these structs. Dispatch
+matches it exhaustively. Commands never receive `ArgMatches`. Venue values use
+`types::Venue::{Auction,Vendor}`; the refresh target uses
+`commands::refresh::Target::Catalogue`.
+
+| API | Signature |
+| --- | --- |
+| `cli::parser` | `() -> clap::Command`, for help/definition inspection |
+| `cli::parse_env` | `() -> Result<cli::Command, clap::Error>` |
+| `cli::parse_from` | `(impl IntoIterator<Item=impl Into<OsString>>) -> Result<Command, clap::Error>` |
+| `cli::parse_integer` | `(&str) -> Result<i64, String>` |
+| `cli::dispatch` | `(&Command, &Context) -> Result<CommandOutput>` |
+| `cli::execute` | `(&Command, &Context, &mut dyn Write) -> ExitCode` |
+| `cli::write_failure` | `(&Failure, &dyn Diagnostics) -> Result<()>` |
+
+Use `parse_from` for fixture invocations. It applies argparse's contiguous
+variadic positionals and separator rules as well as the derived schema. Help
+subcommands and abbreviated flags are rejected. Numeric arguments accept ASCII
+digits, a sign, internal underscores and surrounding whitespace, within `i64`.
+Non-ASCII digits and overflowing integers are sanctioned usage errors.
+Repeated options keep the last value. `--json` is subcommand-local. The events
+command owns cursor-dependent limits and semantic checks; clap leaves its limit
+as `Option<i64>`.
+
+`CommandOutput::new(data: Document, lines: Vec<String>) -> CommandOutput` defaults
+to exit 0, inferred stale status and no source families. Its fields are `data`,
+`lines`, `code: ExitCode`, `stale: Option<bool>`, and
+`source_families: human::SourceFamilies`. All human lines originate in a human
+module, using typed command/report values.
+
+## Collaborators and immediate diagnostics
+
+```rust
 pub struct Context<'a> {
     pub clock: &'a dyn clock::Clock,
     pub http: &'a dyn http::Http,
     pub config: &'a config::Config,
     pub catalogue: &'a catalogue::CatalogueStore,
+    pub diagnostics: &'a dyn diagnostics::Diagnostics,
 }
 ```
 
-`commands::CommandOutput::new(data: Document, lines: Vec<String>) -> Self` defaults
-to exit 0, no warnings, inferred staleness, and no source families. Its public
-fields are `data`, `lines`, `code: ExitCode`, `warnings: Vec<String>`,
-`stale: Option<bool>`, and `source_families: human::SourceFamilies`. Produce all
-human strings in the command's human module from typed values. The CLI owns the
-shared emit/error paths. It prints verify's deprecation warning before loading
-its catalogue, including on failure.
+`diagnostics::Diagnostics` exposes `write(&self, &str) -> Result<()>` and
+`warn(&self, &str) -> Result<()>`. `warn` appends a newline and writes immediately:
 
-Numeric CLI options and bridge endpoints use `types::CliInteger`, an ordered,
-arbitrary precision integer with Python decimal-digit, sign, whitespace and
-underscore parsing. Read them with `args.get_one::<CliInteger>("limit")`.
-`as_i64() -> Option<i64>` supports bounded calculations; `document() -> Document`
-and `Display` preserve arbitrary magnitudes. `is_negative() -> bool` supports
-usage checks. `From<i64>`, `FromStr`, `Ord`, and `Eq` are implemented. No default
-limit is injected by clap: the events command owns the human/JSON defaults and
-cursor-dependent omission, as in Python. The CLI already checks empty cursor
-and negative limit before dispatch. Other commands' semantic validation belongs
-in their command files.
+```rust
+context.diagnostics.warn("deprecated --known; use --char")?;
+return Err(Failure::usage("--known conflicts with --char"));
+```
+
+The warning survives the failure. Resync notices, cache-retention notices,
+deprecations and catalogue-age advisories use the same collaborator. No command
+needs to capture process stderr or carry warnings out of a successful return.
+
+`WriterDiagnostics<W: Write>::new(W)` adapts a writer. `into_inner(self) -> W`
+returns it. `WriterDiagnostics<Vec<u8>>::default()` records fixture diagnostics;
+`contents(&self) -> Vec<u8>` reads them. The executable injects standard stderr.
+
+For an in-process command test, create a virtual clock, a fixture `Http`,
+`Config::from_values`, a `CatalogueStore::from_document`, and recording
+`WriterDiagnostics`. Construct `Context`, parse argv with `parse_from`, and call
+`execute` with a `Vec<u8>` stdout writer. Assert the exit code, stdout,
+diagnostics, and fixture HTTP transcript. A fresh catalogue store isolates each
+fixture; a reused store intentionally caches successful loads.
 
 ## Units, failures and configuration
 
-| Path | Signature / representation |
+| Path | Representation / signature |
 | --- | --- |
 | `types::Copper` | `pub struct Copper(pub i64)`, serde integer, ordered |
 | `types::EpochSeconds` | `pub struct EpochSeconds(pub i64)`, serde integer, ordered |
-| `time::UtcInstant` | `pub struct UtcInstant(pub jiff::Timestamp)`, microsecond precision |
+| `time::UtcInstant` | private checked UTC microseconds, ordered |
 | `types::ExitCode` | `Answer=0`, `Error=1`, `Usage=2`, `Stale=3`, `Unreachable=4` |
-| `types::Failure` | `{ message: String, code: ExitCode, body: Option<Document> }` |
+| `types::Failure` | `{message: String, code: ExitCode, body: Option<Document>}` |
 | `types::Result<T>` | `Result<T, Failure>` |
-| `Failure::new` | `(message: impl Into<String>, code: ExitCode) -> Failure` |
-| `Failure::{error,usage,unreachable}` | `(message: impl Into<String>) -> Failure` |
-| `Failure::shape` | `(boundary: &str, error: impl Display) -> Failure`, exit 1 |
-| `config::Config::from_env` | `() -> Config` |
-| `config::Config::from_values` | `(&HashMap<String, String>) -> Config`, fixture-friendly |
-| `Config::roster_token` | `(&self) -> Result<String>`, trimmed environment/file fallback |
-| `Config::foreverdb_base` | `(&self) -> Result<&str>`, seam-aware and fail-closed |
-| `config::FOREVERDB_DAILY_REQUESTS` | `const u32 = 36`, no environment override |
+| `Failure::new` | `(impl Into<String>, ExitCode) -> Failure` |
+| `Failure::{error,usage,unreachable}` | `(impl Into<String>) -> Failure` |
+| `Failure::shape` | `(&str, impl Display) -> Failure`, exit 1 |
+| `config::Config::from_env` | `() -> Config`, tolerates non-Unicode environment values |
+| `Config::from_values` | `(&HashMap<String,String>) -> Config` |
+| `Config::roster_token` | `(&self) -> Result<String>`, environment/file fallback |
+| `Config::foreverdb_base` | `(&self) -> Result<&str>`, seam-aware |
+| `config::FOREVERDB_DAILY_REQUESTS` | `const u32 = 36`, no override |
 
-`Config` has public fields for data directory, roster/AHledger/vendor URLs,
-market, roster token and file, ForeverDB key and file, connector slug and dynamic
-credentials directory. Defaults and empty-value behavior follow the oracle.
-`foreverdb_url: Option<String>` exists only under `parity-seams`. Proxy and CA
-environment variables are read by the HTTP transport at request time.
+`Config` exposes data directory, roster/AHledger/vendor URLs, market, roster
+token and file, ForeverDB key and file, connector slug and dynamic-credentials
+directory. Empty token-file settings are unset. `foreverdb_url: Option<String>`
+exists only under `parity-seams`. Proxy and CA variables are read by HTTP.
 
-## Ordered JSON and Python primitives
+## Documents and consistent typed views
 
 `document::Document` is `Null | Bool(bool) | Number(Number) | String(String) |
-Array(Vec<Document>) | Object(Vec<(String, Document)>)`. `Number` is
-`Integer(String) | Float(f64)`. Integer text is unbounded. Objects preserve first
-key insertion positions and replace duplicate values. Value equality follows
-Python object equality, independent of key order, including bool/int equality.
+Array(Vec<Document>) | Object(Vec<(String,Document)>)`. `Number` is
+`Integer(String) | Float(f64)`. JSON integers retain arbitrary precision;
+unit-bearing typed fields remain bounded. Object updates preserve first insertion
+positions and replace duplicate values. Equality ignores object key order and
+uses Python numeric equality.
 
-| Path | Signature |
+| API | Signature |
 | --- | --- |
 | `document::parse` | `(&str) -> Result<Document>` |
 | `document::dumps` | `(&Document, JsonMode) -> String`, no trailing newline |
-| `document::JsonMode` | `Stdout`, `Error`, `Cursor`, `Catalogue` |
-| `Document::object` | `(impl IntoIterator<Item=(impl Into<String>, Document)>) -> Document` |
-| `Document::get` | `(&self, key: &str) -> Option<&Document>` |
-| `Document::set` | `(&mut self, key: impl Into<String>, value: impl Into<Document>)` |
-| `Document::set_default` | same arguments; leaves an existing null intact |
-| `Document::remove` | `(&mut self, key: &str) -> Option<Document>` |
+| `Document::object` | `(impl IntoIterator<Item=(impl Into<String>,Document)>) -> Document` |
+| `Document::get` | `(&self, &str) -> Option<&Document>` |
+| `Document::{set,set_default}` | `(&mut self, impl Into<String>, impl Into<Document>) -> Result<()>` |
+| `Document::remove` | `(&mut self, &str) -> Option<Document>` |
 | `Document::decode<T: DeserializeOwned>` | `(&self, boundary: &str) -> Result<T>` |
 | `Document::from_typed<T: Serialize>` | `(&T) -> Result<Document>` |
 | `Document::{as_str,as_array,as_object,as_f64,as_i64}` | optional typed accessors |
-| `Document::truthy` | `(&self) -> bool`, Python truthiness |
-| `primitives::float_repr` | `(f64) -> String`, Python shortest text and ties |
-| `primitives::round` | `(f64, digits: i32) -> f64`, half-even decimal rounding |
-| `primitives::rounded_copper` | `(f64) -> Result<Copper>`, integral half-even rounding |
-| `primitives::py_str` | `(&Document) -> String`, Python strings/numbers/containers |
-| `primitives::human` | `(&Document) -> String`, unknown/yes/no conventions |
-| `primitives::money` | `(Option<f64>) -> Result<String>`, boundary numeric formatting |
-| `primitives::copper_money` | `(Option<Copper>) -> String`, exact typed command formatting |
-| `primitives::{casefold,lower}` | `(&str) -> String`, Python Unicode 15.1 mappings/context |
-| `primitives::quote` | `(&str) -> String`, UTF-8 percent escaping, `safe=''` |
-| `primitives::urlencode` | `(&[(String, Document)]) -> String`, ordered, space becomes `+` |
-| `primitives::base64_encode` | `(&[u8]) -> String`, URL-safe with padding |
-| `primitives::base64_decode` | `(&str) -> Result<Vec<u8>>`, strict Python 3.13 padding |
-| `primitives::decimal` | `(&str) -> Option<String>`, Unicode decimal normalization |
-| `primitives::isdigit` | `(&str) -> bool`, Python digit classification |
+| `Document::truthy` | `(&self) -> bool` |
+| `http::Payload<T>::decode` | `(Document, boundary: &str) -> Result<Payload<T>>` |
+| `Payload::document` | `(&self) -> &Document` |
+| `Payload::view` | `(&self) -> &T` |
+| `Payload::{set,set_default}` | `(&mut self, impl Into<String>, impl Into<Document>) -> Result<()>` |
+| `Payload::into_document` | `(self) -> Document` |
 
-`Stdout` also serves cache writes: Unicode, comma-space, colon-space, no indent.
-Add a newline only for stdout. `Error` uses ASCII escaping and spaced separators;
-`Cursor` uses ASCII escaping and compact separators; `Catalogue` uses Unicode and
-one-space indentation. Avoid serde_json output and float `Display` for wire text.
-Serde is for typed boundary views; retain `Document` for pass-through output.
-`Document::from_typed` is for new, typed output; it does not recover the original
-field order or numeric class of a received payload.
+Payload fields are private. Updates clone the ordered document, decode the new
+typed view and commit both together. Invalid updates leave both unchanged. There
+is no mutable view or mutable document accessor. Use typed views for decisions
+and retained documents for pass-through output. Required fields are required
+serde fields; optional `.get` fields use `Option<T>`. `provenance::Field<T>`
+(`Missing | Null | Value(T)`) distinguishes absence from an explicit null;
+`as_ref()` borrows its value. `catalogue::nullable` supplies required nullable
+serde fields through `deserialize_with`.
 
-## Time and clocks
+`JsonMode::Stdout` also serves cache writes: Unicode, spaced separators, no
+indent. Add a newline only for stdout. `Error` escapes ASCII-external characters,
+including DEL, with spaced separators. `Cursor` uses ASCII escaping and compact
+separators. `Catalogue` uses Unicode and one-space indentation. The parser checks
+number grammar itself and rejects excessive nesting with Failure. serde_json
+uses `float_roundtrip`; untagged enums and flatten work without
+`arbitrary_precision`.
 
-| Path | Signature |
+## Scalar, numeric and encoding primitives
+
+| API | Signature |
 | --- | --- |
-| `clock::Clock::now` | `(&self) -> UtcInstant` |
-| `clock::Clock::monotonic` | `(&self) -> f64`, elapsed seconds |
-| `clock::Clock::sleep` | `(&self, seconds: f64) -> Result<()>` |
-| `clock::SystemClock::default` | `() -> SystemClock` |
-| `clock::VirtualClock::new` | `(origin: UtcInstant) -> VirtualClock` |
-| `clock::VirtualClock::from_env` | `() -> Result<Option<VirtualClock>>`, feature only |
-| `time::iso` | `(UtcInstant) -> String`, UTC seconds with `Z` |
-| `time::instant` | `(&str) -> Result<UtcInstant>`, Python ISO parsing/local TZ |
-| `time::instant_in` | `(&str, zone: Option<&str>) -> Result<UtcInstant>` |
-| `time::time_selector` | `(&str, &dyn Clock) -> Result<String>` |
-| `time::time_selector_in` | `(&str, &dyn Clock, Option<&str>) -> Result<String>` |
-| `time::roster_seconds` | `(&Document) -> Result<EpochSeconds>`, bool before string |
-| `time::roster_seconds_in` | `(&Document, Option<&str>) -> Result<EpochSeconds>` |
-| `time::age` | `(Option<&str>, &dyn Clock) -> Option<i64>` |
-| `time::age_in` | `(Option<&str>, &dyn Clock, Option<&str>) -> Option<i64>` |
+| `primitives::float_repr` | `(f64) -> String`, Python shortest digits/ties and exponent text |
+| `primitives::rounded_copper` | `(f64) -> Result<Copper>`, half-even integral rounding |
+| `primitives::copper_money` | `(Option<Copper>) -> String`, exact money text |
+| `primitives::Scalar` | serde untagged `Bool(bool) | Integer(i64) | Float(f64) | Text(String)` |
+| `Scalar::python_str` | `(&self) -> String` |
+| `primitives::human` | `(Option<&Scalar>) -> String` |
+| `primitives::py_str` | `(&Document) -> Result<String>`, scalar boundary conversion |
+| `primitives::casefold` | `(&str) -> String`, Python Unicode 15.1 table |
+| `primitives::lower` | `(&str) -> String`, Rust string lowercase |
+| `primitives::quote` | `(&str) -> String`, UTF-8 escaping with `safe=''` |
+| `primitives::urlencode` | `(&[(String,Document)]) -> Result<String>`, ordered scalar parameters |
+| `primitives::base64_encode` | `(&[u8]) -> String`, padded URL-safe base64 |
+| `primitives::base64_decode` | `(&str) -> Result<Vec<u8>,Base64Error>` |
+
+`Base64Error::{InvalidAlphabet,InvalidPadding}` names decoding failures; page
+cursor code maps them to its own `Failure`. Money formats typed copper only;
+a negative input rounding to zero prints `0c`. Containers in scalar positions
+are shape drift. Lowercase uses Rust's contextual mapping; mappings for the
+75 newer Unicode letters are sanctioned differences.
+
+Typed human helpers live in `human`: `text(Option<&str>) -> String`,
+`boolean(Option<bool>) -> &'static str`, `integer(Option<i64>) -> String`,
+`number(Option<f64>) -> String`, `value(Option<&Scalar>) -> String`, and re-exported
+`copper_money`. Unknown values print `unknown`; booleans print `yes`/`no`.
+
+## Time and clock APIs
+
+| API | Signature |
+| --- | --- |
+| `UtcInstant::from_microseconds` | `(i64) -> Result<UtcInstant>` |
 | `UtcInstant::from_epoch` | `(EpochSeconds) -> Result<UtcInstant>` |
-| `UtcInstant::microseconds` | `(self) -> i64`, use for duration arithmetic |
+| `UtcInstant::microseconds` | `(self) -> i64` |
 | `UtcInstant::add_microseconds` | `(self, i64) -> Result<UtcInstant>` |
+| `clock::Clock::{now,monotonic}` | `(&self) -> UtcInstant`, `(&self) -> f64` |
+| `Clock::sleep` | `(&self, f64) -> Result<()>` |
+| `clock::SystemClock::default` | `() -> SystemClock` |
+| `clock::VirtualClock::new` | `(UtcInstant) -> VirtualClock` |
+| `VirtualClock::from_env` | `() -> Result<Option<VirtualClock>>`, feature only |
+| `time::iso` | `(UtcInstant) -> String`, UTC seconds and `Z` |
+| `time::{instant,instant_in}` | `(&str[, zone: Option<&str>]) -> Result<UtcInstant>` |
+| `time::{time_selector,time_selector_in}` | `(&str, &dyn Clock[, Option<&str>]) -> Result<String>` |
+| `time::{roster_seconds,roster_seconds_in}` | `(&Document[, Option<&str>]) -> Result<EpochSeconds>` |
+| `time::{age,age_in}` | `(Option<&str>, &dyn Clock[, Option<&str>]) -> Option<i64>` |
 
-The `_in` helpers supply an explicit zone for fixture tests. Otherwise naive
-inputs use the local zone, including `TZ`. Parsing handles basic and extended
-calendar/week dates, arbitrary date/time separators, fractional seconds and
-fractional offsets, and truncation to six decimal places. Jiff's compatible
-ambiguity resolution matches Python's default fold and gap behavior. The virtual
-clock shares one f64 elapsed value across monotonic readings, microsecond wall
-time, and sleep logging. Sleeps advance it immediately. Origin and sleep-log
-variables are read only when `parity-seams` is compiled.
+Instants span `0001-01-01T00:00:00Z` through
+`9999-12-31T23:59:59.999999Z`; constructors and arithmetic reject overflow.
+Jiff civil values and timezone offsets support the complete range, including
+Python's last day beyond jiff's absolute Timestamp range. Naive inputs use `TZ`
+or the system timezone, with Python's default fold/gap offsets. Fractions truncate
+to microseconds. The three sanctioned CPython artifacts are recorded in the
+independent probe. A compact private decimal-zero lookup retains Unicode digits
+for time selectors and roster epoch strings; these are separate from CLI integer
+arguments and are exercised by the unchanged probe.
 
-## HTTP and typed boundaries
+The virtual clock stores one f64 elapsed value. Each sleep validates its new
+wall time before committing state or logging. Monotonic readings use elapsed;
+wall readings use origin plus elapsed rounded half-even to microseconds.
 
-```rust
-http::Request::get(url: impl Into<String>) -> Request;
-Request::header(self, name: impl Into<String>, value: impl Into<String>) -> Self;
-http::Http::request(&self, request: &Request) -> Result<http::Response>;
-http::Response { body: Vec<u8>, headers: Vec<(String, String)> }
-Response::header(&self, name: &str) -> Option<&str>; // case-insensitive
-http::decode_body(&[u8]) -> Result<Document>;
-http::Payload<T> { document: Document, view: T }
-Payload::<T>::decode(document: Document, boundary: &str) -> Result<Payload<T>>;
-```
+## Shared boundaries and rendering
 
-`Request.redirects` is `Redirects::Follow` or `Redirects::Refuse`. `UreqHttp`
-implements `Http`. It supplies the oracle User-Agent, identity encoding and
-connection close, honors caller header overrides, follows urllib's redirect
-limits, and applies 20-second connect/read/write timeouts. HTTP 400/422 map to 2,
-404/409 to 1, and other HTTP/network errors to 4. HTTP failures carry
-`{"status": status, "response": decoded_body_or_null}`. UTF-8/16/32 JSON bytes
-are decoded at the edge. Redirects re-evaluate proxy selection.
-
-The pinned ureq 3.5.2 client uses rustls and `RootCerts::PlatformVerifier`.
-The real build and loopback tests establish HTTP forward proxy selection,
-`no_proxy`, headers, redirect paths and status mapping. A temporary local CA
-installed through `SSL_CERT_FILE` passes both direct TLS and authenticated
-CONNECT-proxy requests; the origin receives the expected path. Ureq 3's native
-HTTP proxy transport is CONNECT-only. `http_forward.rs` adapts its documented
-connector/resolver/transport interfaces for urllib's absolute-form HTTP requests;
-ureq still parses all HTTP responses. HTTPS uses ureq's standard CONNECT/TLS
-transport. No extra direct crate is needed. Proxy credentials stay in proxy
-headers and are not copied to the origin.
-
-Jiff 0.2.45 supplies checked civil dates, ISO weeks, microsecond timestamps and
-local-zone ambiguity handling. The Python-compatible parser sits above it
-because Jiff's own ISO parser has a different acceptance surface. Committed
-vectors test UTC, America/New_York and Asia/Kathmandu, including DST gaps/folds.
-This confirms the proposed time crate with a real build.
-
-With the parity feature, both `Config::foreverdb_base` and `UreqHttp` fail closed
-for ForeverDB unless the seam URL exists. HTTP also redirects a hard-coded
-ForeverDB host to the seam, preventing an accidental real-host request. Normal
-release builds have no seam environment-variable handling.
-
-## Shared service APIs
-
-| Path | Signature |
+| API | Signature |
 | --- | --- |
+| `http::Request::get` | `(impl Into<String>) -> Request` |
+| `Request::header` | `(self, impl Into<String>, impl Into<String>) -> Self` |
+| `http::Http::request` | `(&self, &Request) -> Result<Response>` |
+| `http::Response::header` | `(&self, &str) -> Option<&str>`, case-insensitive |
+| `http::decode_body` | `(&[u8]) -> Result<Document>`, UTF-8, optional BOM |
 | `roster::character_path` | `(&str) -> String` |
-| `roster::roster<T: DeserializeOwned>` | `(&dyn Http, &Config, path: &str, params: &[(String, Document)]) -> Result<Payload<T>>` |
+| `roster::roster<T: DeserializeOwned>` | `(&dyn Http, &Config, &str, &[(String,Document)]) -> Result<Payload<T>>` |
 | `catalogue::CatalogueStore::default` | `() -> CatalogueStore` |
-| `CatalogueStore::from_document` | `(Document) -> Result<CatalogueStore>`, in-process fixture |
-| `CatalogueStore::load` | `(&self, &Config, &dyn Clock) -> Result<&Catalogue>` |
+| `CatalogueStore::from_document` | `(Document) -> Result<CatalogueStore>` |
+| `CatalogueStore::load` | `(&self, &Config, &dyn Clock, &dyn Diagnostics) -> Result<&Catalogue>` |
 | `catalogue::load_catalogue` | `(&Context) -> Result<&Catalogue>` |
-| `catalogue::catalogue_source` | `(&Catalogue, &dyn Clock) -> Source` |
-| `catalogue::recipes` | `(&Catalogue) -> impl Iterator<Item=RecipeRef<'_>>` |
-| `catalogue::resolve_item` | `(query: &str, cat: &Catalogue) -> Result<Item>` |
-| `catalogue::item_for` | `(query: &str, &Context) -> Result<Item>` |
+| `catalogue::catalogue_source` | `(&Catalogue, &dyn Clock) -> Result<Source>` |
+| `catalogue::recipes` | `(&Catalogue) -> Result<Vec<RecipeRef<'_>>>` |
+| `catalogue::resolve_item` | `(&str, &Catalogue) -> Result<Item>` |
+| `catalogue::item_for` | `(&str, &Context) -> Result<Item>` |
 | `catalogue::item_matches` | `(&ItemRow, &Item) -> bool` |
-| `catalogue::item_basis` | `(&ItemRow) -> MatchBasis`, `Id` or `Name` |
+| `catalogue::item_basis` | `(&ItemRow) -> MatchBasis`, `Id | Name` |
 | `catalogue::disclose_item_source` | `(&mut Document, Option<&Item>, &Context) -> Result<()>` |
-| `market::market_table` | `(&Context) -> Result<(PriceTable, Source)>` |
-| `provenance::source` | `(name: &str, timestamp: Option<&str>, &dyn Clock) -> Source` |
+| `market::market_table` | `(&Context) -> Result<(PriceTable,Source)>` |
+| `provenance::source` | `(&str, Option<&str>, &dyn Clock) -> Result<Source>` |
 | `provenance::sources` | `(&Document) -> Result<Vec<Source>>` |
 | `provenance::stale_code` | `(&[Source]) -> ExitCode` |
 | `human::source_lines` | `(&[Source], &SourceFamilies, &dyn Clock) -> String` |
 | `human::emit` | `(&Document, &[String], bool, Option<bool>, &SourceFamilies, &dyn Clock) -> Result<String>` |
-| `cli::parser` | `() -> clap::Command` |
-| `cli::dispatch` | `(&ArgMatches, &Context) -> Result<CommandOutput>` |
-| `cli::execute` | `(&ArgMatches, &Context, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode` |
-| `cli::write_failure` | `(&Failure, &mut dyn Write) -> Result<()>` |
 
-`Catalogue = Payload<CatalogueData>`; its view holds `generated_at`, nullable or
-missing `source`, and `OrderedMap<Profession>`. `OrderedMap<T>.0` exposes ordered
-entries and `.get(&str)` finds a key. `RecipeRef` holds `profession`, typed
-`recipe`, and original recipe `document`. `Bands` has integral `learn` and
-nullable yellow/green/grey; `Recipe` carries spell/name/result/reagents and
-nullable source type. `Item` is `{id: i64, name: Option<String>}`.
+`Response` contains public body bytes and headers. `Request.redirects` is
+`Redirects::{Follow,Refuse}`. `UreqHttp` supplies the oracle headers and 20-second
+connect/read/write timeouts. HTTP 400/422 map to 2; 404/409 to 1; other HTTP and
+network failures to 4. Failure bodies retain status and decoded JSON response.
+Error messages name the originally requested URL after a redirect.
 
-`RecordedItem` and `ItemRow` are reusable serde views for matching. Recorded IDs
-and names use `provenance::Field<T>` (`Missing | Null | Value(T)`) so explicit
-null does not activate a missing-key fallback. Use the same field type whenever
-Python's `.get(key, fallback)` distinguishes absence from null. Ordinary optional
-fields use `Option<T>`. `catalogue::nullable` is a serde `deserialize_with` helper
-for required keys whose values may be null.
+`Catalogue = Payload<CatalogueData>`. Its view holds `generated_at`,
+`Field<String>` source and `OrderedMap<Profession>`. Ordered map entries are in
+`.0`; `.get(&str)` finds a key. `RecipeRef` borrows profession, typed recipe and
+original recipe document. Bands have integral learn and nullable thresholds;
+recipes carry result, reagents and nullable source type. `Item` holds an integral
+ID and optional name. `ItemRow` and `RecordedItem` preserve missing/null fallback
+semantics for matching.
 
-`PriceTable = BTreeMap<i64, Price>`; `Price` has optional typed median/floor
-`Copper`, optional quantity and sales/day floats. `Source = Payload<SourceData>`
-retains all original provenance fields. Its typed view holds optional names,
-paths, timestamps, detail and stale flag; age fields use `Field<SourceAge>`.
-`SourceAge` retains integer/float class; `.seconds()` supports comparisons and
-`.text()` supports Python formatting. Update the view and document together when
-adding a computed source field.
+`PriceTable = BTreeMap<i64,Price>`; prices contain optional median/floor `Copper`
+and quantity/sales floats. `Source = Payload<SourceData>` retains full original
+provenance. Its view contains names, paths, timestamps, detail, stale flag and
+`Field<SourceAge>` ages. `SourceAge::{Integer,Float}` preserves number class;
+`.seconds()` compares values and `.text()` formats them.
 
-`SourceFamilies = Vec<(String, Vec<Source>)>`. Family membership uses document
-value equality. `source_lines` returns the whole footer without a newline.
-`emit` returns the entire stdout string with a trailing newline. Inferred stale
-notices exclude Journalator; explicit staleness overrides inference. The footer
-appears once after all rows and the optional stale notice.
+`SourceFamilies = Vec<(String,Vec<Source>)>`. Membership uses document value
+equality. `source_lines` returns one footer without a newline. `emit` returns
+complete stdout with a trailing newline; it prints one footer after rows and any
+stale notice. Inferred staleness excludes Journalator sources.
 
-## Verification
+## Dependencies, seams and verification
 
-`python3 scripts/gen_python_vectors.py` regenerates committed JSON, float,
-rounding, Unicode, URL, base64, time, human/provenance and command golden vectors
-using the oracle's Python. It also generates Unicode mapping/property tables.
-`python3 scripts/gen_cli_surface.py` regenerates clap registration from argparse.
-Run `cargo fmt` after regenerating Rust registration.
+Direct dependencies are exactly pinned: clap 4.6.7, serde 1.0.229, serde_json
+1.0.154, ureq 3.5.2 and jiff 0.2.45. Clap derives keep argument types and parsing
+in one declaration. Jiff supplies civil dates, checked arithmetic and local-zone
+offsets; the independent oracle probe verifies the Python-compatible parser.
 
-`cargo test --offline` needs no Python interpreter or network. Feature coverage
-uses `cargo test --offline --all-features`. Boundary tests use loopback servers
-and in-process typed fixtures. Golden tests include twenty full verify/bridge
-cases, null bands/source types, 1,000 random float candidates, and thousands of
-rounding comparisons. `cargo fmt --check` and
-`cargo clippy --all-targets --all-features -- -D warnings` are the lint gates.
+Ureq uses rustls with `RootCerts::PlatformVerifier`. The forward-proxy transport
+adapter implements urllib's absolute-form HTTP requests; HTTPS uses ureq's
+standard CONNECT/TLS path. Loopback tests cover scheme-specific proxies,
+`no_proxy`, redirects, headers and status mapping. A local CA supplied through
+`SSL_CERT_FILE` works for direct TLS and authenticated CONNECT requests. No
+additional direct crate is needed.
 
-JSON strings containing unpaired UTF-16 surrogates are rejected at the boundary;
-Rust strings contain Unicode scalar values. Typed IDs, copper and epoch seconds
-are bounded by i64; ordered JSON integers and CLI integers are unbounded. A
-non-finite money value returns Failure rather than Python's internal exception.
+`parity-seams` enables the shared virtual clock origin/sleep log and the
+ForeverDB URL override. Both configuration and HTTP fail closed for ForeverDB
+without that override. Default release builds contain no seam environment
+handling. The daily cap is a compile-time constant.
+
+`python3 scripts/gen_python_vectors.py` regenerates retained golden vectors and
+the casefold table. `scripts/gen_oracle_probe.py` generates the independent
+reviewer-owned corpus. `cargo test --offline --all-features` consumes committed
+vectors with no Python interpreter or external network. Tests use only loopback
+servers or injected fixtures. Run the reviewer argv surface check and selected
+differential scenarios against a binary built with `parity-seams`, then
+`cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings`.

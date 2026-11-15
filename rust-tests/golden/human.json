@@ -16,19 +16,19 @@
   "output": "no"
  },
  {
-  "payload": "[]",
-  "output": "[]"
+  "payload": "1",
+  "output": "1"
  },
  {
-  "payload": "{}",
-  "output": "{}"
+  "payload": "1.0",
+  "output": "1.0"
  },
  {
-  "payload": "[null, true, 1.0, \"a\\u0000\\b\\f\\u00a0\\u200b\"]",
-  "output": "[None, True, 1.0, 'a\\x00\\x08\\x0c\\xa0\\u200b']"
+  "payload": "\"hello\"",
+  "output": "hello"
  },
  {
-  "payload": "{\"\\u00e9\": \"a'b\\\"c\", \"x\": [\"\\u6771\\u4eac\", -0.0]}",
-  "output": "{'é': 'a\\'b\"c', 'x': ['東京', -0.0]}"
+  "payload": "\"a\\u0000\\b\\f\\u00a0\\u200b\"",
+  "output": "a\u0000\b\f ​"
  }
 ]

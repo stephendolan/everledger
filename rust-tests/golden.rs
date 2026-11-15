@@ -31,15 +31,16 @@ fn json_modes_and_roundtrips() {
 fn numbers() {
     for v in vectors("numbers") {
         let d = document::parse(&v["value"].to_string()).unwrap();
-        assert_eq!(py::py_str(&d), v["text"].as_str().unwrap(), "{v}");
-        assert_eq!(py::human(&d), v["human"].as_str().unwrap());
-        assert_eq!(py::money(d.as_f64()).unwrap(), v["money"].as_str().unwrap());
-        for (i, r) in v["rounds"].as_array().unwrap().iter().enumerate() {
-            assert_eq!(
-                py::round(d.as_f64().unwrap(), i as i32 - 3),
-                r.as_f64().unwrap(),
-                "{v}"
-            );
+        assert_eq!(py::py_str(&d).unwrap(), v["text"].as_str().unwrap(), "{v}");
+        assert_eq!(
+            py::human(d.decode::<Option<py::Scalar>>("scalar").unwrap().as_ref()),
+            v["human"].as_str().unwrap()
+        );
+        if let Some(expected) = v.get("rounded") {
+            let copper = py::rounded_copper(d.as_f64().unwrap()).unwrap();
+            assert_eq!(copper.0, expected.as_i64().unwrap());
+            let expected = v["money"].as_str().unwrap();
+            assert_eq!(py::copper_money(Some(copper)), expected);
         }
     }
 }
@@ -55,7 +56,8 @@ fn unicode_and_urls() {
                 ("q".into(), Document::from(s)),
                 ("n".into(), true.into()),
                 ("f".into(), 1.0.into())
-            ]),
+            ])
+            .unwrap(),
             v["urlencode"].as_str().unwrap()
         );
     }
@@ -128,19 +130,6 @@ fn randomized_floats() {
     }
 }
 #[test]
-fn rounding_boundaries() {
-    for v in vectors("rounding") {
-        assert_eq!(
-            py::round(
-                v["value"].as_f64().unwrap(),
-                v["digits"].as_i64().unwrap() as i32
-            ),
-            v["result"].as_f64().unwrap(),
-            "{v}"
-        );
-    }
-}
-#[test]
 fn provenance_rendering() {
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00.123456Z").unwrap());
     for v in vectors("emit") {
@@ -172,7 +161,9 @@ fn verify_and_bridge() {
             document::parse(v["catalogue"].as_str().unwrap()).unwrap(),
         )
         .unwrap();
+        let diagnostics = everledger::diagnostics::WriterDiagnostics::default();
         let context = Context {
+            diagnostics: &diagnostics,
             clock: &clock,
             http: &UreqHttp,
             config: &config,
@@ -185,20 +176,25 @@ fn verify_and_bridge() {
                 .iter()
                 .map(|v| v.as_str().unwrap()),
         );
-        let args = everledger::cli::parser()
-            .try_get_matches_from(args)
-            .unwrap();
-        let (mut stdout, mut stderr) = (vec![], vec![]);
-        let code = everledger::cli::execute(&args, &context, &mut stdout, &mut stderr);
+        let args = everledger::cli::parse_from(args).unwrap();
+        let mut stdout = vec![];
+        let code = everledger::cli::execute(&args, &context, &mut stdout);
         assert_eq!(code as i64, v["code"].as_i64().unwrap(), "{v}");
         assert_eq!(stdout, v["stdout"].as_str().unwrap().as_bytes(), "{v}");
-        assert_eq!(stderr, v["stderr"].as_str().unwrap().as_bytes(), "{v}");
+        assert_eq!(
+            diagnostics.contents(),
+            v["stderr"].as_str().unwrap().as_bytes(),
+            "{v}"
+        );
     }
 }
 #[test]
 fn human_values() {
     for v in vectors("human") {
         let d = document::parse(v["payload"].as_str().unwrap()).unwrap();
-        assert_eq!(py::human(&d), v["output"].as_str().unwrap());
+        assert_eq!(
+            py::human(d.decode::<Option<py::Scalar>>("scalar").unwrap().as_ref()),
+            v["output"].as_str().unwrap()
+        );
     }
 }

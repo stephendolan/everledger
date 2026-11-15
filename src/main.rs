@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 fn main() {
-    let args = everledger::cli::parser().get_matches();
+    let args = everledger::cli::parse_env().unwrap_or_else(|error| error.exit());
     let config = everledger::config::Config::from_env();
     let system = everledger::clock::SystemClock::default();
     #[cfg(feature = "parity-seams")]
@@ -19,17 +19,14 @@ fn main() {
     let clock: &dyn everledger::clock::Clock = &system;
     let http = everledger::http::UreqHttp;
     let catalogue = everledger::catalogue::CatalogueStore::default();
+    let diagnostics = everledger::diagnostics::WriterDiagnostics::new(std::io::stderr());
     let context = everledger::Context {
+        diagnostics: &diagnostics,
         clock,
         http: &http,
         config: &config,
         catalogue: &catalogue,
     };
-    let code = everledger::cli::execute(
-        &args,
-        &context,
-        &mut std::io::stdout().lock(),
-        &mut std::io::stderr().lock(),
-    );
+    let code = everledger::cli::execute(&args, &context, &mut std::io::stdout().lock());
     std::process::exit(code as i32);
 }

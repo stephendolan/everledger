@@ -79,14 +79,14 @@ pub struct SourceData {
     pub detail: Option<String>,
 }
 pub type Source = Payload<SourceData>;
-pub fn source(name: &str, timestamp: Option<&str>, clock: &dyn Clock) -> Source {
+pub fn source(name: &str, timestamp: Option<&str>, clock: &dyn Clock) -> Result<Source> {
     let age = crate::time::age(timestamp, clock);
     let doc = Document::object([
         ("name", Document::from(name)),
         ("updated_at", Document::from(timestamp)),
         ("age_seconds", Document::from(age)),
     ]);
-    Payload::decode(doc, "source").expect("constructed source is typed")
+    Payload::decode(doc, "source")
 }
 pub fn sources(data: &Document) -> Result<Vec<Source>> {
     match data.get("sources") {
@@ -100,7 +100,7 @@ pub fn sources(data: &Document) -> Result<Vec<Source>> {
             .filter(|(_, v)| matches!(v, Document::Object(_)))
             .map(|(name, s)| {
                 let mut s = s.clone();
-                s.set("name", name.clone());
+                s.set("name", name.clone())?;
                 Payload::decode(s, "source")
             })
             .collect(),
@@ -108,7 +108,7 @@ pub fn sources(data: &Document) -> Result<Vec<Source>> {
     }
 }
 pub fn stale_code(items: &[Source]) -> ExitCode {
-    if items.iter().any(|s| s.view.stale == Some(true)) {
+    if items.iter().any(|s| s.view().stale == Some(true)) {
         ExitCode::Stale
     } else {
         ExitCode::Answer

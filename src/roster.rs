@@ -29,7 +29,7 @@ pub fn roster<T: serde::de::DeserializeOwned>(
             }
         }
     }
-    let query = urlencode(&params);
+    let query = urlencode(&params)?;
     let url = format!(
         "{}{path}{}{}",
         config.roster_url,

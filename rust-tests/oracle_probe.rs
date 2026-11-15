@@ -130,7 +130,11 @@ fn primitives_match_the_live_oracle() {
                 let value = &record["value"];
                 check(
                     format!("human({value})"),
-                    primitives::human(&document(value)),
+                    primitives::human(
+                        serde_json::from_value::<Option<primitives::Scalar>>(value.clone())
+                            .unwrap()
+                            .as_ref(),
+                    ),
                     text_of("expected").unwrap(),
                 );
             }
@@ -178,7 +182,7 @@ fn primitives_match_the_live_oracle() {
                     .collect::<Vec<_>>();
                 check(
                     format!("urlencode({})", record["dedup"]),
-                    primitives::urlencode(&params),
+                    primitives::urlencode(&params).unwrap(),
                     text_of("expected").unwrap(),
                 );
             }
@@ -292,7 +296,7 @@ fn primitives_match_the_live_oracle() {
             }
             "iso" => {
                 let micros = record["micros"].as_i64().unwrap();
-                let instant = time::UtcInstant(jiff::Timestamp::from_microsecond(micros).unwrap());
+                let instant = time::UtcInstant::from_microseconds(micros).unwrap();
                 check(
                     format!("iso({micros})"),
                     time::iso(instant),

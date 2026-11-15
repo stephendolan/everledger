@@ -5,6 +5,7 @@ pub mod cli;
 pub mod clock;
 pub mod commands;
 pub mod config;
+pub mod diagnostics;
 pub mod document;
 pub mod http;
 pub mod human;
@@ -19,6 +20,7 @@ pub use types::{Copper, EpochSeconds, ExitCode, Failure, Result};
 
 pub struct Context<'a> {
     pub clock: &'a dyn clock::Clock,
+    pub diagnostics: &'a dyn diagnostics::Diagnostics,
     pub http: &'a dyn http::Http,
     pub config: &'a config::Config,
     pub catalogue: &'a catalogue::CatalogueStore,

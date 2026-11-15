@@ -46,10 +46,7 @@ fn cli_rejects_unknowns_and_keeps_last_options() {
         ])
         .unwrap();
     let (_, args) = matches.subcommand().unwrap();
-    assert_eq!(
-        args.get_one::<everledger::types::CliInteger>("limit"),
-        Some(&(-1).into())
-    );
+    assert_eq!(args.get_one::<i64>("limit"), Some(&-1));
     assert!(args.get_flag("json"));
     let matches = everledger::cli::parser()
         .try_get_matches_from(["everledger", "char", "Slade", "tailoring"])
@@ -117,7 +114,11 @@ fn failure_bodies_use_python_ascii_json() {
     let mut err = everledger::Failure::usage("bad request");
     err.body = Some(document::parse(r#"{"status":400,"response":{"z":"é","a":1.0}}"#).unwrap());
     let mut out = vec![];
-    everledger::cli::write_failure(&err, &mut out).unwrap();
+    everledger::cli::write_failure(
+        &err,
+        &everledger::diagnostics::WriterDiagnostics::new(&mut out),
+    )
+    .unwrap();
     assert_eq!(out, b"bad request\n{\"z\": \"\\u00e9\", \"a\": 1.0}\n");
 }
 fn child(scenario: &str, url: &str) -> Command {
@@ -251,6 +252,7 @@ fn http_no_proxy_bypasses_the_proxy() {
 }
 #[test]
 fn network_child() {
+    let diagnostics = everledger::diagnostics::WriterDiagnostics::new(std::io::stderr());
     let Ok(scenario) = std::env::var("FOUNDATION_SCENARIO") else {
         return;
     };
@@ -274,8 +276,8 @@ fn network_child() {
             config.data_dir = url.into();
             let store = everledger::catalogue::CatalogueStore::default();
             let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
-            store.load(&config, &clock).unwrap();
-            store.load(&config, &clock).unwrap();
+            store.load(&config, &clock, &diagnostics).unwrap();
+            store.load(&config, &clock, &diagnostics).unwrap();
         }
         "proxy" => {
             assert_eq!(UreqHttp.request(&req(url)).unwrap().body, b"proxy");
@@ -308,6 +310,10 @@ fn network_child() {
                 UreqHttp.request(&r).unwrap_err().code,
                 ExitCode::Unreachable
             );
+        }
+        "redirect-error" => {
+            let error = UreqHttp.request(&req(format!("{url}/start"))).unwrap_err();
+            assert_eq!(error.message, format!("{url}/start: HTTP 404"));
         }
         "tls" => {
             assert!(!UreqHttp.request(&req(url)).unwrap().body.is_empty());
@@ -369,9 +375,9 @@ fn roster_preserves_query_order_and_decodes_typed_views() {
         ],
     )
     .unwrap();
-    assert_eq!(payload.view.character.name, "Slade");
+    assert_eq!(payload.view().character.name, "Slade");
     assert_eq!(
-        document::dumps(&payload.document, document::JsonMode::Stdout),
+        document::dumps(payload.document(), document::JsonMode::Stdout),
         r#"{"z": 2.0, "character": {"name": "Slade"}}"#
     );
     assert_eq!(
@@ -398,7 +404,9 @@ fn price_table_uses_copper_and_freshness() {
     let http = FixtureHttp::with_body(
         "market|version|1794744000|2\n2604:88.5:87.5:709:::::3808\n100:::2:::::",
     );
+    let diagnostics = everledger::diagnostics::WriterDiagnostics::default();
     let ctx = everledger::Context {
+        diagnostics: &diagnostics,
         clock: &clock,
         http: &http,
         config: &config,
@@ -409,31 +417,25 @@ fn price_table_uses_copper_and_freshness() {
     assert_eq!(prices[&2604].floor_copper, Some(everledger::Copper(88)));
     assert_eq!(prices[&2604].sales_per_day, Some(380.8));
     assert_eq!(prices[&100].median_copper, None);
-    assert_eq!(source.view.stale, Some(false));
+    assert_eq!(source.view().stale, Some(false));
 }
 #[test]
-fn decode_json_byte_encodings() {
-    let text = r#"{"é": 1.0}"#;
-    let utf16 = text.encode_utf16().collect::<Vec<_>>();
+fn decode_utf8_json() {
+    let text = r#"{"é":1.0}"#;
     for bytes in [
         text.as_bytes().to_vec(),
-        utf16.iter().flat_map(|u| u.to_le_bytes()).collect(),
-        utf16.iter().flat_map(|u| u.to_be_bytes()).collect(),
-        text.chars()
-            .flat_map(|c| (c as u32).to_le_bytes())
-            .collect(),
-        text.chars()
-            .flat_map(|c| (c as u32).to_be_bytes())
-            .collect(),
+        [vec![0xef, 0xbb, 0xbf], text.as_bytes().to_vec()].concat(),
     ] {
         assert_eq!(
             everledger::http::decode_body(&bytes).unwrap(),
             document::parse(text).unwrap()
         );
     }
+    assert!(everledger::http::decode_body(&[0xff]).is_err());
 }
 #[test]
 fn catalogue_load_retries_missing_files_and_caches_success() {
+    let diagnostics = everledger::diagnostics::WriterDiagnostics::default();
     let path =
         std::env::temp_dir().join(format!("everledger-catalogue-test-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
@@ -441,7 +443,7 @@ fn catalogue_load_retries_missing_files_and_caches_success() {
     config.data_dir = path.clone();
     let store = everledger::catalogue::CatalogueStore::default();
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
-    assert!(store.load(&config, &clock).is_err());
+    assert!(store.load(&config, &clock, &diagnostics).is_err());
     std::fs::write(
         path.join("catalogue.json"),
         include_str!("../tests/fixtures/catalogue-fixture.json"),
@@ -449,9 +451,9 @@ fn catalogue_load_retries_missing_files_and_caches_success() {
     .unwrap();
     assert_eq!(
         store
-            .load(&config, &clock)
+            .load(&config, &clock, &diagnostics)
             .unwrap()
-            .view
+            .view()
             .professions
             .0
             .len(),
@@ -460,9 +462,9 @@ fn catalogue_load_retries_missing_files_and_caches_success() {
     std::fs::remove_file(path.join("catalogue.json")).unwrap();
     assert_eq!(
         store
-            .load(&config, &clock)
+            .load(&config, &clock, &diagnostics)
             .unwrap()
-            .view
+            .view()
             .professions
             .0
             .len(),
@@ -471,36 +473,19 @@ fn catalogue_load_retries_missing_files_and_caches_success() {
     std::fs::remove_dir(path).unwrap();
 }
 #[test]
-fn argparse_integers_are_not_machine_limited() {
+fn argparse_ascii_integers_are_i64() {
     for (text, expected) in [
-        ("١_٢_٣", "123"),
-        (" +0001 ", "1"),
-        ("-000", "0"),
-        (
-            "99999999999999999999999999999999",
-            "99999999999999999999999999999999",
-        ),
+        ("1_000", 1000),
+        (" +0001 ", 1),
+        ("-000", 0),
+        ("-9223372036854775808", i64::MIN),
+        ("9223372036854775807", i64::MAX),
     ] {
-        let integer: text_alias::Integer = text.parse().unwrap();
-        assert_eq!(integer.to_string(), expected);
-        let matches = everledger::cli::parser()
-            .try_get_matches_from(["everledger", "events", "--limit", text])
-            .unwrap();
-        assert_eq!(
-            matches
-                .subcommand()
-                .unwrap()
-                .1
-                .get_one::<text_alias::Integer>("limit"),
-            Some(&integer)
-        );
+        assert_eq!(everledger::cli::parse_integer(text).unwrap(), expected);
     }
-    for bad in ["_1", "1_", "1__2", "²"] {
-        assert!(bad.parse::<text_alias::Integer>().is_err());
+    for bad in ["_1", "1_", "1__2", "²", "٣", "99999999999999999999"] {
+        assert!(everledger::cli::parse_integer(bad).is_err());
     }
-}
-mod text_alias {
-    pub type Integer = everledger::types::CliInteger;
 }
 #[cfg(feature = "parity-seams")]
 #[test]
@@ -558,4 +543,125 @@ fn catalogue_age_advisory_prints_once() {
     );
     std::fs::remove_file(path.join("catalogue.json")).unwrap();
     std::fs::remove_dir(path).unwrap();
+}
+#[test]
+fn invalid_document_mutations_return_failure() {
+    let mut document = Document::Null;
+    assert_eq!(document.set("x", 1i64).unwrap_err().code, ExitCode::Error);
+    assert!(document.set_default("x", 1i64).is_err());
+    assert_eq!(document, Document::Null);
+}
+#[test]
+fn payload_updates_commit_document_and_typed_view_together() {
+    #[derive(Debug, serde::Deserialize)]
+    struct View {
+        stale: bool,
+        #[serde(flatten)]
+        rest: Other,
+    }
+    #[derive(Debug, serde::Deserialize)]
+    struct Other {
+        value: everledger::primitives::Scalar,
+    }
+    let mut payload = everledger::http::Payload::<View>::decode(
+        document::parse(r#"{"stale":false,"value":1.5}"#).unwrap(),
+        "fixture",
+    )
+    .unwrap();
+    assert!(matches!(
+        payload.view().rest.value,
+        everledger::primitives::Scalar::Float(1.5)
+    ));
+    let before = payload.document().clone();
+    assert!(payload.set("stale", "bad").is_err());
+    assert_eq!(payload.document(), &before);
+    assert!(!payload.view().stale);
+    payload.set("stale", true).unwrap();
+    assert!(payload.view().stale);
+    assert_eq!(payload.document().get("stale"), Some(&Document::Bool(true)));
+}
+#[test]
+fn warnings_survive_command_failure() {
+    let args =
+        everledger::cli::parse_from(["everledger", "margins", "--known", "X", "--char", "Y"])
+            .unwrap();
+    let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
+    let config = everledger::config::Config::from_values(&Default::default());
+    let catalogue = everledger::catalogue::CatalogueStore::default();
+    let diagnostics = everledger::diagnostics::WriterDiagnostics::default();
+    let context = everledger::Context {
+        clock: &clock,
+        http: &UreqHttp,
+        config: &config,
+        catalogue: &catalogue,
+        diagnostics: &diagnostics,
+    };
+    let mut stdout = vec![];
+    assert_eq!(
+        everledger::cli::execute(&args, &context, &mut stdout),
+        ExitCode::Usage
+    );
+    assert!(stdout.is_empty());
+    assert_eq!(
+        diagnostics.contents(),
+        b"deprecated --known; use --char\n--known conflicts with --char\n"
+    );
+}
+#[test]
+fn empty_token_file_is_unset() {
+    let config = everledger::config::Config::from_values(&std::collections::HashMap::from([(
+        "EVERLEDGER_ROSTER_TOKEN_FILE".into(),
+        String::new(),
+    )]));
+    assert!(config.roster_token_file.is_none());
+    assert_eq!(
+        config.roster_token().unwrap_err().code,
+        ExitCode::Unreachable
+    );
+}
+#[cfg(unix)]
+#[test]
+fn non_unicode_environment_does_not_panic() {
+    use std::os::unix::ffi::OsStringExt;
+    let output = Command::new(env!("CARGO_BIN_EXE_everledger"))
+        .args(["price", "2604"])
+        .env(
+            "UNRELATED_NON_UNICODE",
+            std::ffi::OsString::from_vec(vec![255]),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("price: not yet ported"));
+}
+#[test]
+fn redirect_error_names_original_request() {
+    let (url, server) = server(vec![
+        response(302, "Location: /missing\r\n", ""),
+        response(404, "", "{}"),
+    ]);
+    let output = child("redirect-error", &url).output().unwrap();
+    server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+#[test]
+fn checked_instants_cover_python_range() {
+    let min = time::instant("0001-01-01T00:00:00Z").unwrap();
+    assert!(min.add_microseconds(-1).is_err());
+    let max = time::instant("9999-12-31T23:59:59.999999Z").unwrap();
+    assert_eq!(time::iso(max), "9999-12-31T23:59:59Z");
+    assert!(max.add_microseconds(1).is_err());
+    let clock = VirtualClock::new(min);
+    assert!(clock.sleep(f64::MAX).is_err());
+    assert_eq!(clock.now(), min);
+    assert_eq!(clock.monotonic(), 0.0);
+}
+#[test]
+fn nesting_overflow_is_a_failure() {
+    let input = format!("{}0{}", "[".repeat(10000), "]".repeat(10000));
+    assert_eq!(document::parse(&input).unwrap_err().code, ExitCode::Error);
 }

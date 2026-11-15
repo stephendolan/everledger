@@ -20,7 +20,6 @@ pub struct CommandOutput {
     pub data: Document,
     pub lines: Vec<String>,
     pub code: ExitCode,
-    pub warnings: Vec<String>,
     pub stale: Option<bool>,
     pub source_families: SourceFamilies,
 }
@@ -30,7 +29,6 @@ impl CommandOutput {
             data,
             lines,
             code: ExitCode::Answer,
-            warnings: vec![],
             stale: None,
             source_families: vec![],
         }

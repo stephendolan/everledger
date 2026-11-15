@@ -1,6 +1,6 @@
 use crate::{Failure, Result, time::UtcInstant};
 use std::{
-    sync::Mutex,
+    cell::Cell,
     time::{Duration, Instant},
 };
 
@@ -21,11 +21,8 @@ impl Default for SystemClock {
 }
 impl Clock for SystemClock {
     fn now(&self) -> UtcInstant {
-        UtcInstant(
-            jiff::Timestamp::now()
-                .round(jiff::Unit::Microsecond)
-                .expect("system time in range"),
-        )
+        UtcInstant::from_microseconds(jiff::Timestamp::now().as_microsecond())
+            .unwrap_or(UtcInstant::UNIX_EPOCH)
     }
     fn monotonic(&self) -> f64 {
         self.start.elapsed().as_secs_f64()
@@ -38,14 +35,16 @@ impl Clock for SystemClock {
 }
 pub struct VirtualClock {
     origin: UtcInstant,
-    elapsed: Mutex<f64>,
+    elapsed: Cell<f64>,
+    wall: Cell<UtcInstant>,
     sleep_log: Option<std::path::PathBuf>,
 }
 impl VirtualClock {
     pub fn new(origin: UtcInstant) -> Self {
         Self {
             origin,
-            elapsed: Mutex::new(0.0),
+            elapsed: Cell::new(0.0),
+            wall: Cell::new(origin),
             sleep_log: None,
         }
     }
@@ -67,24 +66,29 @@ impl VirtualClock {
         };
         Ok(Some(Self {
             origin,
-            elapsed: Mutex::new(0.0),
+            elapsed: Cell::new(0.0),
+            wall: Cell::new(origin),
             sleep_log: log,
         }))
     }
 }
 impl Clock for VirtualClock {
     fn now(&self) -> UtcInstant {
-        self.origin
-            .add_microseconds((*self.elapsed.lock().unwrap() * 1e6).round_ties_even() as i64)
-            .expect("virtual time in range")
+        self.wall.get()
     }
     fn monotonic(&self) -> f64 {
-        *self.elapsed.lock().unwrap()
+        self.elapsed.get()
     }
     fn sleep(&self, seconds: f64) -> Result<()> {
         if !seconds.is_finite() || seconds < 0.0 {
             return Err(Failure::error("invalid sleep duration"));
         }
+        let elapsed = self.elapsed.get() + seconds;
+        let micros = (elapsed * 1e6).round_ties_even();
+        if !micros.is_finite() || micros >= i64::MAX as f64 {
+            return Err(Failure::error("virtual clock overflow"));
+        }
+        let wall = self.origin.add_microseconds(micros as i64)?;
         if let Some(path) = &self.sleep_log {
             use std::io::Write;
             writeln!(
@@ -96,7 +100,8 @@ impl Clock for VirtualClock {
                 crate::primitives::float_repr(seconds)
             )?;
         }
-        *self.elapsed.lock().unwrap() += seconds;
+        self.elapsed.set(elapsed);
+        self.wall.set(wall);
         Ok(())
     }
 }

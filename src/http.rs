@@ -100,9 +100,9 @@ impl Http for UreqHttp {
         }
         let mut visits = HashMap::<String, u32>::new();
         for redirect in 0..=10 {
-            let uri: ureq::http::Uri = url
-                .parse()
-                .map_err(|e| Failure::unreachable(format!("{url}: source unreachable ({e})")))?;
+            let uri: ureq::http::Uri = url.parse().map_err(|e| {
+                Failure::unreachable(format!("{}: source unreachable ({e})", request.url))
+            })?;
             let proxy = env_proxy(
                 uri.scheme_str().unwrap_or("http"),
                 uri.host().unwrap_or(""),
@@ -160,9 +160,9 @@ impl Http for UreqHttp {
             for (name, value) in &request.headers {
                 req = req.header(name, value);
             }
-            let mut response = req
-                .call()
-                .map_err(|e| Failure::unreachable(format!("{url}: source unreachable ({e})")))?;
+            let mut response = req.call().map_err(|e| {
+                Failure::unreachable(format!("{}: source unreachable ({e})", request.url))
+            })?;
             let status = response.status().as_u16();
             if matches!(status, 301 | 302 | 303 | 307 | 308)
                 && request.redirects == Redirects::Follow
@@ -189,7 +189,9 @@ impl Http for UreqHttp {
                 .with_config()
                 .limit(u64::MAX)
                 .read_to_vec()
-                .map_err(|e| Failure::unreachable(format!("{url}: source unreachable ({e})")))?;
+                .map_err(|e| {
+                    Failure::unreachable(format!("{}: source unreachable ({e})", request.url))
+                })?;
             if !(200..300).contains(&status) {
                 let decoded = decode_body(&body).unwrap_or(Document::Null);
                 let code = match status {
@@ -198,7 +200,7 @@ impl Http for UreqHttp {
                     _ => ExitCode::Unreachable,
                 };
                 return Err(Failure {
-                    message: format!("{url}: HTTP {status}"),
+                    message: format!("{}: HTTP {status}", request.url),
                     code,
                     body: Some(Document::object([
                         ("status", Document::from(i64::from(status))),
@@ -212,86 +214,8 @@ impl Http for UreqHttp {
     }
 }
 pub fn decode_body(body: &[u8]) -> Result<Document> {
-    enum Encoding {
-        Utf8,
-        Utf16(bool),
-        Utf32(bool),
-    }
-    let (encoding, body) = if body.starts_with(&[0xff, 0xfe, 0, 0]) {
-        (Encoding::Utf32(true), &body[4..])
-    } else if body.starts_with(&[0, 0, 0xfe, 0xff]) {
-        (Encoding::Utf32(false), &body[4..])
-    } else if body.starts_with(&[0xff, 0xfe]) {
-        (Encoding::Utf16(true), &body[2..])
-    } else if body.starts_with(&[0xfe, 0xff]) {
-        (Encoding::Utf16(false), &body[2..])
-    } else if body.starts_with(&[0xef, 0xbb, 0xbf]) {
-        (Encoding::Utf8, &body[3..])
-    } else if body.len() >= 4 && body[0] == 0 {
-        (
-            if body[1] == 0 {
-                Encoding::Utf32(false)
-            } else {
-                Encoding::Utf16(false)
-            },
-            body,
-        )
-    } else if body.len() >= 4 && body[1] == 0 {
-        (
-            if body[2] == 0 && body[3] == 0 {
-                Encoding::Utf32(true)
-            } else {
-                Encoding::Utf16(true)
-            },
-            body,
-        )
-    } else if body.len() == 2 && body[0] == 0 {
-        (Encoding::Utf16(false), body)
-    } else if body.len() == 2 && body[1] == 0 {
-        (Encoding::Utf16(true), body)
-    } else {
-        (Encoding::Utf8, body)
-    };
-    let invalid = || Failure::error("invalid JSON character encoding");
-    let text = match encoding {
-        Encoding::Utf8 => std::str::from_utf8(body).map_err(|_| invalid())?.to_owned(),
-        Encoding::Utf16(little) => {
-            if !body.len().is_multiple_of(2) {
-                return Err(invalid());
-            }
-            let units = body
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|&b| {
-                    if little {
-                        u16::from_le_bytes(b)
-                    } else {
-                        u16::from_be_bytes(b)
-                    }
-                })
-                .collect::<Vec<_>>();
-            String::from_utf16(&units).map_err(|_| invalid())?
-        }
-        Encoding::Utf32(little) => {
-            if !body.len().is_multiple_of(4) {
-                return Err(invalid());
-            }
-            body.as_chunks::<4>()
-                .0
-                .iter()
-                .map(|&b| {
-                    char::from_u32(if little {
-                        u32::from_le_bytes(b)
-                    } else {
-                        u32::from_be_bytes(b)
-                    })
-                    .ok_or_else(invalid)
-                })
-                .collect::<Result<String>>()?
-        }
-    };
-    parse(&text)
+    let bytes = body.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(body);
+    parse(std::str::from_utf8(bytes).map_err(|_| Failure::error("invalid UTF-8 JSON"))?)
 }
 
 fn resolve_url(base: &str, location: &str) -> Result<String> {
@@ -332,12 +256,44 @@ fn resolve_url(base: &str, location: &str) -> Result<String> {
 }
 #[derive(Clone, Debug)]
 pub struct Payload<T> {
-    pub document: Document,
-    pub view: T,
+    document: Document,
+    view: T,
 }
 impl<T: serde::de::DeserializeOwned> Payload<T> {
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<Document>) -> Result<()> {
+        let mut document = self.document.clone();
+        document.set(key, value)?;
+        let view = document.decode("payload update")?;
+        self.document = document;
+        self.view = view;
+        Ok(())
+    }
+
+    pub fn set_default(
+        &mut self,
+        key: impl Into<String>,
+        value: impl Into<Document>,
+    ) -> Result<()> {
+        let key = key.into();
+        if self.document.get(&key).is_none() {
+            self.set(key, value)?;
+        }
+        Ok(())
+    }
     pub fn decode(document: Document, boundary: &str) -> Result<Self> {
         let view = document.decode(boundary)?;
         Ok(Self { document, view })
+    }
+}
+
+impl<T> Payload<T> {
+    pub fn document(&self) -> &Document {
+        &self.document
+    }
+    pub fn view(&self) -> &T {
+        &self.view
+    }
+    pub fn into_document(self) -> Document {
+        self.document
     }
 }

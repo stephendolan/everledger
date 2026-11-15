@@ -69,11 +69,16 @@ impl PartialEq for Document {
 }
 impl Document {
     pub fn object(entries: impl IntoIterator<Item = (impl Into<String>, Self)>) -> Self {
-        let mut doc = Self::Object(vec![]);
+        let mut values: Vec<(String, Self)> = vec![];
         for (k, v) in entries {
-            doc.set(k, v);
+            let k = k.into();
+            if let Some((_, old)) = values.iter_mut().find(|(key, _)| *key == k) {
+                *old = v;
+            } else {
+                values.push((k, v));
+            }
         }
-        doc
+        Self::Object(values)
     }
     pub fn get(&self, key: &str) -> Option<&Self> {
         match self {
@@ -81,7 +86,7 @@ impl Document {
             _ => None,
         }
     }
-    pub fn set(&mut self, key: impl Into<String>, value: impl Into<Self>) {
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<Self>) -> Result<()> {
         let key = key.into();
         let value = value.into();
         if let Self::Object(v) = self {
@@ -91,14 +96,16 @@ impl Document {
                 v.push((key, value));
             }
         } else {
-            panic!("set requires a document object");
+            return Err(Failure::shape("document update", "expected object"));
         }
+        Ok(())
     }
-    pub fn set_default(&mut self, key: impl Into<String>, value: impl Into<Self>) {
+    pub fn set_default(&mut self, key: impl Into<String>, value: impl Into<Self>) -> Result<()> {
         let key = key.into();
         if self.get(&key).is_none() {
-            self.set(key, value);
+            self.set(key, value)?;
         }
+        Ok(())
     }
     pub fn remove(&mut self, key: &str) -> Option<Self> {
         if let Self::Object(v) = self {
@@ -213,7 +220,7 @@ fn string(s: &str, ascii: bool) -> String {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if c < ' ' || (ascii && !c.is_ascii()) => {
+            c if c < ' ' || (ascii && !(' '..='~').contains(&c)) => {
                 for unit in c.encode_utf16(&mut [0; 2]) {
                     out.push_str(&format!("\\u{unit:04x}"));
                 }
@@ -284,6 +291,43 @@ pub fn dumps(doc: &Document, mode: JsonMode) -> String {
     }
     render(doc, mode, 0)
 }
+fn valid_number(text: &str) -> bool {
+    let mut bytes = text.as_bytes().iter().copied().peekable();
+    if bytes.peek() == Some(&b'-') {
+        bytes.next();
+    }
+    match bytes.next() {
+        Some(b'0') => {}
+        Some(b'1'..=b'9') => {
+            while bytes.peek().is_some_and(u8::is_ascii_digit) {
+                bytes.next();
+            }
+        }
+        _ => return false,
+    }
+    if bytes.peek() == Some(&b'.') {
+        bytes.next();
+        if !bytes.next().is_some_and(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        while bytes.peek().is_some_and(u8::is_ascii_digit) {
+            bytes.next();
+        }
+    }
+    if matches!(bytes.peek(), Some(b'e' | b'E')) {
+        bytes.next();
+        if matches!(bytes.peek(), Some(b'+' | b'-')) {
+            bytes.next();
+        }
+        if !bytes.next().is_some_and(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        while bytes.peek().is_some_and(u8::is_ascii_digit) {
+            bytes.next();
+        }
+    }
+    bytes.next().is_none()
+}
 pub fn parse(text: &str) -> Result<Document> {
     struct Parser<'a> {
         s: &'a str,
@@ -328,7 +372,10 @@ pub fn parse(text: &str) -> Result<Document> {
             }
             Err(self.err())
         }
-        fn value(&mut self) -> Result<Document> {
+        fn value(&mut self, depth: usize) -> Result<Document> {
+            if depth > 256 {
+                return Err(Failure::error("JSON nesting exceeds supported depth"));
+            }
             self.ws();
             let b = *self.s.as_bytes().get(self.pos).ok_or_else(|| self.err())?;
             match b {
@@ -344,8 +391,8 @@ pub fn parse(text: &str) -> Result<Document> {
                         if !self.take(b':') {
                             return Err(self.err());
                         }
-                        let v = self.value()?;
-                        d.set(k, v);
+                        let v = self.value(depth + 1)?;
+                        d.set(k, v)?;
                         if self.take(b'}') {
                             break;
                         }
@@ -362,7 +409,7 @@ pub fn parse(text: &str) -> Result<Document> {
                         return Ok(Document::Array(a));
                     }
                     loop {
-                        a.push(self.value()?);
+                        a.push(self.value(depth + 1)?);
                         if self.take(b']') {
                             break;
                         }
@@ -396,8 +443,9 @@ pub fn parse(text: &str) -> Result<Document> {
                         self.pos += 1;
                     }
                     let raw = &self.s[start..self.pos];
-                    let _: serde_json::Number =
-                        serde_json::from_str(raw).map_err(|_| self.err())?;
+                    if !valid_number(raw) {
+                        return Err(self.err());
+                    }
                     if raw.contains(['.', 'e', 'E']) {
                         Ok(Document::from(raw.parse::<f64>().map_err(|_| self.err())?))
                     } else {
@@ -410,7 +458,7 @@ pub fn parse(text: &str) -> Result<Document> {
         }
     }
     let mut p = Parser { s: text, pos: 0 };
-    let d = p.value()?;
+    let d = p.value(0)?;
     p.ws();
     if p.pos != text.len() {
         return Err(p.err());

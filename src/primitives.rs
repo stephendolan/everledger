@@ -1,4 +1,4 @@
-use crate::document::{Document, Number};
+use crate::document::Document;
 use std::{collections::HashMap, sync::OnceLock};
 
 pub fn float_repr(n: f64) -> String {
@@ -13,17 +13,24 @@ pub fn float_repr(n: f64) -> String {
     }
     let negative = n.is_sign_negative();
     let n = n.abs();
-    let mut scientific = String::new();
-    for precision in 0..17 {
-        let text = format!("{n:.precision$e}");
-        if text
-            .parse::<f64>()
-            .is_ok_and(|v| v.to_bits() == n.to_bits())
-        {
-            scientific = text;
-            break;
-        }
-    }
+    let shortest = format!("{n:e}");
+    let precision = shortest
+        .split('e')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(char::is_ascii_digit)
+        .count()
+        .saturating_sub(1);
+    let rounded = format!("{n:.precision$e}");
+    let scientific = if rounded
+        .parse::<f64>()
+        .is_ok_and(|v| v.to_bits() == n.to_bits())
+    {
+        rounded
+    } else {
+        shortest
+    };
     let (mantissa, exponent) = scientific
         .split_once('e')
         .expect("17 digits round trip f64");
@@ -53,170 +60,43 @@ pub fn float_repr(n: f64) -> String {
         )
     }
 }
-pub fn round(n: f64, digits: i32) -> f64 {
-    if !n.is_finite() || digits > 323 {
-        return n;
-    }
-    if digits < -308 {
-        return 0.0f64.copysign(n);
-    }
-    if digits >= 0 {
-        format!("{:.*}", digits as usize, n).parse().unwrap_or(n)
-    } else {
-        let negative = n.is_sign_negative();
-        let n = n.abs();
-        let zeros = (-digits) as usize;
-        let integer = format!("{:.0}", n.trunc());
-        let padded = format!("{:0>width$}", integer, width = zeros + 1);
-        let cut = padded.len() - zeros;
-        let (keep, tail) = padded.split_at(cut);
-        let up = tail.as_bytes()[0] > b'5'
-            || (tail.as_bytes()[0] == b'5'
-                && (tail.as_bytes()[1..].iter().any(|&b| b != b'0')
-                    || n.fract() != 0.0
-                    || ((keep.as_bytes()[keep.len() - 1] - b'0') % 2 == 1)));
-        let mut keep = keep.as_bytes().to_vec();
-        if up {
-            let mut carry = true;
-            for b in keep.iter_mut().rev() {
-                if *b == b'9' {
-                    *b = b'0';
-                } else {
-                    *b += 1;
-                    carry = false;
-                    break;
-                }
-            }
-            if carry {
-                keep.insert(0, b'1');
-            }
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum Scalar {
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    Text(String),
+}
+impl Scalar {
+    pub fn python_str(&self) -> String {
+        match self {
+            Self::Bool(b) => if *b { "True" } else { "False" }.into(),
+            Self::Integer(n) => n.to_string(),
+            Self::Float(n) => float_repr(*n),
+            Self::Text(s) => s.clone(),
         }
-        let text = format!(
-            "{}{}{}",
-            if negative { "-" } else { "" },
-            String::from_utf8(keep).unwrap(),
-            "0".repeat(zeros)
-        );
-        text.parse().unwrap_or(n)
     }
 }
-pub fn py_str(v: &Document) -> String {
-    match v {
-        Document::Null => "None".into(),
-        Document::Bool(b) => if *b { "True" } else { "False" }.into(),
-        Document::String(s) => s.clone(),
-        Document::Number(n) => n.text(),
-        Document::Array(a) => format!("[{}]", a.iter().map(py_repr).collect::<Vec<_>>().join(", ")),
-        Document::Object(o) => format!(
-            "{{{}}}",
-            o.iter()
-                .map(|(k, v)| format!("{}: {}", py_repr(&Document::from(k.clone())), py_repr(v)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+pub fn human(value: Option<&Scalar>) -> String {
+    match value {
+        None => "unknown".into(),
+        Some(Scalar::Bool(b)) => if *b { "yes" } else { "no" }.into(),
+        Some(Scalar::Text(s)) if s.is_empty() => "unknown".into(),
+        Some(v) => v.python_str(),
     }
 }
-fn py_repr(v: &Document) -> String {
-    if let Document::String(s) = v {
-        let quote = if s.contains('\'') && !s.contains('"') {
-            '"'
-        } else {
-            '\''
-        };
-        let mut out = String::new();
-        out.push(quote);
-        for c in s.chars() {
-            match c {
-                '\\' => out.push_str("\\\\"),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                c if c == quote => {
-                    out.push('\\');
-                    out.push(c);
-                }
-                c if !printable(c) => {
-                    let n = c as u32;
-                    out.push_str(&if n <= 255 {
-                        format!("\\x{n:02x}")
-                    } else if n <= 65535 {
-                        format!("\\u{n:04x}")
-                    } else {
-                        format!("\\U{n:08x}")
-                    });
-                }
-                c => out.push(c),
-            }
+pub fn py_str(value: &Document) -> crate::Result<String> {
+    match value {
+        Document::Null => Ok("None".into()),
+        Document::Bool(b) => Ok(if *b { "True" } else { "False" }.into()),
+        Document::String(s) => Ok(s.clone()),
+        Document::Number(n) => Ok(n.text()),
+        Document::Array(_) | Document::Object(_) => {
+            Err(crate::Failure::shape("scalar", "expected scalar value"))
         }
-        out.push(quote);
-        out
-    } else {
-        py_str(v)
     }
 }
-fn printable(c: char) -> bool {
-    static RANGES: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
-    let ranges = RANGES.get_or_init(|| {
-        include_str!("unicode_nonprintable.tsv")
-            .lines()
-            .map(|l| {
-                let (a, b) = l.split_once('\t').unwrap();
-                (
-                    u32::from_str_radix(a, 16).unwrap(),
-                    u32::from_str_radix(b, 16).unwrap(),
-                )
-            })
-            .collect()
-    });
-    let n = c as u32;
-    let i = ranges.partition_point(|(a, _)| *a <= n);
-    i == 0 || n > ranges[i - 1].1
-}
-
-pub fn human(v: &Document) -> String {
-    match v {
-        Document::Bool(b) => if *b { "yes" } else { "no" }.into(),
-        Document::Null => "unknown".into(),
-        Document::String(s) if s.is_empty() => "unknown".into(),
-        _ => py_str(v),
-    }
-}
-pub fn money(v: Option<f64>) -> crate::Result<String> {
-    let Some(v) = v else {
-        return Ok("unknown".into());
-    };
-    if !v.is_finite() {
-        return Err(crate::Failure::error(
-            "cannot round non-finite copper amount",
-        ));
-    }
-    let n = format!("{:.0}", v.round_ties_even().abs());
-    let padded = format!("{n:0>5}");
-    let split = padded.len() - 4;
-    let g = padded[..split].trim_start_matches('0');
-    let s: u8 = padded[split..split + 2].parse().unwrap();
-    let c: u8 = padded[split + 2..].parse().unwrap();
-    let mut parts = vec![];
-    if !g.is_empty() {
-        parts.push(format!("{g}g"));
-    }
-    if s != 0 {
-        parts.push(format!("{s}s"));
-    }
-    if c != 0 {
-        parts.push(format!("{c}c"));
-    }
-    Ok(format!(
-        "{}{}",
-        if v < 0.0 { "-" } else { "" },
-        if parts.is_empty() {
-            "0c".into()
-        } else {
-            parts.join(" ")
-        }
-    ))
-}
-
 pub fn copper_money(v: Option<crate::Copper>) -> String {
     let Some(crate::Copper(v)) = v else {
         return "unknown".into();
@@ -237,7 +117,7 @@ pub fn copper_money(v: Option<crate::Copper>) -> String {
         }
     )
 }
-type Mappings = HashMap<char, (String, String)>;
+type Mappings = HashMap<char, String>;
 fn mappings() -> &'static Mappings {
     static MAP: OnceLock<Mappings> = OnceLock::new();
     MAP.get_or_init(|| {
@@ -252,92 +132,19 @@ fn mappings() -> &'static Mappings {
                 };
                 (
                     char::from_u32(u32::from_str_radix(c[0], 16).unwrap()).unwrap(),
-                    (decode(c[1]), decode(c[2])),
+                    decode(c[1]),
                 )
             })
             .collect()
     })
-}
-#[derive(Clone, Copy, Default)]
-struct Properties {
-    cased: bool,
-    ignorable: bool,
-    decimal: Option<u32>,
-    digit: Option<u32>,
-}
-fn properties(c: char) -> Properties {
-    static MAP: OnceLock<HashMap<char, Properties>> = OnceLock::new();
-    *MAP.get_or_init(|| {
-        include_str!("unicode_properties.tsv")
-            .lines()
-            .map(|l| {
-                let v = l.split('\t').collect::<Vec<_>>();
-                (
-                    char::from_u32(u32::from_str_radix(v[0], 16).unwrap()).unwrap(),
-                    Properties {
-                        cased: v[1] == "1",
-                        ignorable: v[2] == "1",
-                        decimal: v[3].parse().ok(),
-                        digit: v[4].parse().ok(),
-                    },
-                )
-            })
-            .collect()
-    })
-    .get(&c)
-    .unwrap_or(&Properties::default())
 }
 pub fn casefold(s: &str) -> String {
     s.chars()
-        .map(|c| {
-            mappings()
-                .get(&c)
-                .map(|v| v.0.clone())
-                .unwrap_or_else(|| c.to_string())
-        })
+        .map(|c| mappings().get(&c).cloned().unwrap_or_else(|| c.to_string()))
         .collect()
 }
 pub fn lower(s: &str) -> String {
-    let chars: Vec<_> = s.chars().collect();
-    let mut out = String::new();
-    for (i, &c) in chars.iter().enumerate() {
-        if c == 'Σ'
-            && chars[..i]
-                .iter()
-                .rev()
-                .find(|&&c| !properties(c).ignorable)
-                .is_some_and(|&c| properties(c).cased)
-            && !chars[i + 1..]
-                .iter()
-                .find(|&&c| !properties(c).ignorable)
-                .is_some_and(|&c| properties(c).cased)
-        {
-            out.push('ς');
-        } else {
-            out.push_str(
-                &mappings()
-                    .get(&c)
-                    .map(|v| v.1.clone())
-                    .unwrap_or_else(|| c.to_string()),
-            );
-        }
-    }
-    out
-}
-pub fn decimal(s: &str) -> Option<String> {
-    if s.is_empty() {
-        return None;
-    }
-    s.chars()
-        .map(|c| {
-            properties(c)
-                .decimal
-                .map(|d| char::from_digit(d, 10).unwrap())
-        })
-        .collect()
-}
-pub fn isdigit(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| properties(c).digit.is_some())
+    s.to_lowercase()
 }
 pub fn quote(s: &str) -> String {
     let mut out = String::new();
@@ -350,18 +157,18 @@ pub fn quote(s: &str) -> String {
     }
     out
 }
-pub fn urlencode(params: &[(String, Document)]) -> String {
+pub fn urlencode(params: &[(String, Document)]) -> crate::Result<String> {
     params
         .iter()
         .map(|(k, v)| {
-            format!(
+            Ok(format!(
                 "{}={}",
                 quote(k).replace("%20", "+"),
-                quote(&py_str(v)).replace("%20", "+")
-            )
+                quote(&py_str(v)?).replace("%20", "+")
+            ))
         })
-        .collect::<Vec<_>>()
-        .join("&")
+        .collect::<crate::Result<Vec<_>>>()
+        .map(|parts| parts.join("&"))
 }
 const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 pub fn base64_encode(bytes: &[u8]) -> String {
@@ -385,7 +192,21 @@ pub fn base64_encode(bytes: &[u8]) -> String {
     }
     out
 }
-pub fn base64_decode(s: &str) -> crate::Result<Vec<u8>> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Base64Error {
+    InvalidAlphabet,
+    InvalidPadding,
+}
+impl std::fmt::Display for Base64Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidAlphabet => "invalid base64 alphabet",
+            Self::InvalidPadding => "invalid base64 padding",
+        })
+    }
+}
+impl std::error::Error for Base64Error {}
+pub fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, Base64Error> {
     let mut out = vec![];
     let mut acc = 0u32;
     let mut count = 0usize;
@@ -396,7 +217,7 @@ pub fn base64_decode(s: &str) -> crate::Result<Vec<u8>> {
             continue;
         }
         if pad > 0 {
-            return Err(crate::Failure::usage("invalid snapshot page cursor"));
+            return Err(Base64Error::InvalidPadding);
         }
         let b = match b {
             b'+' => b'-',
@@ -406,7 +227,7 @@ pub fn base64_decode(s: &str) -> crate::Result<Vec<u8>> {
         let n = B64
             .iter()
             .position(|&v| v == b)
-            .ok_or_else(|| crate::Failure::usage("invalid snapshot page cursor"))?;
+            .ok_or(Base64Error::InvalidAlphabet)?;
         acc = (acc << 6) | n as u32;
         count += 1;
         if count % 4 == 2 {
@@ -424,7 +245,7 @@ pub fn base64_decode(s: &str) -> crate::Result<Vec<u8>> {
         || (count % 4 == 3 && pad != 1)
         || (count.is_multiple_of(4) && pad > 0)
     {
-        return Err(crate::Failure::usage("invalid snapshot page cursor"));
+        return Err(Base64Error::InvalidPadding);
     }
     Ok(out)
 }
@@ -434,7 +255,4 @@ pub fn rounded_copper(n: f64) -> crate::Result<crate::Copper> {
         return Err(crate::Failure::error("copper amount out of range"));
     }
     Ok(crate::Copper(n as i64))
-}
-pub fn number(n: f64) -> Document {
-    Document::Number(Number::Float(n))
 }

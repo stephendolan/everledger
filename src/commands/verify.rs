@@ -1,3 +1,9 @@
+#[derive(clap::Args, Debug, Clone)]
+#[command(args_override_self = true)]
+pub struct Args {
+    #[arg(long = "json", help = "one JSON document using API field names")]
+    pub json: bool,
+}
 use crate::{
     Context, ExitCode, Result,
     catalogue::{catalogue_source, load_catalogue},
@@ -44,10 +50,13 @@ impl Check<'_> {
         }
     }
 }
-pub fn run(_args: &clap::ArgMatches, context: &Context<'_>) -> Result<CommandOutput> {
+pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
+    context
+        .diagnostics
+        .warn("deprecated verify; use: everledger status")?;
     let cat = load_catalogue(context)?;
     let mut checks = vec![];
-    for (prof, block) in &cat.view.professions.0 {
+    for (prof, block) in &cat.view().professions.0 {
         checks.push(Check::Count {
             good: block.recipes.len() == block.stated_count,
             profession: prof,
@@ -57,7 +66,7 @@ pub fn run(_args: &clap::ArgMatches, context: &Context<'_>) -> Result<CommandOut
     }
     for (prof, name, learn, src) in ANCHORS {
         let recipe = cat
-            .view
+            .view()
             .professions
             .get(prof)
             .and_then(|p| p.recipes.iter().find(|r| r.name == name));
@@ -76,7 +85,7 @@ pub fn run(_args: &clap::ArgMatches, context: &Context<'_>) -> Result<CommandOut
         ),
         (
             "sources",
-            Document::Array(vec![catalogue_source(cat, context.clock).document]),
+            Document::Array(vec![catalogue_source(cat, context.clock)?.into_document()]),
         ),
     ]);
     let mut out = CommandOutput::new(data, lines);

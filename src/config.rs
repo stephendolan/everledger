@@ -19,7 +19,16 @@ pub struct Config {
 }
 impl Config {
     pub fn from_env() -> Self {
-        Self::from_values(&std::env::vars().collect())
+        Self::from_values(
+            &std::env::vars_os()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect(),
+        )
     }
     pub fn from_values(env: &HashMap<String, String>) -> Self {
         let get = |k: &str, d: &str| env.get(k).cloned().unwrap_or_else(|| d.into());
@@ -39,7 +48,10 @@ impl Config {
                 .trim_end_matches('/')
                 .into(),
             roster_token: get("EVERLEDGER_ROSTER_TOKEN", "").trim().into(),
-            roster_token_file: env.get("EVERLEDGER_ROSTER_TOKEN_FILE").map(Into::into),
+            roster_token_file: env
+                .get("EVERLEDGER_ROSTER_TOKEN_FILE")
+                .filter(|s| !s.is_empty())
+                .map(Into::into),
             foreverdb_api_key: get("EVERLEDGER_FOREVERDB_API_KEY", "").trim().into(),
             foreverdb_api_key_file: env
                 .get("EVERLEDGER_FOREVERDB_API_KEY_FILE")

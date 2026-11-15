@@ -4,7 +4,7 @@ use crate::{
     config::Config,
     document::Document,
     http::Payload,
-    primitives::{casefold, decimal, isdigit},
+    primitives::casefold,
     provenance::{Source, source},
 };
 use serde::{
@@ -95,12 +95,19 @@ pub struct CatalogueStore {
     cached: OnceLock<Catalogue>,
 }
 impl CatalogueStore {
-    pub fn load(&self, config: &Config, clock: &dyn Clock) -> Result<&Catalogue> {
+    pub fn load(
+        &self,
+        config: &Config,
+        clock: &dyn Clock,
+        diagnostics: &dyn crate::diagnostics::Diagnostics,
+    ) -> Result<&Catalogue> {
         if self.cached.get().is_none() {
-            let cat = load_catalogue_file(config, clock)?;
+            let cat = load_catalogue_file(config, clock, diagnostics)?;
             let _ = self.cached.set(cat);
         }
-        Ok(self.cached.get().expect("catalogue initialized"))
+        self.cached
+            .get()
+            .ok_or_else(|| Failure::error("catalogue initialization failed"))
     }
     pub fn from_document(document: Document) -> Result<Self> {
         let catalogue = Payload::decode(document, "catalogue")?;
@@ -110,9 +117,15 @@ impl CatalogueStore {
     }
 }
 pub fn load_catalogue<'a>(context: &'a Context<'_>) -> Result<&'a Catalogue> {
-    context.catalogue.load(context.config, context.clock)
+    context
+        .catalogue
+        .load(context.config, context.clock, context.diagnostics)
 }
-fn load_catalogue_file(config: &Config, clock: &dyn Clock) -> Result<Catalogue> {
+fn load_catalogue_file(
+    config: &Config,
+    clock: &dyn Clock,
+    diagnostics: &dyn crate::diagnostics::Diagnostics,
+) -> Result<Catalogue> {
     let text = std::fs::read_to_string(config.data_dir.join("catalogue.json")).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             Failure::error("catalogue missing; run: everledger refresh catalogue")
@@ -121,55 +134,53 @@ fn load_catalogue_file(config: &Config, clock: &dyn Clock) -> Result<Catalogue> 
         }
     })?;
     let cat: Catalogue = Payload::decode(crate::document::parse(&text)?, "catalogue")?;
-    if crate::time::age(Some(&cat.view.generated_at), clock).is_some_and(|s| s > 14 * 86400) {
-        eprintln!("catalogue is older than 14d; run: everledger refresh catalogue");
+    if crate::time::age(Some(&cat.view().generated_at), clock).is_some_and(|s| s > 14 * 86400) {
+        diagnostics.warn("catalogue is older than 14d; run: everledger refresh catalogue")?;
     }
     Ok(cat)
 }
-pub fn catalogue_source(cat: &Catalogue, clock: &dyn Clock) -> Source {
+pub fn catalogue_source(cat: &Catalogue, clock: &dyn Clock) -> Result<Source> {
     use crate::provenance::Field;
-    let name = match &cat.view.source {
+    let name = match &cat.view().source {
         Field::Missing => "catalogue",
         Field::Null => "",
         Field::Value(s) => s,
     };
-    let mut s = source(name, Some(&cat.view.generated_at), clock);
-    if matches!(cat.view.source, Field::Null) {
-        s.view.name = None;
-        s.document.set("name", Document::Null);
+    let mut s = source(name, Some(&cat.view().generated_at), clock)?;
+    if matches!(cat.view().source, Field::Null) {
+        s.set("name", Document::Null)?;
     }
-    s
+    Ok(s)
 }
 pub struct RecipeRef<'a> {
     pub profession: &'a str,
     pub recipe: &'a Recipe,
     pub document: &'a Document,
 }
-pub fn recipes(cat: &Catalogue) -> impl Iterator<Item = RecipeRef<'_>> {
-    cat.view
-        .professions
-        .0
-        .iter()
-        .flat_map(move |(prof, block)| {
-            block
-                .recipes
-                .iter()
-                .enumerate()
-                .map(move |(i, recipe)| RecipeRef {
-                    profession: prof,
-                    recipe,
-                    document: &cat
-                        .document
-                        .get("professions")
-                        .unwrap()
-                        .get(prof)
-                        .unwrap()
-                        .get("recipes")
-                        .unwrap()
-                        .as_array()
-                        .unwrap()[i],
-                })
-        })
+pub fn recipes(cat: &Catalogue) -> Result<Vec<RecipeRef<'_>>> {
+    let mut result = vec![];
+    let professions = cat
+        .document()
+        .get("professions")
+        .ok_or_else(|| Failure::shape("catalogue", "missing professions"))?;
+    for (prof, block) in &cat.view().professions.0 {
+        let docs = professions
+            .get(prof)
+            .and_then(|p| p.get("recipes"))
+            .and_then(Document::as_array)
+            .ok_or_else(|| Failure::shape("catalogue", "missing recipes array"))?;
+        if docs.len() != block.recipes.len() {
+            return Err(Failure::shape("catalogue", "recipe view mismatch"));
+        }
+        for (recipe, document) in block.recipes.iter().zip(docs) {
+            result.push(RecipeRef {
+                profession: prof,
+                recipe,
+                document,
+            });
+        }
+    }
+    Ok(result)
 }
 #[derive(Clone, Debug, Deserialize, serde::Serialize)]
 pub struct Item {
@@ -177,8 +188,8 @@ pub struct Item {
     pub name: Option<String>,
 }
 pub fn resolve_item(query: &str, cat: &Catalogue) -> Result<Item> {
-    if isdigit(query) {
-        let n = decimal(query).ok_or_else(|| Failure::error("error: invalid integer item ID"))?;
+    if !query.is_empty() && query.bytes().all(|b| b.is_ascii_digit()) {
+        let n = query;
         return Ok(Item {
             id: n
                 .parse()
@@ -187,10 +198,12 @@ pub fn resolve_item(query: &str, cat: &Catalogue) -> Result<Item> {
         });
     }
     let mut hits = vec![];
-    for r in recipes(cat) {
+    for r in recipes(cat)? {
         for item in std::iter::once(&r.recipe.result).chain(&r.recipe.reagents) {
             if item.item_id.is_some_and(|id| id != 0) && casefold(&item.name) == casefold(query) {
-                let id = item.item_id.unwrap();
+                let Some(id) = item.item_id else {
+                    continue;
+                };
                 if let Some((_, name)) = hits.iter_mut().find(|(i, _)| *i == id) {
                     *name = item.name.clone();
                 } else {
@@ -217,16 +230,20 @@ pub fn resolve_item(query: &str, cat: &Catalogue) -> Result<Item> {
         .ok_or_else(|| Failure::error("item not found in catalogue; use a numeric item ID"))
 }
 pub fn item_for(query: &str, context: &Context<'_>) -> Result<Item> {
-    if isdigit(query) {
-        let id = decimal(query)
-            .and_then(|n| n.parse().ok())
+    if !query.is_empty() && query.bytes().all(|b| b.is_ascii_digit()) {
+        let id = query
+            .parse::<i64>()
+            .ok()
             .ok_or_else(|| Failure::error("invalid integer item ID"))?;
-        let name = load_catalogue(context).ok().and_then(|cat| {
-            recipes(cat)
+        let name = if let Ok(cat) = load_catalogue(context) {
+            recipes(cat)?
+                .into_iter()
                 .flat_map(|r| std::iter::once(&r.recipe.result).chain(&r.recipe.reagents))
                 .find(|r| r.item_id == Some(id))
                 .map(|r| r.name.clone())
-        });
+        } else {
+            None
+        };
         Ok(Item { id, name })
     } else {
         resolve_item(query, load_catalogue(context)?)
@@ -286,15 +303,15 @@ pub fn disclose_item_source(
     context: &Context<'_>,
 ) -> Result<()> {
     if item.is_some_and(|i| i.name.as_ref().is_some_and(|n| !n.is_empty())) {
-        let s = catalogue_source(load_catalogue(context)?, context.clock);
+        let s = catalogue_source(load_catalogue(context)?, context.clock)?;
         let mut used = crate::provenance::sources(data)?;
-        if !used.iter().any(|a| a.document == s.document) {
+        if !used.iter().any(|a| a.document() == s.document()) {
             used.push(s);
         }
         data.set(
             "sources",
-            Document::Array(used.into_iter().map(|s| s.document).collect()),
-        );
+            Document::Array(used.into_iter().map(|s| s.into_document()).collect()),
+        )?;
     }
     Ok(())
 }

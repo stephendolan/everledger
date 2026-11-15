@@ -2,13 +2,13 @@ use crate::{
     Result,
     clock::Clock,
     document::{Document, JsonMode, dumps},
-    primitives::human,
+    primitives::Scalar,
     provenance::{Field, Source, SourceAge, sources},
 };
 use std::collections::BTreeSet;
 pub mod bridge;
 pub mod verify;
-pub use crate::primitives::{copper_money, money};
+pub use crate::primitives::copper_money;
 
 pub type SourceFamilies = Vec<(String, Vec<Source>)>;
 struct Group {
@@ -25,7 +25,7 @@ fn nonempty(s: Option<&str>) -> Option<&str> {
 pub fn source_lines(items: &[Source], families: &SourceFamilies, clock: &dyn Clock) -> String {
     let mut groups: Vec<Group> = vec![];
     for s in items {
-        let v = &s.view;
+        let v = &s.view();
         let fallback = nonempty(v.name.as_deref())
             .map(str::to_owned)
             .unwrap_or_else(|| {
@@ -41,7 +41,7 @@ pub fn source_lines(items: &[Source], families: &SourceFamilies, clock: &dyn Clo
             });
         let family = families
             .iter()
-            .find(|(_, members)| members.iter().any(|m| m.document == s.document))
+            .find(|(_, members)| members.iter().any(|m| m.document() == s.document()))
             .map(|(label, _)| label);
         let name = family.cloned().unwrap_or(fallback);
         let when = nonempty(v.saved_at.as_deref())
@@ -76,7 +76,7 @@ pub fn source_lines(items: &[Source], families: &SourceFamilies, clock: &dyn Clo
                 groups.len() - 1
             });
         let group = &mut groups[index];
-        group.times.insert(human(&Document::from(when)));
+        group.times.insert(text(when));
         if !group.ages.contains(&seconds) {
             group.ages.push(seconds);
         }
@@ -92,7 +92,7 @@ pub fn source_lines(items: &[Source], families: &SourceFamilies, clock: &dyn Clo
         {
             group
                 .credits
-                .insert(detail.split(';').next().unwrap().into());
+                .insert(detail.split(';').next().unwrap_or("").into());
         }
     }
     let summaries = groups
@@ -166,13 +166,13 @@ pub fn emit(
     let items = sources(data)?;
     let stale = stale.unwrap_or_else(|| {
         items.iter().any(|s| {
-            s.view.stale == Some(true)
+            s.view().stale == Some(true)
                 && !s
-                    .view
+                    .view()
                     .file
                     .as_deref()
                     .filter(|s| !s.is_empty())
-                    .or(s.view.name.as_deref())
+                    .or(s.view().name.as_deref())
                     .unwrap_or("")
                     .contains("Journalator")
         })
@@ -198,3 +198,23 @@ pub mod refresh;
 pub mod sales;
 pub mod status;
 pub mod vendors;
+
+pub fn text(value: Option<&str>) -> String {
+    value.filter(|s| !s.is_empty()).unwrap_or("unknown").into()
+}
+pub fn boolean(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unknown",
+    }
+}
+pub fn integer(value: Option<i64>) -> String {
+    value.map_or_else(|| "unknown".into(), |n| n.to_string())
+}
+pub fn number(value: Option<f64>) -> String {
+    value.map_or_else(|| "unknown".into(), crate::primitives::float_repr)
+}
+pub fn value(value: Option<&Scalar>) -> String {
+    crate::primitives::human(value)
+}
