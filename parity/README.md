@@ -215,3 +215,14 @@ the size a finished sync produces.
 cargo build --release --features parity-seams --target-dir target/seams
 python3 parity/scale.py target/seams/release/everledger
 ```
+
+## One data directory, two implementations
+
+During cutover both implementations read and write the same data directory.
+The runner gives each side its own copy of the state, so `handoff.py` covers
+what it cannot: one implementation finishing a sync the other started, in both
+orders, and one waiting on the sync lock the other holds.
+
+```sh
+python3 parity/handoff.py target/seams/debug/everledger
+```
