@@ -1,14 +1,29 @@
+#[path = "document_decode.rs"]
+mod decode;
 use crate::{Failure, Result};
+use decode::Deserializer;
 use serde::{Serialize, de::DeserializeOwned};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Clone, Debug)]
 pub enum Number {
+    Small(i64),
     Integer(String),
     Float(f64),
 }
 impl PartialEq for Number {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Small(a), Self::Small(b)) => a == b,
+            (Self::Small(a), Self::Integer(b)) | (Self::Integer(b), Self::Small(a)) => {
+                a.to_string() == *b
+            }
+            (Self::Small(a), Self::Float(b)) | (Self::Float(b), Self::Small(a)) => {
+                Number::Integer(a.to_string()) == Number::Float(*b)
+            }
             (Self::Integer(a), Self::Integer(b)) => a == b,
             (Self::Float(a), Self::Float(b)) => a == b,
             (Self::Integer(a), Self::Float(b)) | (Self::Float(b), Self::Integer(a)) => {
@@ -27,12 +42,14 @@ impl PartialEq for Number {
 impl Number {
     pub fn as_f64(&self) -> f64 {
         match self {
+            Self::Small(n) => *n as f64,
             Self::Integer(s) => s.parse().unwrap_or(f64::INFINITY),
             Self::Float(n) => *n,
         }
     }
     pub fn text(&self) -> String {
         match self {
+            Self::Small(n) => n.to_string(),
             Self::Integer(s) => s.clone(),
             Self::Float(n) => crate::primitives::float_repr(*n),
         }
@@ -45,7 +62,7 @@ pub enum Document {
     Number(Number),
     String(String),
     Array(Vec<Self>),
-    Object(Vec<(String, Self)>),
+    Object(Vec<(Arc<str>, Self)>),
 }
 impl PartialEq for Document {
     fn eq(&self, other: &Self) -> bool {
@@ -69,9 +86,9 @@ impl PartialEq for Document {
 }
 impl Document {
     pub fn object(entries: impl IntoIterator<Item = (impl Into<String>, Self)>) -> Self {
-        let mut values: Vec<(String, Self)> = vec![];
+        let mut values: Vec<(Arc<str>, Self)> = vec![];
         for (k, v) in entries {
-            let k = k.into();
+            let k: Arc<str> = k.into().into();
             if let Some((_, old)) = values.iter_mut().find(|(key, _)| *key == k) {
                 *old = v;
             } else {
@@ -82,18 +99,18 @@ impl Document {
     }
     pub fn get(&self, key: &str) -> Option<&Self> {
         match self {
-            Self::Object(v) => v.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            Self::Object(v) => v.iter().find(|(k, _)| k.as_ref() == key).map(|(_, v)| v),
             _ => None,
         }
     }
-    pub fn set(&mut self, key: impl Into<String>, value: impl Into<Self>) -> Result<()> {
-        let key = key.into();
+    pub fn set(&mut self, key: impl AsRef<str>, value: impl Into<Self>) -> Result<()> {
+        let key = key.as_ref();
         let value = value.into();
         if let Self::Object(v) = self {
-            if let Some((_, old)) = v.iter_mut().find(|(k, _)| *k == key) {
+            if let Some((_, old)) = v.iter_mut().find(|(k, _)| k.as_ref() == key) {
                 *old = value;
             } else {
-                v.push((key, value));
+                v.push((key.into(), value));
             }
         } else {
             return Err(Failure::shape("document update", "expected object"));
@@ -101,7 +118,7 @@ impl Document {
         Ok(())
     }
     pub fn set_default(&mut self, key: impl Into<String>, value: impl Into<Self>) -> Result<()> {
-        let key = key.into();
+        let key: String = key.into();
         if self.get(&key).is_none() {
             self.set(key, value)?;
         }
@@ -109,7 +126,9 @@ impl Document {
     }
     pub fn remove(&mut self, key: &str) -> Option<Self> {
         if let Self::Object(v) = self {
-            v.iter().position(|(k, _)| k == key).map(|i| v.remove(i).1)
+            v.iter()
+                .position(|(k, _)| k.as_ref() == key)
+                .map(|i| v.remove(i).1)
         } else {
             None
         }
@@ -128,7 +147,7 @@ impl Document {
             None
         }
     }
-    pub fn as_object(&self) -> Option<&[(String, Self)]> {
+    pub fn as_object(&self) -> Option<&[(Arc<str>, Self)]> {
         if let Self::Object(a) = self {
             Some(a)
         } else {
@@ -144,6 +163,7 @@ impl Document {
     }
     pub fn as_i64(&self) -> Option<i64> {
         match self {
+            Self::Number(Number::Small(n)) => Some(*n),
             Self::Number(Number::Integer(n)) => n.parse().ok(),
             _ => None,
         }
@@ -159,8 +179,11 @@ impl Document {
         }
     }
     pub fn decode<T: DeserializeOwned>(&self, boundary: &str) -> Result<T> {
-        serde_json::from_str(&dumps(self, JsonMode::Stdout))
-            .map_err(|e| Failure::shape(boundary, e))
+        T::deserialize(Deserializer {
+            document: self,
+            depth: 0,
+        })
+        .map_err(|e| Failure::shape(boundary, e))
     }
     pub fn from_typed<T: Serialize>(value: &T) -> Result<Self> {
         parse(&serde_json::to_string(value).map_err(|e| Failure::error(e.to_string()))?)
@@ -169,6 +192,11 @@ impl Document {
 impl From<&str> for Document {
     fn from(v: &str) -> Self {
         Self::String(v.into())
+    }
+}
+impl From<Arc<str>> for Document {
+    fn from(value: Arc<str>) -> Self {
+        Self::String(value.to_string())
     }
 }
 impl From<String> for Document {
@@ -183,7 +211,7 @@ impl From<bool> for Document {
 }
 impl From<i64> for Document {
     fn from(v: i64) -> Self {
-        Self::Number(Number::Integer(v.to_string()))
+        Self::Number(Number::Small(v))
     }
 }
 impl From<usize> for Document {
@@ -209,87 +237,111 @@ pub enum JsonMode {
     Cursor,
     Catalogue,
 }
-fn string(s: &str, ascii: bool) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if c < ' ' || (ascii && !(' '..='~').contains(&c)) => {
-                for unit in c.encode_utf16(&mut [0; 2]) {
-                    out.push_str(&format!("\\u{unit:04x}"));
+fn string(out: &mut String, s: &str, ascii: bool) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.push('"');
+    let mut start = 0;
+    for (offset, c) in s.char_indices() {
+        if c == '"' || c == '\\' || c < ' ' || (ascii && c > '~') {
+            out.push_str(&s[start..offset]);
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\u{8}' => out.push_str("\\b"),
+                '\u{c}' => out.push_str("\\f"),
+                c => {
+                    for unit in c.encode_utf16(&mut [0; 2]) {
+                        out.push_str("\\u");
+                        for shift in [12, 8, 4, 0] {
+                            out.push(HEX[(*unit as usize >> shift) & 15] as char);
+                        }
+                    }
                 }
             }
-            c => out.push(c),
+            start = offset + c.len_utf8();
         }
     }
+    out.push_str(&s[start..]);
     out.push('"');
-    out
 }
 pub fn dumps(doc: &Document, mode: JsonMode) -> String {
-    fn render(d: &Document, mode: JsonMode, depth: usize) -> String {
+    fn render(out: &mut String, d: &Document, mode: JsonMode, depth: usize) {
         let ascii = matches!(mode, JsonMode::Error | JsonMode::Cursor);
         let indent = matches!(mode, JsonMode::Catalogue);
         let compact = matches!(mode, JsonMode::Cursor);
-        let items = match d {
-            Document::Null => return "null".into(),
-            Document::Bool(b) => return b.to_string(),
-            Document::Number(Number::Float(n)) if !n.is_finite() => {
-                return if n.is_nan() {
-                    "NaN"
-                } else if n.is_sign_negative() {
-                    "-Infinity"
-                } else {
-                    "Infinity"
-                }
-                .into();
+        let (open, close, len) = match d {
+            Document::Null => {
+                out.push_str("null");
+                return;
             }
-            Document::Number(n) => return n.text(),
-            Document::String(s) => return string(s, ascii),
-            Document::Array(a) => a
-                .iter()
-                .map(|x| render(x, mode, depth + 1))
-                .collect::<Vec<_>>(),
-            Document::Object(o) => o
-                .iter()
-                .map(|(k, v)| {
-                    format!(
-                        "{}:{}{}",
-                        string(k, ascii),
-                        if compact { "" } else { " " },
-                        render(v, mode, depth + 1)
-                    )
-                })
-                .collect(),
+            Document::Bool(b) => {
+                out.push_str(if *b { "true" } else { "false" });
+                return;
+            }
+            Document::Number(Number::Small(n)) => {
+                out.push_str(&n.to_string());
+                return;
+            }
+            Document::Number(Number::Integer(n)) => {
+                out.push_str(n);
+                return;
+            }
+            Document::Number(Number::Float(n)) => {
+                out.push_str(&if n.is_nan() {
+                    "NaN".into()
+                } else if *n == f64::INFINITY {
+                    "Infinity".into()
+                } else if *n == f64::NEG_INFINITY {
+                    "-Infinity".into()
+                } else {
+                    crate::primitives::float_repr(*n)
+                });
+                return;
+            }
+            Document::String(s) => {
+                string(out, s, ascii);
+                return;
+            }
+            Document::Array(a) => ('[', ']', a.len()),
+            Document::Object(o) => ('{', '}', o.len()),
         };
-        let (open, close) = if matches!(d, Document::Array(_)) {
-            ('[', ']')
-        } else {
-            ('{', '}')
-        };
-        if items.is_empty() {
-            return format!("{open}{close}");
+        out.push(open);
+        for i in 0..len {
+            if i > 0 {
+                out.push(',');
+                if !compact && !indent {
+                    out.push(' ');
+                }
+            }
+            if indent {
+                out.push('\n');
+                out.extend(std::iter::repeat_n(' ', depth + 1));
+            }
+            match d {
+                Document::Array(a) => render(out, &a[i], mode, depth + 1),
+                Document::Object(o) => {
+                    string(out, &o[i].0, ascii);
+                    out.push(':');
+                    if !compact {
+                        out.push(' ');
+                    }
+                    render(out, &o[i].1, mode, depth + 1);
+                }
+                _ => unreachable!(),
+            }
         }
-        if indent {
-            format!(
-                "{open}\n{}{}\n{}{close}",
-                " ".repeat(depth + 1),
-                items.join(&format!(",\n{}", " ".repeat(depth + 1))),
-                " ".repeat(depth)
-            )
-        } else {
-            format!(
-                "{open}{}{close}",
-                items.join(if compact { "," } else { ", " })
-            )
+        if indent && len > 0 {
+            out.push('\n');
+            out.extend(std::iter::repeat_n(' ', depth));
         }
+        out.push(close);
     }
-    render(doc, mode, 0)
+    let mut out = String::new();
+    render(&mut out, doc, mode, 0);
+    out
 }
 fn valid_number(text: &str) -> bool {
     let mut bytes = text.as_bytes().iter().copied().peekable();
@@ -332,8 +384,9 @@ pub fn parse(text: &str) -> Result<Document> {
     struct Parser<'a> {
         s: &'a str,
         pos: usize,
+        keys: HashSet<Arc<str>>,
     }
-    impl Parser<'_> {
+    impl<'a> Parser<'a> {
         fn ws(&mut self) {
             while self
                 .s
@@ -356,17 +409,31 @@ pub fn parse(text: &str) -> Result<Document> {
         fn err(&self) -> Failure {
             Failure::error(format!("invalid JSON at byte {}", self.pos))
         }
-        fn string(&mut self) -> Result<String> {
+        fn string(&mut self) -> Result<std::borrow::Cow<'a, str>> {
             self.ws();
             let start = self.pos;
             if !self.take(b'"') {
                 return Err(self.err());
             }
-            let mut escaped = false;
+            while let Some(&b) = self.s.as_bytes().get(self.pos) {
+                self.pos += 1;
+                if b == b'"' {
+                    return Ok(std::borrow::Cow::Borrowed(&self.s[start + 1..self.pos - 1]));
+                }
+                if b < b' ' {
+                    return Err(self.err());
+                }
+                if b == b'\\' {
+                    break;
+                }
+            }
+            let mut escaped = self.s.as_bytes().get(self.pos.wrapping_sub(1)) == Some(&b'\\');
             while let Some(&b) = self.s.as_bytes().get(self.pos) {
                 self.pos += 1;
                 if b == b'"' && !escaped {
-                    return serde_json::from_str(&self.s[start..self.pos]).map_err(|_| self.err());
+                    return serde_json::from_str(&self.s[start..self.pos])
+                        .map(std::borrow::Cow::Owned)
+                        .map_err(|_| self.err());
                 }
                 escaped = b == b'\\' && !escaped;
             }
@@ -379,20 +446,49 @@ pub fn parse(text: &str) -> Result<Document> {
             self.ws();
             let b = *self.s.as_bytes().get(self.pos).ok_or_else(|| self.err())?;
             match b {
-                b'"' => Ok(Document::String(self.string()?)),
+                b'"' => Ok(Document::String(self.string()?.into_owned())),
                 b'{' => {
                     self.pos += 1;
-                    let mut d = Document::Object(vec![]);
+                    let mut entries: Vec<(Arc<str>, Document)> = vec![];
+                    let mut positions: Option<HashMap<Arc<str>, usize>> = None;
                     if self.take(b'}') {
-                        return Ok(d);
+                        return Ok(Document::Object(entries));
                     }
                     loop {
-                        let k = self.string()?;
+                        let raw = self.string()?;
+                        let k = if let Some(key) = self.keys.get(raw.as_ref()) {
+                            key.clone()
+                        } else {
+                            let k: Arc<str> = raw.as_ref().into();
+                            self.keys.insert(k.clone());
+                            k
+                        };
                         if !self.take(b':') {
                             return Err(self.err());
                         }
                         let v = self.value(depth + 1)?;
-                        d.set(k, v)?;
+                        if positions.is_none() && entries.len() == 32 {
+                            positions = Some(
+                                entries
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, (key, _))| (key.clone(), i))
+                                    .collect(),
+                            );
+                        }
+                        let position = if let Some(positions) = &positions {
+                            positions.get(&k).copied()
+                        } else {
+                            entries.iter().position(|(key, _)| Arc::ptr_eq(key, &k))
+                        };
+                        if let Some(position) = position {
+                            entries[position].1 = v;
+                        } else {
+                            if let Some(positions) = &mut positions {
+                                positions.insert(k.clone(), entries.len());
+                            }
+                            entries.push((k, v));
+                        }
                         if self.take(b'}') {
                             break;
                         }
@@ -400,7 +496,8 @@ pub fn parse(text: &str) -> Result<Document> {
                             return Err(self.err());
                         }
                     }
-                    Ok(d)
+                    entries.shrink_to_fit();
+                    Ok(Document::Object(entries))
                 }
                 b'[' => {
                     self.pos += 1;
@@ -417,6 +514,7 @@ pub fn parse(text: &str) -> Result<Document> {
                             return Err(self.err());
                         }
                     }
+                    a.shrink_to_fit();
                     Ok(Document::Array(a))
                 }
                 _ => {
@@ -449,15 +547,20 @@ pub fn parse(text: &str) -> Result<Document> {
                     if raw.contains(['.', 'e', 'E']) {
                         Ok(Document::from(raw.parse::<f64>().map_err(|_| self.err())?))
                     } else {
-                        Ok(Document::Number(Number::Integer(
-                            if raw == "-0" { "0" } else { raw }.into(),
-                        )))
+                        Ok(Document::Number(match raw.parse::<i64>() {
+                            Ok(n) => Number::Small(n),
+                            Err(_) => Number::Integer(raw.into()),
+                        }))
                     }
                 }
             }
         }
     }
-    let mut p = Parser { s: text, pos: 0 };
+    let mut p = Parser {
+        s: text,
+        pos: 0,
+        keys: HashSet::new(),
+    };
     let d = p.value(0)?;
     p.ws();
     if p.pos != text.len() {
@@ -465,3 +568,7 @@ pub fn parse(text: &str) -> Result<Document> {
     }
     Ok(d)
 }
+
+#[cfg(test)]
+#[path = "document_tests.rs"]
+mod tests;

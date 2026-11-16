@@ -60,13 +60,45 @@ pub fn float_repr(n: f64) -> String {
         )
     }
 }
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 #[serde(untagged)]
 pub enum Scalar {
     Bool(bool),
     Integer(i64),
     Float(f64),
     Text(String),
+}
+impl<'de> serde::Deserialize<'de> for Scalar {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ScalarVisitor;
+        impl<'de> serde::de::Visitor<'de> for ScalarVisitor {
+            type Value = Scalar;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a boolean, number, or string")
+            }
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Scalar, E> {
+                Ok(Scalar::Bool(value))
+            }
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Scalar, E> {
+                Ok(Scalar::Integer(value))
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Scalar, E> {
+                Ok(i64::try_from(value)
+                    .map(Scalar::Integer)
+                    .unwrap_or_else(|_| Scalar::Float(value as f64)))
+            }
+            fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Scalar, E> {
+                Ok(Scalar::Float(value))
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Scalar, E> {
+                Ok(Scalar::Text(value.into()))
+            }
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Scalar, E> {
+                Ok(Scalar::Text(value))
+            }
+        }
+        deserializer.deserialize_any(ScalarVisitor)
+    }
 }
 impl Scalar {
     pub fn python_str(&self) -> String {

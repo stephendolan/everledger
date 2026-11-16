@@ -261,12 +261,83 @@ pub struct Payload<T> {
 }
 impl<T: serde::de::DeserializeOwned> Payload<T> {
     pub fn set(&mut self, key: impl Into<String>, value: impl Into<Document>) -> Result<()> {
-        let mut document = self.document.clone();
-        document.set(key, value)?;
-        let view = document.decode("payload update")?;
-        self.document = document;
-        self.view = view;
-        Ok(())
+        let key = key.into();
+        self.set_path(&[&key], value)
+    }
+
+    pub fn set_path(&mut self, path: &[&str], value: impl Into<Document>) -> Result<()> {
+        self.edit(path, Some(value.into()))
+    }
+
+    pub fn remove(&mut self, key: &str) -> Result<()> {
+        if self.document.get(key).is_none() {
+            return Ok(());
+        }
+        self.edit(&[key], None)
+    }
+
+    fn edit(&mut self, path: &[&str], value: Option<Document>) -> Result<()> {
+        fn parent<'a>(
+            document: &'a mut Document,
+            path: &[&str],
+        ) -> Result<&'a mut Vec<(std::sync::Arc<str>, Document)>> {
+            let mut document = document;
+            for key in path {
+                document = match document {
+                    Document::Object(entries) => entries
+                        .iter_mut()
+                        .find(|(k, _)| k.as_ref() == *key)
+                        .map(|(_, v)| v),
+                    _ => None,
+                }
+                .ok_or_else(|| Failure::shape("payload update", "missing parent object"))?;
+            }
+            match document {
+                Document::Object(entries) => Ok(entries),
+                _ => Err(Failure::shape("payload update", "expected object")),
+            }
+        }
+        let (key, ancestors) = path
+            .split_last()
+            .ok_or_else(|| Failure::shape("payload update", "empty path"))?;
+        let entries = parent(&mut self.document, ancestors)?;
+        let position = entries
+            .iter()
+            .position(|(k, _)| k.as_ref() == *key)
+            .unwrap_or(entries.len());
+        enum Undo {
+            Replace(Document),
+            Insert,
+            Remove(Document),
+        }
+        let undo = match value {
+            Some(value) if position < entries.len() => {
+                Undo::Replace(std::mem::replace(&mut entries[position].1, value))
+            }
+            Some(value) => {
+                entries.push(((*key).into(), value));
+                Undo::Insert
+            }
+            None if position < entries.len() => Undo::Remove(entries.remove(position).1),
+            None => return Ok(()),
+        };
+        match self.document.decode("payload update") {
+            Ok(view) => {
+                self.view = view;
+                Ok(())
+            }
+            Err(error) => {
+                let entries = parent(&mut self.document, ancestors)?;
+                match undo {
+                    Undo::Remove(old) => entries.insert(position, ((*key).into(), old)),
+                    Undo::Replace(old) => entries[position].1 = old,
+                    Undo::Insert => {
+                        entries.remove(position);
+                    }
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn set_default(

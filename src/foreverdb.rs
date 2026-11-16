@@ -378,14 +378,9 @@ fn sync_locked(
                     Identifier::try_from(id.parse::<i64>().map_err(|_| mapping::invalid())?)
                         .map_err(|_| mapping::invalid())?;
                 let data = mapping::vendor(doc, expected)?;
-                let mut details = engine
+                engine
                     .pending
-                    .document()
-                    .get("details")
-                    .cloned()
-                    .ok_or_else(mapping::invalid)?;
-                details.set(id, Document::object([("data", data)]))?;
-                engine.pending.set("details", details)?;
+                    .set_path(&["details", &id], Document::object([("data", data)]))?;
                 interrupt.write("pending.json", engine.pending.document())?;
             }
         }
@@ -497,9 +492,7 @@ impl Engine<'_, '_> {
             self.checkpoint_interrupt()?;
             match self.transport.request(path, self.context) {
                 Ok(raw) => {
-                    let mut d = self.pending.document().clone();
-                    d.remove("retry");
-                    *self.pending = Payload::decode(d, "ForeverDB checkpoint")?;
+                    self.pending.remove("retry")?;
                     return crate::http::decode_body(&raw)
                         .map(Some)
                         .map_err(|_| mapping::invalid());
@@ -539,9 +532,7 @@ impl Engine<'_, '_> {
                             .write("pending.json", self.pending.document())?;
                         continue;
                     }
-                    let mut d = self.pending.document().clone();
-                    d.remove("retry");
-                    *self.pending = Payload::decode(d, "ForeverDB checkpoint")?;
+                    self.pending.remove("retry")?;
                     return Err(Failure {
                         message: crate::human::refresh::sync_failed(status),
                         code: crate::ExitCode::Unreachable,
