@@ -214,6 +214,7 @@ pub fn roster_seconds(value: &Document) -> Result<EpochSeconds> {
 pub fn roster_seconds_in(value: &Document, zone: Option<&str>) -> Result<EpochSeconds> {
     match value {
         Document::Bool(b) => Ok(EpochSeconds(i64::from(*b))),
+        Document::Number(Number::Small(n)) => Ok(EpochSeconds(*n)),
         Document::Number(Number::Integer(s)) => s
             .parse()
             .map(EpochSeconds)
