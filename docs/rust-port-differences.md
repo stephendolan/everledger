@@ -69,5 +69,7 @@ ninja cache.
   (`0001-01-01`, `9999-12-31`). Rust applies one rule: an instant is valid from
   `0001-01-01T00:00:00Z` through `9999-12-31T23:59:59.999999Z`.
 - A negative amount that rounds to zero copper prints `0c`; Python prints `-0c`.
+- Python finds a vendor page's `Last-Modified` header only in that exact letter
+  case and otherwise reports no publication time. Rust finds it in any case.
 - Lowercasing follows the Unicode version of the Rust toolchain. It differs
   from Python 3.13 on 75 letters added to Unicode since version 15.1.

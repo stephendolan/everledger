@@ -20,7 +20,7 @@ function takes and returns, read the code.
 | `src/vendors.rs`, `vendors_foreverdb.rs`, `vendor_status.rs` | Vendor answers from either backend, backend selection, and backend status. |
 | `src/foreverdb.rs`, `foreverdb_mapping.rs`, `foreverdb_transport.rs`, `foreverdb_interrupt.rs`, `foreverdb_connector.py` | The ForeverDB sync, its strict mapping, both transports, interrupt handling, and the connector shim. |
 | `src/catalogue.rs`, `catalogue_build.rs` | The catalogue file and the build that produces it from profession pages. |
-| `src/document.rs`, `primitives.rs`, `time.rs` | The Python-compatible JSON writer and text, number, and time primitives. |
+| `src/document.rs`, `document_decode.rs`, `primitives.rs`, `time.rs` | The ordered document with its Python-compatible writer, typed decoding straight from a document, and text, number, and time primitives. |
 | `src/types.rs`, `config.rs`, `clock.rs`, `http.rs`, `provenance.rs`, `diagnostics.rs` | Units and failures, configuration, clocks, HTTP, sources, and the stderr sink. |
 
 ## Conventions
@@ -33,8 +33,9 @@ reproduce those, and `rust-tests/oracle_probe.rs` holds them to the reference.
 **A payload is a document and a view.** `Payload<T>` keeps the ordered document
 that arrived and a typed view decoded from it. Logic reads the view; output
 re-emits the document, so fields the CLI never looked at pass through in their
-original order. `set` and `set_default` change the document and decode the view
-again, so the two cannot disagree. `Field<T>` (`Missing`, `Null`, `Value`) is
+original order. `set` and `set_default` change the document in place and decode
+the view again; an update that does not decode is undone, so the two cannot
+disagree. `Field<T>` (`Missing`, `Null`, `Value`) is
 for the places where the contract tells an absent key from a null one.
 
 **A view is exactly as strict as the contract.** A required field is a required
