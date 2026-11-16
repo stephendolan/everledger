@@ -143,6 +143,10 @@ new sync remains visible. Normalization preserves all other JSON formatting,
 key order, whitespace, paths, numbers, and timestamps. Temporary-name
 normalization collisions fail the harness.
 
+A difference confined to the transport detail in `source unreachable (...)`
+is sanctioned as `transport-detail` on stdout and stderr, whatever the step's
+policy; the surrounding bytes still have to match.
+
 `engine.ALLOWLIST` is the single policy allowlist. Parser usage, Python-internal
 exception text, external-tool diagnostics, and explicitly selected shape-drift
 messages can exempt stderr differences. An explicitly selected shape-drift

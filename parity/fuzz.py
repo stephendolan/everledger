@@ -412,7 +412,7 @@ def invocation(rng, items, names, cat, cursors):
     pick = lambda *flags: [part for flag in flags if rng.random() < 0.35 for part in flag]
     command = rng.choice(['price', 'price', 'vendors', 'vendors', 'recipe', 'bridge', 'margins', 'margins', 'char', 'char',
                           'listings', 'listings', 'positions', 'positions', 'sales', 'purchases', 'expirations',
-                          'net', 'net', 'events', 'events', 'events', 'events', 'verify'])
+                          'net', 'net', 'events', 'events', 'events', 'events', 'verify', 'status'])
     if command == 'price':
         return ['price', *wanted.split(' ')] if rng.random() < 0.5 else ['price', wanted]
     if command == 'vendors':
@@ -437,8 +437,8 @@ def invocation(rng, items, names, cat, cursors):
         return [command, *pick(('--item', wanted), ('--char', who)), *window(), *venue]
     if command == 'net':
         return ['net', wanted, *pick(('--char', who)), *window()]
-    if command == 'verify':
-        return ['verify']
+    if command in ('verify', 'status'):
+        return [command]
     types_ = ','.join(rng.sample(EVENT_TYPES, rng.randrange(1, 4)))
     mode = rng.choice(['window', 'window', 'bootstrap', 'after', 'cursor', 'cursor'])
     if mode == 'bootstrap':
@@ -632,6 +632,10 @@ def run(candidate, cases, seed, commands, only, invocations, suite):
                 Path(directory, 'catalogue.json').write_text(json.dumps(cat, indent=1, ensure_ascii=False))
                 env = {k: v for k, v in os.environ.items() if not k.startswith('EVERLEDGER_')}
                 env.update(TZ=rng.choice(ZONES), EVERLEDGER_ROSTER_TOKEN='fixture')
+                if rng.random() < 0.15:
+                    # One source is down at the socket: a bound port nothing listens on.
+                    down = rng.choice(['EVERLEDGER_ROSTER_URL', 'EVERLEDGER_AHLEDGER_URL', 'EVERLEDGER_VENDOR_URL'])
+                    env[down] = 'http://127.0.0.1:%d' % engine.dead_proxy.getsockname()[1]
                 engine.start_scenario()
                 try:
                     for step in range(invocations):

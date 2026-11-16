@@ -163,6 +163,15 @@ def protected_stderr(raw):
             if line.startswith((b'deprecated ', b'cursor_invalid: resynchronizing ', b'catalogue is older than '))]
 
 
+# The text in parentheses after "source unreachable" is the HTTP library's own
+# wording for a failed connection. It reaches stderr, and stdout in a status row.
+UNREACHABLE = re.compile(rb'(source unreachable \().*?(\)(?=\\?"|\r?\n|$))', re.M)
+
+
+def mask_transport(raw):
+    return UNREACHABLE.sub(rb'\1<transport detail>\2', raw)
+
+
 def compare(left, right, policy=None):
     differences = []
     for field in ('exit_code', 'stdout', 'stderr', 'requests', 'sleep_log'):
@@ -198,6 +207,10 @@ def compare(left, right, policy=None):
         if row['field'] == 'stderr' and left['stderr'].strip() and not right['stderr'].strip():
             sanctioned = False
         row['class'] = policy if sanctioned else None
+        if (row['class'] is None and row['field'] in ('stdout', 'stderr')
+                and b'source unreachable (' in left[row['field']]
+                and mask_transport(left[row['field']]) == mask_transport(right[row['field']])):
+            row['class'] = 'transport-detail'
     state = 'unexplained' if any(row['class'] is None for row in differences) else 'sanctioned' if differences else 'identical'
     return state, differences
 

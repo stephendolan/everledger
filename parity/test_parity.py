@@ -133,6 +133,28 @@ class Harness(unittest.TestCase):
             b['stderr'] = warning + b'clear boundary error\n'
             self.assertEqual(compare(a, b, 'python-internal')[0], 'sanctioned')
 
+    def test_transport_detail_is_the_only_wording_a_dead_source_may_change(self):
+        self.scenario.step('events', '--after', '')
+        base = self.engine.records[-1]['oracle']
+        python = b'http://127.0.0.1:9/listings: source unreachable (<urlopen error [Errno 111] Connection refused>)'
+        rust = b'http://127.0.0.1:9/listings: source unreachable (io: Connection refused (os error 111))'
+        for field, wrap in (('stderr', lambda text: text + b'\n'),
+                            ('stdout', lambda text: b'{"status": [{"source": "listings", "state": "' + text + b'"}]}\n'),
+                            ('stdout', lambda text: b'listings | ' + text + b'\nsource: unknown (age unknown)\n')):
+            oracle = copy.deepcopy(base); candidate = copy.deepcopy(base)
+            oracle[field] = wrap(python); candidate[field] = wrap(rust)
+            state, differences = compare(oracle, candidate)
+            self.assertEqual((state, [row['class'] for row in differences]), ('sanctioned', ['transport-detail']))
+            candidate[field] = wrap(rust.replace(b'/listings', b'/events'))
+            self.assertEqual(compare(oracle, candidate)[0], 'unexplained')
+            candidate[field] = wrap(rust).replace(b'source unreachable', b'unreachable')
+            self.assertEqual(compare(oracle, candidate)[0], 'unexplained')
+            candidate[field] = wrap(rust) + b'extra\n'
+            self.assertEqual(compare(oracle, candidate)[0], 'unexplained')
+        oracle = copy.deepcopy(base); candidate = copy.deepcopy(base)
+        oracle['stdout'] = b'plain row\n'; candidate['stdout'] = b'other row\n'
+        self.assertEqual(compare(oracle, candidate)[0], 'unexplained')
+
     def test_normalization_preserves_bytes_and_sync_relationships(self):
         a = Normalizer(); b = Normalizer()
         first = b'{"sync_id": "' + b'a' * 32 + b'", "x": 1}'

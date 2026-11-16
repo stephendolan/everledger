@@ -24,6 +24,16 @@ Exit codes and stdout still match in each of these cases.
 Contract text is exact: failure messages the CLI defines, deprecation
 warnings, resync notices, and the catalogue-age advisory.
 
+## Transport failure detail
+
+When a source cannot be reached at all, the message ends with the HTTP
+library's wording in parentheses: Python prints
+`source unreachable (<urlopen error [Errno 111] Connection refused>)` and Rust
+prints `source unreachable (io: Connection refused (os error 111))`. The text
+before the parentheses, the exit code, and everything else match. This is the
+one difference that can reach stdout: `status` reports the message as the
+unreachable source's `state`.
+
 ## Shape drift fails at the boundary
 
 Where a payload does not have the shape the contract describes, Python limps
