@@ -420,15 +420,12 @@ fn margin_exit_considers_roster_and_market_sources() {
     let f = Fixture::new();
     f.market("88");
     f.raw("/characters/Slade",r#"{"character":{"professions":[{"name":"Tailoring","skill":5,"skill_available":true,"recipes":{"available":true,"known":[]}}]},"sources":[{"name":"roster","stale":true}]}"#);
-    assert_eq!(
-        f.command(&["margins", "--char", "Slade"]).unwrap().code,
-        ExitCode::Stale
-    );
+    assert!(f.command(&["margins", "--char", "Slade"]).unwrap().stale);
     f.raw(
         "/v1/pricetable/forever.pvp.alliance.us",
         "m|v|1\n2604:88:87:2:::::10\n100:200:190:2:::::10",
     );
-    assert_eq!(f.command(&["margins"]).unwrap().code, ExitCode::Stale);
+    assert!(f.command(&["margins"]).unwrap().stale);
     f.fail("/v1/pricetable/forever.pvp.alliance.us", 503);
     assert_eq!(
         f.command(&["margins"]).err().unwrap().code,
@@ -470,7 +467,7 @@ fn price_uses_half_even_copper_and_preserves_unknown_counts() {
         "/v1/prices/forever.pvp.alliance.us/42",
         &document::dumps(&d, document::JsonMode::Stdout),
     );
-    assert_eq!(f.command(&["price", "42"]).unwrap().code, ExitCode::Stale);
+    assert!(f.command(&["price", "42"]).unwrap().stale);
     f.fail("/v1/prices/forever.pvp.alliance.us/42", 503);
     assert_eq!(
         f.command(&["price", "42"]).err().unwrap().code,
@@ -478,23 +475,74 @@ fn price_uses_half_even_copper_and_preserves_unknown_counts() {
     );
 }
 #[test]
-fn char_auctions_redirects_and_known_deprecation_survives_conflict() {
+fn removed_flags_and_aliases_are_rejected() {
+    for args in [vec!["verify"], vec!["margins", "--known", "Slade"]] {
+        let error =
+            everledger::cli::parse_from(std::iter::once("everledger").chain(args)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+    }
     let f = Fixture::new();
-    let e = f.command(&["char", "Slade", "auctions"]).err().unwrap();
-    assert_eq!(e.code, ExitCode::Usage);
-    assert_eq!(e.message, "Use: everledger listings --char \"Slade\"");
-    assert_eq!(
-        f.command(&["margins", "--known", "Slade", "--char", "Other"])
-            .err()
-            .unwrap()
-            .code,
-        ExitCode::Usage
+    f.raw(
+        "/characters/Slade",
+        r#"{"character":{"name":"Slade","professions":[]}}"#,
     );
-    assert_eq!(
-        f.diagnostics.contents(),
-        b"deprecated --known; use --char\n"
+    let out = f.command(&["char", "Slade", "auctions"]).unwrap();
+    assert_eq!(out.code, ExitCode::Answer);
+    assert!(f.diagnostics.contents().is_empty());
+}
+
+#[test]
+fn roster_derived_results_share_stale_notice_and_exit_code() {
+    let f = Fixture::new();
+    f.market("88");
+    let ch = r#"{"name":"Slade","professions":[{"name":"Tailoring","skill":5,"max_skill":75,"skill_available":true,"recipes":{"available":true,"known":[{"spell_id":1}]}}]}"#;
+    let source =
+        r#"[{"file":"Journalator-looking-name.lua","mtime":"2026-11-15T12:00:00Z","stale":true}]"#;
+    f.raw(
+        "/characters",
+        &format!("{{\"characters\":[{ch}],\"sources\":{source}}}"),
     );
-    assert!(f.http.requests.borrow().is_empty());
+    f.raw(
+        "/characters/Slade",
+        &format!("{{\"character\":{ch},\"sources\":{source}}}"),
+    );
+    for args in [
+        vec!["recipe", "Red Shirt"],
+        vec!["char", "Slade"],
+        vec!["margins", "tailoring", "--char", "Slade"],
+    ] {
+        for json in [false, true] {
+            let mut argv = args.clone();
+            if json {
+                argv.push("--json");
+            }
+            let command =
+                everledger::cli::parse_from(std::iter::once("everledger").chain(argv)).unwrap();
+            let mut stdout = vec![];
+            assert_eq!(
+                everledger::cli::execute(&command, &f.context(), &mut stdout),
+                ExitCode::Stale,
+                "{args:?}"
+            );
+            let stdout = String::from_utf8(stdout).unwrap();
+            if json {
+                document::parse(&stdout).unwrap();
+            } else {
+                let lines = stdout.lines().collect::<Vec<_>>();
+                assert_eq!(
+                    stdout
+                        .matches("stale: data exceeds its freshness limit")
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    lines[lines.len() - 2],
+                    "stale: data exceeds its freshness limit"
+                );
+                assert!(lines.last().unwrap().starts_with("source:"));
+            }
+        }
+    }
 }
 
 fn catalogue_with_recipes(f: &mut Fixture, specs: &[(&str, i64, i64, i64)]) {
@@ -743,4 +791,119 @@ fn ninja_preserves_nullable_coordinates_and_reads_ascii_prices_only() {
         Some(&document::parse("[[null, 0]]").unwrap())
     );
     assert!(out.lines[2].contains("unknown, 0"));
+}
+
+#[test]
+fn status_probes_one_event_page_and_stale_outranks_unreachable() {
+    for stale_kind in ["none", "listing", "market", "vendor", "ignored"] {
+        let mut f = Fixture::new();
+        f.market("88");
+        f.raw("/", "");
+        f.fail("/characters", 503);
+        f.raw("/events?limit=1", r#"{"entries":[],"has_more":true,"next_cursor":"unread-page","sources":[{"file":"Journalator.lua","stale":true}]}"#);
+        let listing_stale = stale_kind == "listing";
+        let ignored = stale_kind == "ignored";
+        f.raw("/listings", &format!(r#"{{"listings":[],"sources":[{{"name":"other","stale":{ignored}}}],"scans":[{{"pricing":{{"source":{{"file":"scan.lua","stale":{listing_stale}}}}}}}]}}"#));
+        if stale_kind == "market" {
+            f.raw(
+                "/v1/pricetable/forever.pvp.alliance.us",
+                "m|v|1\n2604:88:87:709:::::10",
+            );
+        } else if stale_kind == "vendor" {
+            f.config.foreverdb_api_key = "fixture".into();
+            let path = f.config.data_dir.join("vendors/foreverdb.net");
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("index.json"), r#"{"format":2,"fetched_at":"2026-11-13T12:00:00Z","published_at":null,"record_count":0,"vendor_total":0,"item_count":0,"items":{}}"#).unwrap();
+        }
+        for json in [false, true] {
+            f.http.requests.borrow_mut().clear();
+            let argv = if json {
+                vec!["everledger", "status", "--json"]
+            } else {
+                vec!["everledger", "status"]
+            };
+            let command = everledger::cli::parse_from(argv).unwrap();
+            let mut stdout = vec![];
+            let stale = ["listing", "market", "vendor"].contains(&stale_kind);
+            assert_eq!(
+                everledger::cli::execute(&command, &f.context(), &mut stdout),
+                if stale {
+                    ExitCode::Stale
+                } else {
+                    ExitCode::Unreachable
+                },
+                "{stale_kind}"
+            );
+            let output = String::from_utf8(stdout).unwrap();
+            assert_eq!(
+                output.matches("stale: data exceeds").count(),
+                usize::from(stale && !json)
+            );
+            let requests = f.http.requests.borrow();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|p| p.contains("/events"))
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["http://127.0.0.1/events?limit=1"]
+            );
+            assert!(
+                !requests
+                    .iter()
+                    .any(|p| p.contains("/api/v1/") || p.contains("/items/"))
+            );
+        }
+    }
+}
+
+#[test]
+fn price_quantity_is_normalized_to_an_integer_at_the_boundary() {
+    let f = Fixture::new();
+    for (quantity, expected) in [
+        ("709.0", 709_i64),
+        ("709.9", 709),
+        ("-1.9", -1),
+        ("\"709\"", 709),
+        ("true", 1),
+    ] {
+        f.raw("/v1/prices/forever.pvp.alliance.us/42", &format!(r#"{{"item":{{"id":42,"name":"Example"}},"latest":{{"observedAt":"2026-11-15T12:00:00Z","median":88,"minBuyout":87,"median7d":null,"quantity":{quantity},"auctions":1}},"sales":{{"estimatedPerDay":null,"coveredHours":null}}}}"#));
+        let out = f.command(&["price", "42"]).unwrap();
+        assert_eq!(
+            out.data.get("latest").unwrap().get("quantity"),
+            Some(&Document::from(expected))
+        );
+        assert!(out.lines[0].contains(&format!("listed {expected} in")));
+        let json: serde_json::Value =
+            serde_json::from_str(&document::dumps(&out.data, document::JsonMode::Stdout)).unwrap();
+        assert!(json["latest"]["quantity"].is_i64());
+    }
+}
+
+#[test]
+fn vendor_footer_uses_fetch_time_when_publication_and_age_are_null() {
+    let f = Fixture::new();
+    f.dye();
+    f.snapshot();
+    let mut cached = document::parse(&std::fs::read_to_string(f.cache()).unwrap()).unwrap();
+    cached.set("published_at", Document::Null).unwrap();
+    std::fs::write(
+        f.cache(),
+        document::dumps(&cached, document::JsonMode::Stdout),
+    )
+    .unwrap();
+    let command = everledger::cli::parse_from(["everledger", "vendors", "2604"]).unwrap();
+    let mut stdout = vec![];
+    assert_eq!(
+        everledger::cli::execute(&command, &f.context(), &mut stdout),
+        ExitCode::Answer
+    );
+    let stdout = String::from_utf8(stdout).unwrap();
+    assert!(
+        stdout
+            .lines()
+            .last()
+            .unwrap()
+            .contains("wowforever.ninja pins (saved/data 2026-11-15T12:00:00Z; age 0s)")
+    );
 }

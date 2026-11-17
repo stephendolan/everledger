@@ -1,16 +1,4 @@
-#[derive(clap::Args, Debug, Clone)]
-#[command(args_override_self = true)]
-pub struct Args {
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
-}
-use crate::{
-    Context, ExitCode, Result,
-    catalogue::{catalogue_source, load_catalogue},
-    commands::CommandOutput,
-    document::Document,
-    human,
-};
+use crate::human;
 pub const ANCHORS: [(&str, &str, i64, Option<&str>); 7] = [
     (
         "tailoring",
@@ -50,32 +38,6 @@ impl Check<'_> {
         }
     }
 }
-pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
-    context
-        .diagnostics
-        .warn("deprecated verify; use: everledger status")?;
-    let cat = load_catalogue(context)?;
-    let (ok, lines) = check_catalogue(cat);
-    let data = Document::object([
-        ("ok", Document::from(ok)),
-        (
-            "checks",
-            Document::Array(lines.iter().cloned().map(Document::from).collect()),
-        ),
-        (
-            "sources",
-            Document::Array(vec![catalogue_source(cat, context.clock)?.into_document()]),
-        ),
-    ]);
-    let mut out = CommandOutput::new(data, lines);
-    out.code = if ok {
-        ExitCode::Answer
-    } else {
-        ExitCode::Error
-    };
-    Ok(out)
-}
-
 pub fn check_catalogue(cat: &crate::catalogue::Catalogue) -> (bool, Vec<String>) {
     let mut checks = vec![];
     for (prof, block) in &cat.view().professions.0 {

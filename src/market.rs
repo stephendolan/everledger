@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 pub struct Price {
     pub median_copper: Option<Copper>,
     pub floor_copper: Option<Copper>,
-    pub quantity: Option<f64>,
+    pub quantity: Option<i64>,
     pub sales_per_day: Option<f64>,
 }
 pub type PriceTable = BTreeMap<i64, Price>;
@@ -56,7 +56,7 @@ pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
             Price {
                 median_copper: number(1)?.map(rounded_copper).transpose()?,
                 floor_copper: number(2)?.map(rounded_copper).transpose()?,
-                quantity: number(3)?,
+                quantity: number(3)?.map(quantity_from_float).transpose()?,
                 sales_per_day: number(8)?.map(|v| v / 10.0),
             },
         );
@@ -69,4 +69,25 @@ pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
     let stale = crate::time::age(Some(&timestamp), context.clock).is_some_and(|s| s > 900);
     s.set("stale", stale)?;
     Ok((prices, s))
+}
+
+pub fn quantity_from_float(value: f64) -> Result<i64> {
+    let value = value.trunc();
+    if !value.is_finite() || !(-9223372036854775808.0..9223372036854775808.0).contains(&value) {
+        return Err(Failure::shape("AHledger quantity", "integer out of range"));
+    }
+    Ok(value as i64)
+}
+pub fn deserialize_quantity<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<i64>, D::Error> {
+    use crate::primitives::Scalar;
+    Option::<Scalar>::deserialize(d)?
+        .map(|value| match value {
+            Scalar::Integer(n) => Ok(n),
+            Scalar::Float(n) => quantity_from_float(n).map_err(serde::de::Error::custom),
+            Scalar::Bool(b) => Ok(i64::from(b)),
+            Scalar::Text(s) => crate::cli::parse_integer(&s).map_err(serde::de::Error::custom),
+        })
+        .transpose()
 }

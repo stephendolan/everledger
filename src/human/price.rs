@@ -1,6 +1,6 @@
 use crate::{
     commands::price::{MarketQuote, RoundedQuote},
-    human::{copper_money, text, value},
+    human::{copper_money, integer, text, value},
     vendors::VendorAnswer,
 };
 pub fn render(id: i64, q: &MarketQuote, r: &RoundedQuote, vendors: &VendorAnswer) -> Vec<String> {
@@ -22,7 +22,7 @@ pub fn render(id: i64, q: &MarketQuote, r: &RoundedQuote, vendors: &VendorAnswer
         text(q.latest.observed_at.as_deref()),
         copper_money(r.median),
         copper_money(r.min_buyout),
-        value(q.latest.quantity.as_ref()),
+        integer(q.latest.quantity),
         value(q.latest.auctions.as_ref()),
         copper_money(r.median_7d)
     )];

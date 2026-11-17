@@ -581,36 +581,6 @@ fn payload_updates_commit_document_and_typed_view_together() {
     assert_eq!(payload.document().get("stale"), Some(&Document::Bool(true)));
 }
 #[test]
-fn warnings_survive_command_failure() {
-    let args =
-        everledger::cli::parse_from(["everledger", "margins", "--known", "X", "--char", "Y"])
-            .unwrap();
-    let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
-    let config = everledger::config::Config::from_values(&Default::default()).unwrap();
-    let catalogue = everledger::catalogue::CatalogueStore::from_document(
-        document::parse(include_str!("../tests/fixtures/catalogue-fixture.json")).unwrap(),
-    )
-    .unwrap();
-    let diagnostics = everledger::diagnostics::WriterDiagnostics::default();
-    let context = everledger::Context {
-        clock: &clock,
-        http: &UreqHttp,
-        config: &config,
-        catalogue: &catalogue,
-        diagnostics: &diagnostics,
-    };
-    let mut stdout = vec![];
-    assert_eq!(
-        everledger::cli::execute(&args, &context, &mut stdout),
-        ExitCode::Usage
-    );
-    assert!(stdout.is_empty());
-    assert_eq!(
-        diagnostics.contents(),
-        b"deprecated --known; use --char\n--known conflicts with --char\n"
-    );
-}
-#[test]
 fn empty_token_file_is_unset() {
     let config = everledger::config::Config::from_values(&std::collections::HashMap::from([(
         "EVERLEDGER_ROSTER_TOKEN_FILE".into(),

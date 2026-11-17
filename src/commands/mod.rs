@@ -20,7 +20,7 @@ pub struct CommandOutput {
     pub data: Document,
     pub lines: Vec<String>,
     pub code: ExitCode,
-    pub stale: Option<bool>,
+    pub stale: bool,
     pub source_families: SourceFamilies,
 }
 impl CommandOutput {
@@ -29,7 +29,7 @@ impl CommandOutput {
             data,
             lines,
             code: ExitCode::Answer,
-            stale: None,
+            stale: false,
             source_families: vec![],
         }
     }

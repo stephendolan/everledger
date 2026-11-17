@@ -52,5 +52,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let code = crate::provenance::stale_code(&crate::provenance::sources(&data)?);
     let mut out = CommandOutput::new(data, lines);
     out.code = code;
+    out.stale = code == crate::ExitCode::Stale;
     Ok(out)
 }

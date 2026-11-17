@@ -10,16 +10,8 @@ pub struct Args {
     #[arg(long = "json", help = "one JSON document using API field names")]
     pub json: bool,
 }
-use crate::{
-    Context, Failure, Result, catalogue, commands::CommandOutput, http::Payload, read_roster,
-};
+use crate::{Context, Result, catalogue, commands::CommandOutput, http::Payload, read_roster};
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
-    if args.profession.as_deref() == Some("auctions") {
-        return Err(Failure::usage(format!(
-            "Use: everledger listings --char \"{}\"",
-            args.name.as_deref().unwrap_or("None")
-        )));
-    }
     let (mut data, lines, mut used) = if let Some(name) = &args.name {
         let snapshot = read_roster::character(context, name)?;
         let mut used = crate::provenance::sources(snapshot.payload.document())?;
@@ -45,9 +37,12 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         let used = crate::provenance::sources(p.document())?;
         (p.into_document(), lines, used)
     };
+    let stale = crate::provenance::is_stale(&used);
     data.set(
         "sources",
         crate::document::Document::Array(used.drain(..).map(|s| s.into_document()).collect()),
     )?;
-    Ok(CommandOutput::new(data, lines))
+    let mut output = CommandOutput::new(data, lines);
+    output.stale = stale;
+    Ok(output)
 }

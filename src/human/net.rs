@@ -34,12 +34,6 @@ pub fn lines(t: &Totals, journal: &Journal, by_name: bool) -> Vec<String> {
         "realized profit unknown; holding/materials basis unknown; real posting cycle unverified"
             .into(),
     ];
-    if t.unaccounted == Some(0) {
-        lines.push(format!(
-            "deposits lost {}",
-            copper_money(t.deposits_lost_copper)
-        ));
-    }
     if journal.view().available == Some(false) {
         lines.push(crate::human::events::journal_unavailable(journal));
     }

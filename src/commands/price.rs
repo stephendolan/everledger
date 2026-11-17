@@ -31,8 +31,8 @@ pub struct Latest {
     pub min_buyout: Option<f64>,
     #[serde(rename = "median7d", deserialize_with = "nullable")]
     pub median_7d: Option<f64>,
-    #[serde(deserialize_with = "nullable")]
-    pub quantity: Option<Scalar>,
+    #[serde(deserialize_with = "crate::market::deserialize_quantity")]
+    pub quantity: Option<i64>,
     #[serde(deserialize_with = "nullable")]
     pub auctions: Option<Scalar>,
 }
@@ -131,8 +131,8 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     }
     let lines = crate::human::price::render(item.id, v, &rounded, &vendors);
     crate::catalogue::disclose_item_source(&mut quote, Some(&item), context)?;
-    let code = crate::provenance::stale_code(&crate::provenance::sources(&quote)?);
+    let stale = crate::provenance::is_stale(&crate::provenance::sources(&quote)?);
     let mut out = CommandOutput::new(quote, lines);
-    out.code = code;
+    out.stale = stale;
     Ok(out)
 }

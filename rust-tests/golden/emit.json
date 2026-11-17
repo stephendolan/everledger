@@ -3,6 +3,7 @@
   "data": {
    "sources": []
   },
+  "stale": false,
   "families": {},
   "output": "row\nsource: unknown (age unknown)\n"
  },
@@ -10,10 +11,29 @@
   "data": {
    "sources": []
   },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: unknown (age unknown)\n"
+ },
+ {
+  "data": {
+   "sources": []
+  },
+  "stale": false,
   "families": {
    "family": []
   },
   "output": "row\nsource: unknown (age unknown)\n"
+ },
+ {
+  "data": {
+   "sources": []
+  },
+  "stale": true,
+  "families": {
+   "family": []
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: unknown (age unknown)\n"
  },
  {
   "data": {
@@ -25,6 +45,21 @@
     }
    ]
   },
+  "stale": false,
+  "families": {},
+  "output": "row\nsource: A (saved/data 2026-11-15T12:00:00Z; age 0s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
+     "updated_at": "2026-11-15T12:00:00Z",
+     "stale": true
+    }
+   ]
+  },
+  "stale": true,
   "families": {},
   "output": "row\nstale: data exceeds its freshness limit\nsource: A (saved/data 2026-11-15T12:00:00Z; age 0s)\n"
  },
@@ -38,6 +73,29 @@
     }
    ]
   },
+  "stale": false,
+  "families": {
+   "family": [
+    {
+     "stale": true,
+     "updated_at": "2026-11-15T12:00:00Z",
+     "name": "A"
+    }
+   ]
+  },
+  "output": "row\nsource: family (1 files; oldest age 0s, newest 0s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
+     "updated_at": "2026-11-15T12:00:00Z",
+     "stale": true
+    }
+   ]
+  },
+  "stale": true,
   "families": {
    "family": [
     {
@@ -59,6 +117,7 @@
     }
    ]
   },
+  "stale": false,
   "families": {},
   "output": "row\nsource: Journalator.lua (saved/data 2020-01-01T00:00:00Z; age 216907200s)\n"
  },
@@ -72,6 +131,21 @@
     }
    ]
   },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: Journalator.lua (saved/data 2020-01-01T00:00:00Z; age 216907200s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "file": "Journalator.lua",
+     "mtime": "2020-01-01T00:00:00Z",
+     "stale": true
+    }
+   ]
+  },
+  "stale": false,
   "families": {
    "family": [
     {
@@ -82,6 +156,28 @@
    ]
   },
   "output": "row\nsource: family (1 files; oldest age 216907200s, newest 216907200s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "file": "Journalator.lua",
+     "mtime": "2020-01-01T00:00:00Z",
+     "stale": true
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "stale": true,
+     "mtime": "2020-01-01T00:00:00Z",
+     "file": "Journalator.lua"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (1 files; oldest age 216907200s, newest 216907200s)\n"
  },
  {
   "data": {
@@ -103,6 +199,7 @@
     }
    ]
   },
+  "stale": false,
   "families": {},
   "output": "row\nsource: A (saved/data a..z; age 5-20s, some unknown)\n"
  },
@@ -126,6 +223,31 @@
     }
    ]
   },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: A (saved/data a..z; age 5-20s, some unknown)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
+     "saved_at": "z",
+     "age_seconds": 5
+    },
+    {
+     "name": "A",
+     "saved_at": "a",
+     "age_seconds": 20
+    },
+    {
+     "name": "A",
+     "mtime": null,
+     "age_seconds": null
+    }
+   ]
+  },
+  "stale": false,
   "families": {
    "family": [
     {
@@ -151,6 +273,48 @@
   "data": {
    "sources": [
     {
+     "name": "A",
+     "saved_at": "z",
+     "age_seconds": 5
+    },
+    {
+     "name": "A",
+     "saved_at": "a",
+     "age_seconds": 20
+    },
+    {
+     "name": "A",
+     "mtime": null,
+     "age_seconds": null
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "age_seconds": 5,
+     "saved_at": "z",
+     "name": "A"
+    },
+    {
+     "age_seconds": 20,
+     "saved_at": "a",
+     "name": "A"
+    },
+    {
+     "age_seconds": null,
+     "mtime": null,
+     "name": "A"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (1 files; oldest age 20s, newest 5s, some unknown)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
      "file": "/a/A.lua",
      "file_age_seconds": 3,
      "detail": "Data from A; x"
@@ -162,6 +326,7 @@
     }
    ]
   },
+  "stale": false,
   "families": {},
   "output": "row\nsource: A.lua (saved/data unknown; age 3s); Data from A; B.lua (saved/data unknown; age 10s); Data from B\n"
  },
@@ -180,6 +345,26 @@
     }
    ]
   },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: A.lua (saved/data unknown; age 3s); Data from A; B.lua (saved/data unknown; age 10s); Data from B\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "file": "/a/A.lua",
+     "file_age_seconds": 3,
+     "detail": "Data from A; x"
+    },
+    {
+     "file": "/b/B.lua",
+     "age_seconds": 10,
+     "detail": "Data from B; y"
+    }
+   ]
+  },
+  "stale": false,
   "families": {
    "family": [
     {
@@ -200,6 +385,38 @@
   "data": {
    "sources": [
     {
+     "file": "/a/A.lua",
+     "file_age_seconds": 3,
+     "detail": "Data from A; x"
+    },
+    {
+     "file": "/b/B.lua",
+     "age_seconds": 10,
+     "detail": "Data from B; y"
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "detail": "Data from A; x",
+     "file_age_seconds": 3,
+     "file": "/a/A.lua"
+    },
+    {
+     "detail": "Data from B; y",
+     "age_seconds": 10,
+     "file": "/b/B.lua"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (2 files; oldest age 10s, newest 3s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
      "name": "A",
      "age_seconds": 5,
      "file_age_seconds": null,
@@ -207,6 +424,7 @@
     }
    ]
   },
+  "stale": false,
   "families": {},
   "output": "row\nsource: A (saved/data unknown; age unknown)\n"
  },
@@ -221,6 +439,22 @@
     }
    ]
   },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: A (saved/data unknown; age unknown)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
+     "age_seconds": 5,
+     "file_age_seconds": null,
+     "scan_age_seconds": null
+    }
+   ]
+  },
+  "stale": false,
   "families": {
    "family": [
     {
@@ -238,6 +472,30 @@
    "sources": [
     {
      "name": "A",
+     "age_seconds": 5,
+     "file_age_seconds": null,
+     "scan_age_seconds": null
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "scan_age_seconds": null,
+     "file_age_seconds": null,
+     "age_seconds": 5,
+     "name": "A"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (1 files; age unknown)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
      "age_seconds": 1.0
     },
     {
@@ -246,6 +504,7 @@
     }
    ]
   },
+  "stale": false,
   "families": {},
   "output": "row\nsource: A (saved/data unknown; age 1.0s); B (saved/data unknown; age 1.25s)\n"
  },
@@ -262,6 +521,24 @@
     }
    ]
   },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: A (saved/data unknown; age 1.0s); B (saved/data unknown; age 1.25s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
+     "age_seconds": 1.0
+    },
+    {
+     "name": "B",
+     "age_seconds": 1.25
+    }
+   ]
+  },
+  "stale": false,
   "families": {
    "family": [
     {
@@ -275,5 +552,183 @@
    ]
   },
   "output": "row\nsource: family (2 files; oldest age 1.25s, newest 1.0s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "A",
+     "age_seconds": 1.0
+    },
+    {
+     "name": "B",
+     "age_seconds": 1.25
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "age_seconds": 1.0,
+     "name": "A"
+    },
+    {
+     "age_seconds": 1.25,
+     "name": "B"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (2 files; oldest age 1.25s, newest 1.0s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "vendor",
+     "fetched_at": "2026-11-15T11:00:00Z",
+     "age_seconds": null
+    }
+   ]
+  },
+  "stale": false,
+  "families": {},
+  "output": "row\nsource: vendor (saved/data 2026-11-15T11:00:00Z; age 3600s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "vendor",
+     "fetched_at": "2026-11-15T11:00:00Z",
+     "age_seconds": null
+    }
+   ]
+  },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: vendor (saved/data 2026-11-15T11:00:00Z; age 3600s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "vendor",
+     "fetched_at": "2026-11-15T11:00:00Z",
+     "age_seconds": null
+    }
+   ]
+  },
+  "stale": false,
+  "families": {
+   "family": [
+    {
+     "age_seconds": null,
+     "fetched_at": "2026-11-15T11:00:00Z",
+     "name": "vendor"
+    }
+   ]
+  },
+  "output": "row\nsource: family (1 files; oldest age 3600s, newest 3600s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "vendor",
+     "fetched_at": "2026-11-15T11:00:00Z",
+     "age_seconds": null
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "age_seconds": null,
+     "fetched_at": "2026-11-15T11:00:00Z",
+     "name": "vendor"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (1 files; oldest age 3600s, newest 3600s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "scan",
+     "scanned_at": "2026-11-15T10:00:00Z",
+     "scan_age_seconds": null,
+     "age_seconds": 5
+    }
+   ]
+  },
+  "stale": false,
+  "families": {},
+  "output": "row\nsource: scan (saved/data 2026-11-15T10:00:00Z; age 7200s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "scan",
+     "scanned_at": "2026-11-15T10:00:00Z",
+     "scan_age_seconds": null,
+     "age_seconds": 5
+    }
+   ]
+  },
+  "stale": true,
+  "families": {},
+  "output": "row\nstale: data exceeds its freshness limit\nsource: scan (saved/data 2026-11-15T10:00:00Z; age 7200s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "scan",
+     "scanned_at": "2026-11-15T10:00:00Z",
+     "scan_age_seconds": null,
+     "age_seconds": 5
+    }
+   ]
+  },
+  "stale": false,
+  "families": {
+   "family": [
+    {
+     "age_seconds": 5,
+     "scan_age_seconds": null,
+     "scanned_at": "2026-11-15T10:00:00Z",
+     "name": "scan"
+    }
+   ]
+  },
+  "output": "row\nsource: family (1 files; oldest age 7200s, newest 7200s)\n"
+ },
+ {
+  "data": {
+   "sources": [
+    {
+     "name": "scan",
+     "scanned_at": "2026-11-15T10:00:00Z",
+     "scan_age_seconds": null,
+     "age_seconds": 5
+    }
+   ]
+  },
+  "stale": true,
+  "families": {
+   "family": [
+    {
+     "age_seconds": 5,
+     "scan_age_seconds": null,
+     "scanned_at": "2026-11-15T10:00:00Z",
+     "name": "scan"
+    }
+   ]
+  },
+  "output": "row\nstale: data exceeds its freshness limit\nsource: family (1 files; oldest age 7200s, newest 7200s)\n"
  }
 ]

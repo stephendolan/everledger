@@ -84,7 +84,8 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             lines.push(crate::human::recipe::unchecked(&e));
         }
     }
-    Ok(CommandOutput::new(
+    let stale = crate::provenance::is_stale(&used);
+    let mut output = CommandOutput::new(
         Document::object([
             ("recipes", Document::Array(rows)),
             (
@@ -93,5 +94,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             ),
         ]),
         lines,
-    ))
+    );
+    output.stale = stale;
+    Ok(output)
 }
