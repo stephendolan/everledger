@@ -43,21 +43,21 @@ decoded, with the exit code Python would have produced. This covers a
 container where a scalar belongs, a number where a string belongs, and a
 missing required field.
 
-The ForeverDB attempt journal is one such payload. Its `spends` must be a
-list, and each spend needs a `finished_at` and a `requests` that is a
-non-negative integer. Python reads `requests` only while it syncs, so `status`
-and `vendors` accept a spend without one, and its arithmetic takes a fraction
-or a negative number as written: a negative one enlarges the budget. Rust
-refuses that journal wherever it is read, with exit code 1.
+The ForeverDB attempt journal is one such payload. A sync needs its `spends`
+to be a list in which each spend has a `finished_at` and a `requests` that is a
+non-negative integer. Python's arithmetic takes a fraction, a boolean, or a
+negative number as written, and a negative one enlarges the budget; it also
+takes an object in place of the list. Rust refuses that journal when it syncs,
+with exit code 1.
 
 ## Inputs the port does not accept
 
 - **Non-ASCII digits.** Python reads any Unicode decimal digit as a number, in
   integer arguments, the daily request cap, numeric item IDs, relative time
-  selectors (`٣d`), epoch strings, and vendor price text. Rust reads ASCII
-  digits.
-- **Integers beyond 64 bits** in integer arguments and the daily request cap.
-  Python integers are unbounded.
+  selectors (`٣d`), epoch strings, vendor price text, and a quantity sent as
+  text. Rust reads ASCII digits.
+- **Integers beyond 64 bits** in integer arguments, the daily request cap, and
+  quantities. Python integers are unbounded.
 - **Unpaired UTF-16 surrogates** in JSON strings. They cannot be Rust strings.
 - **UTF-16 and UTF-32 JSON bodies.** Rust accepts UTF-8, with or without a
   byte-order mark.
@@ -65,10 +65,8 @@ refuses that journal wherever it is read, with exit code 1.
 ## A stricter ForeverDB index
 
 A ForeverDB index activates only when its counts agree with its contents: the
-record count with the vendor total, the item count with the items, and the
-record count with the `details` block when the index carries one. Python
-checks the format number alone and never reads `details`, so an index without
-that block is whole to both. Every index either implementation publishes
+record count with the vendor total, and the item count with the items. Python
+checks the format number alone. Every index either implementation publishes
 passes; the difference shows only for a file edited or damaged after
 publication, which Rust treats as absent and answers from the ninja cache.
 
@@ -99,11 +97,13 @@ SIGINT ends one. Both record what the attempt spent. They differ at the edges:
   on its unbounded integers that each interpreter can reconfigure. Rust reads
   the number when it fits 64 bits, so an integer argument or a daily request cap
   padded with thousands of leading zeros is accepted.
-- A `retry_after` that no date can hold, which is anything past the year 9999,
-  kills the reference with an uncaught overflow: exit code 1, no retry, and a
-  journal left open, which the next reader counts from the last request start.
-  Rust ends the attempt with exit code 1 and no retry as well, and closes the
-  journal as failed.
+- An empty container in a cache file is falsy to Python, which then takes
+  neither the path for a usable file nor the one for a damaged file. An empty
+  object as `pending.json` is not discarded as a checkpoint of the wrong
+  format, and every sync fails on its missing `sync_id` until the file is
+  removed. An empty list as `attempt.json` reads as no journal to `status` and
+  `vendors`. Rust discards that checkpoint and starts a new one, and refuses
+  that journal.
 - A negative amount that rounds to zero copper prints `0c`; Python prints `-0c`.
 - Python finds a vendor page's `Last-Modified` header only in that exact letter
   case and otherwise reports no publication time. Rust finds it in any case.

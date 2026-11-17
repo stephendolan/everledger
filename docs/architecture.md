@@ -52,9 +52,15 @@ coverage (`ItemAbsent`, `PinsAbsent`, `Sellers`), and the vendor answer
 cursor, and an opaque page cursor are three different types.
 
 **Human strings come from `src/human/` only.** A command returns a
-`CommandOutput`: the document, the human lines, and the exit code.
-`human::emit` writes the document, or the lines followed by the stale notice
-and the single `source:` footer.
+`CommandOutput`: the document, the human lines, whether the answer is stale,
+and an exit code for what staleness does not decide. `human::emit` writes the
+document, or the lines followed by the stale notice and the single `source:`
+footer.
+
+**One decision gives the stale notice and exit code 3.** Each command decides
+from the sources it holds to a freshness limit whether its answer is stale.
+That flag prints the notice and makes the exit code 3; nothing is inferred
+from the sources afterwards.
 
 **Warnings are written when they happen.** A command writes a deprecation,
 resync notice, or cache notice through `context.diagnostics`, so the line
@@ -94,10 +100,26 @@ way:
 - One `flock` on `sync.lock` serializes syncs, including against the Python
   implementation on the same data directory.
 
-`attempt.json` has one reader and one writer. The reader adds the spend of a
-journal that records none for its own attempt (one written before spends
-existed, or one left by a killed attempt) and drops expired spends; the writer
-drops them again. `status` and `vendors` read the journal through that reader.
+A sync loads `attempt.json` through one reader, which adds the spend of an
+attempt that was killed before it finished and drops expired spends. Every
+journal write drops them again. `status` and `vendors` read the file plainly:
+they use its `failed` flag and the last attempt's time and request count, and
+nothing about spends.
+
+A request is reserved before it is counted. The journal is written with the
+next count first, and the counters in memory move only when that write
+succeeds, so a failed write neither counts a request nor sends one.
+
+The sync returns one result on every path: `configured`, `complete`,
+`pending`, `requests`, `total_requests`, `failed`, `deferred`, `status`, and
+`error`. A failed request, mapping, or write is part of that result, and
+`refresh` reports it on stdout with exit code 4. Two things leave by another
+route: a cache file that cannot be decoded, which is an error, and an
+interrupt.
+
+A retryable 502 is retried once. The attempt waits for it only when the wait
+is 300 seconds or less. A longer wait is recorded in the checkpoint as
+`not_before`, the attempt ends pending, and a later attempt takes it up.
 
 The cap is read once, before the arguments, into `config::DailyRequestCap`,
 which cannot be zero. A value that is not a positive integer ends every
