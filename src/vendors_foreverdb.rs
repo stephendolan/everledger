@@ -1,8 +1,8 @@
 use crate::{
     Context, Failure, Result,
-    catalogue::{Item, nullable},
+    catalogue::nullable,
     document::Document,
-    foreverdb::{Index, Seller},
+    foreverdb::{Index, Item, Seller},
     http::Payload,
 };
 use serde::Deserialize;

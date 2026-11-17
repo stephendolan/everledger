@@ -6,7 +6,7 @@ pub mod mapping;
 pub mod transport;
 use crate::{
     Context, Failure, Result,
-    catalogue::OrderedMap,
+    catalogue::{OrderedMap, nullable},
     clock::Clock,
     config::DailyRequestCap,
     document::{Document, JsonMode, Number, dumps},
@@ -71,6 +71,7 @@ fn sync_io(_: std::io::Error) -> Failure {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Item {
     pub id: i64,
+    #[serde(deserialize_with = "nullable")]
     pub name: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
@@ -79,10 +80,13 @@ pub struct Seller {
     pub name: String,
     pub zone: String,
     pub basis: Basis,
+    #[serde(deserialize_with = "nullable")]
     pub title: Option<crate::primitives::Scalar>,
     pub zone_slug: String,
+    #[serde(deserialize_with = "nullable")]
     pub side: Option<crate::primitives::Scalar>,
     pub coords: Vec<Vec<crate::primitives::Scalar>>,
+    #[serde(deserialize_with = "nullable")]
     pub price_copper: Option<crate::Copper>,
     pub stack_price_copper: Option<crate::Copper>,
     pub stack: i64,
@@ -100,6 +104,7 @@ pub struct ItemEntry {
 #[derive(Clone, Debug, Deserialize)]
 pub struct IndexData {
     pub fetched_at: String,
+    #[serde(deserialize_with = "nullable")]
     pub published_at: Option<String>,
     pub record_count: usize,
     pub item_count: usize,
@@ -174,9 +179,11 @@ struct Retry {
 #[derive(Clone, Debug, Deserialize)]
 struct Pending {
     sync_id: String,
+    #[serde(deserialize_with = "nullable")]
     next_offset: Option<usize>,
     vendor_ids: Vec<String>,
     details: OrderedMap<Detail>,
+    #[serde(deserialize_with = "nullable")]
     metadata: Option<Metadata>,
     total_requests: u64,
 }
@@ -559,6 +566,12 @@ fn sync_locked(
     };
     let mut pending: Payload<Pending> =
         Payload::decode(pending, "ForeverDB checkpoint").map_err(SyncFailure::InvalidCache)?;
+    if pending.view().next_offset.is_none() && pending.view().metadata.is_none() {
+        return Err(SyncFailure::InvalidCache(Failure::shape(
+            "ForeverDB checkpoint",
+            "metadata is required after the vendor pages are complete",
+        )));
+    }
     if let Some(a) = &old_attempt
         && a.sync_id.as_deref() == Some(&pending.view().sync_id)
     {

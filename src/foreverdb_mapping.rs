@@ -1,4 +1,7 @@
-use crate::{Copper, Failure, Result, document::Document, http::Payload, primitives::casefold};
+use crate::{
+    Copper, Failure, Result, catalogue::nullable, document::Document, http::Payload,
+    primitives::casefold,
+};
 use serde::{Deserialize, Deserializer, de::Error};
 
 pub const PAGE_SIZE: usize = 100;
@@ -171,6 +174,7 @@ struct Page {
 pub struct Metadata {
     pub build: String,
     pub vendor_total: usize,
+    #[serde(deserialize_with = "nullable")]
     pub published_at: Option<String>,
 }
 impl Metadata {
