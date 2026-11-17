@@ -9,7 +9,10 @@ the oracle's own mapping and snapshot code, then compares and times:
 
 - lookups and status against the complete index;
 - the final attempt of a sync, which fetches the last four details from a
-  fixture and publishes the index.
+  fixture and publishes the index;
+- a whole sync in one attempt, which a daily cap above 1,025 allows: 1,025
+  requests and a checkpoint rewritten after each, growing to full size. Each
+  side runs it once, and the reference takes several minutes.
 
 CANDIDATE needs the `parity-seams` feature. Build it optimized, or the final
 attempt outlasts the engine's process timeout:
@@ -29,7 +32,7 @@ from pathlib import Path
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from parity.engine import Engine, ORIGIN, ROOT, snapshot
+from parity.engine import Engine, Normalizer, ORIGIN, ROOT, compare, snapshot
 from parity.fixture import Fixture
 
 VENDORS = 1014
@@ -150,17 +153,46 @@ def main():
                         Path(directory, stale).unlink()
                 engine.step(f'scale/{name}/{index}', argv, env, fixture, directory, forbidden=('secret-fixture',))
 
+    def single_attempt():
+        argv = ['refresh', 'catalogue', '--json']
+        raised = dict(env, EVERLEDGER_FOREVERDB_DAILY_REQUESTS='5000')
+        with tempfile.TemporaryDirectory(prefix='everledger-scale-') as directory, \
+                tempfile.TemporaryDirectory(prefix='everledger-scale-controls-') as controls:
+            Path(directory, 'catalogue.json').write_bytes(catalogue)
+            initial = snapshot(directory)
+            row, sides = [' '.join(argv) + ' (whole sync)'], []
+            engine.timeout = 3600
+            try:
+                for side in (oracle, candidate):
+                    started = time.perf_counter()
+                    sides.append(engine.capture(side, argv, raised, fixture, directory, initial, Path(controls)))
+                    row.append(time.perf_counter() - started)
+            finally:
+                engine.timeout = 30
+            timings.append(row)
+            state, differences = compare(Normalizer().transcript(sides[0]), Normalizer().transcript(sides[1]))
+            engine.records.append({'name': 'scale/single-attempt/0/replay', 'command': 'refresh', 'state': state,
+                                   'differences': differences, 'oracle': sides[0], 'candidate': sides[1]})
+            # Equal transcripts prove nothing if both sides stopped early.
+            sent = sum(request['path'].startswith('/api/v1/') for request in sides[0]['requests'])
+            if sent != len(forever['pages']) + VENDORS or 'vendors/foreverdb.net/index.json' not in sides[0]['files']:
+                engine.errors.append(f'scale/single-attempt: the reference sent {sent} requests and did not finish the sync')
+            for side, transcript in zip(('oracle', 'candidate'), sides):
+                if any(b'secret-fixture' in raw for raw in [transcript['stdout'], transcript['stderr'], *transcript['files'].values()]):
+                    engine.errors.append(f'scale/single-attempt: {side} leaked sentinel')
+
     try:
         scenario('complete-index', complete, [
             ['vendors', busiest, '--json'], ['vendors', busiest, '--in', 'IF'], ['vendors', sample[0]],
             ['vendors', '999999', '--json'], ['status', '--json']])
         scenario('final-attempt', final_attempt, [['refresh', 'catalogue', '--json']])
+        single_attempt()
     finally:
         fixture.close()
         engine.close()
-    print(f'{"invocation":<34} {"oracle s":>9} {"candidate s":>12} {"ratio":>7}')
+    print(f'{"invocation":<40} {"oracle s":>9} {"candidate s":>12} {"ratio":>7}')
     for label, a, b in timings:
-        print(f'{label:<34} {a:9.2f} {b:12.2f} {b / a:7.2f}')
+        print(f'{label:<40} {a:9.2f} {b:12.2f} {b / a:7.2f}')
     states = [row['state'] for row in engine.records]
     for row in engine.records:
         if row['state'] == 'unexplained':

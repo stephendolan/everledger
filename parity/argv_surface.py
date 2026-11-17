@@ -65,7 +65,8 @@ for name, (positionals, flags) in COMMANDS.items():
             cases.append(argv)
             shuffled = [name] + [p for f in chosen for p in f.split()] + positionals
             cases.append(shuffled)
-cases += [['events', '--limit', v] for v in ['0', '-1', '-0', '+5', ' 5', '5 ', '1_000', '5.0', 'abc', '', '٣', '0x10', '1e3', '99999999999999999999']]
+cases += [['events', '--limit', v] for v in ['0', '-1', '-0', '+5', ' 5', '5 ', '1_000', '5.0', 'abc', '', '٣', '0x10', '1e3', '99999999999999999999',
+                                                 '0' * 4400 + '5']]
 cases += [['recipe', 'Red', '--skill', v] for v in ['15', '-3', '+3', 'x', '1.5', '']]
 cases += [['bridge', 'tailoring'] + list(p) for p in [('1',), ('1', '20', '30'), ('a', '20'), ('1', 'b'), ('-1', '20'),
                                                        ('+1', '20'), ('1', '-20'), (' 1', '20'), ('1.0', '20'), ('', '20')]]
@@ -124,12 +125,20 @@ INTEGER_OPTIONS = ('--limit', '--skill', '--level')
 I64 = range(-2**63, 2**63)
 
 
-def sanctioned(argv):
-    """Name the sanctioned reason a candidate may reject an argv that argparse accepts.
+def digit_guard(value):
+    """CPython refuses a decimal string of more than 4,300 digits whatever its value; the port reads one that fits i64."""
+    digits = value.strip().lstrip('+-').replace('_', '')
+    return len(digits) > 4300 and digits.isascii() and digits.isdigit() and len(digits.lstrip('0')) <= 18
 
-    The port types command-line integers as i64 written in ASCII digits. Python's
-    int() also takes any Unicode decimal digit and has no upper bound.
-    """
+
+def brief(row):
+    """A row for printing, with any very long argument or value shortened."""
+    short = lambda text: text if len(text) <= 60 else f'{text[:12]}... ({len(text)} characters)'
+    return json.dumps({key: [short(v) for v in value] if key == 'argv' else short(value) if key == 'value' else value
+                       for key, value in row.items()}, ensure_ascii=False)
+
+
+def integer_values(argv):
     values = []
     for index, arg in enumerate(argv):
         for option in INTEGER_OPTIONS:
@@ -139,7 +148,16 @@ def sanctioned(argv):
                 values.append(arg.split('=', 1)[1])
     if argv[:1] == ['bridge']:
         values += argv[2:4]
-    for value in values:
+    return values
+
+
+def sanctioned(argv):
+    """Name the sanctioned reason a candidate may reject an argv that argparse accepts.
+
+    The port types command-line integers as i64 written in ASCII digits. Python's
+    int() also takes any Unicode decimal digit and has no upper bound.
+    """
+    for value in integer_values(argv):
         try:
             number = int(value)
         except ValueError:
@@ -160,7 +178,12 @@ for argv in unique:
     results.append(row)
     if row['candidate'] == row['oracle']:
         continue
-    reason = sanctioned(argv) if (row['oracle'], row['candidate']) == ('accepted', 'parser-reject') else None
+    pair = (row['oracle'], row['candidate'])
+    reason = None
+    if pair == ('accepted', 'parser-reject'):
+        reason = sanctioned(argv)
+    elif pair == ('parser-reject', 'accepted') and any(digit_guard(value) for value in integer_values(argv)):
+        reason = 'more than 4,300 digits in an integer argument'
     if reason:
         exempt.append(dict(row, sanctioned=reason))
     else:
@@ -171,7 +194,7 @@ REFUSAL = (2, '', CAP + ' must be a positive integer\n')
 CAP_VALUES = ['1', '36', '5000', ' 40 ', '\t40\n', '\x0b40', '40\xa0', '\u200940', '+40', '4_0', '0040', '4294967296',
               '9223372036854775807', '', ' ', 'invalid', '1.5', '40.', '0', '-0', '+0', '00', '-1', '-40', '1e3', '0x24',
               '4 0', '_40', '40_', '4__0', '+ 40', '--40', '+-40', '\x1c40', 'None', 'true', '36,000', '٤٠', '４０', '4٠',
-              '9223372036854775808', '1' + '0' * 30]
+              '9223372036854775808', '1' + '0' * 30, '0' * 4400 + '40']
 
 
 def cap_class(result):
@@ -200,7 +223,12 @@ for value in CAP_VALUES:
     cap_rows.append(row)
     if row['oracle'] == row['candidate'] != 'other':
         continue
-    reason = cap_sanctioned(value) if (row['oracle'], row['candidate']) == ('accepted', 'refused') else None
+    pair = (row['oracle'], row['candidate'])
+    reason = None
+    if pair == ('accepted', 'refused'):
+        reason = cap_sanctioned(value)
+    elif pair == ('refused', 'accepted') and digit_guard(value):
+        reason = 'more than 4,300 digits in the daily cap'
     if reason:
         cap_exempt.append(dict(row, sanctioned=reason))
     else:
@@ -219,18 +247,18 @@ for row in results:
 print('cases', len(results), 'oracle classes', summary)
 print('sanctioned', len(exempt))
 for row in exempt:
-    print('  ', json.dumps(row, ensure_ascii=False))
+    print('  ', brief(row))
 print('mismatches', len(mismatches))
 for row in mismatches:
-    print('  ', json.dumps(row, ensure_ascii=False))
+    print('  ', brief(row))
 cap_summary = {}
 for row in cap_rows:
     cap_summary[row['oracle']] = cap_summary.get(row['oracle'], 0) + 1
 print('daily cap values', len(cap_rows), 'oracle classes', cap_summary, '| refused value on', refused_everywhere, 'argvs')
 print('sanctioned', len(cap_exempt))
 for row in cap_exempt:
-    print('  ', json.dumps(row, ensure_ascii=False))
+    print('  ', brief(row))
 print('mismatches', len(cap_mismatches))
 for row in cap_mismatches:
-    print('  ', json.dumps(row, ensure_ascii=False))
+    print('  ', brief(row))
 sys.exit(1 if mismatches or cap_mismatches else 0)

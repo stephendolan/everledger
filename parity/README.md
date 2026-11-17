@@ -179,7 +179,16 @@ parser, answered with help, or accepted. It covers missing values, repeated and
 abbreviated options, split positionals, negative numbers, and separators, which
 the replayed tests barely touch. The port types command-line integers as i64 in
 ASCII digits, so a candidate may reject the Unicode-digit and unbounded integers
-that Python's `int()` accepts; the script reports each such case as sanctioned.
+that Python's `int()` accepts, and may accept a small integer written in more
+than the 4,300 digits CPython converts; the script reports each such case as
+sanctioned.
+
+The script also covers the one setting read before the arguments, the daily
+request cap. It classifies some forty values of
+`EVERLEDGER_FOREVERDB_DAILY_REQUESTS` on both sides as refused or accepted, and
+requires a refused value to end a sample of argument vectors with the same exit
+status, stdout, and stderr on both sides. The same sanctioned integer forms
+apply to the cap.
 
 ## Differential fuzz
 
@@ -200,8 +209,11 @@ The `sync` suite drives `refresh catalogue` through several attempts per case:
 random profession pages for the catalogue build, a random ForeverDB dataset of
 up to 120 vendors, scripted failures at random request indices (retryable and
 plain 502, 503, 401, 302, bodies that are not JSON or not the mapped shape),
-and a day passing or not between attempts. Every step also asserts the fixture
-key is absent from stdout, stderr, and every file.
+and a day passing or not between attempts. Each attempt runs under its own
+daily cap: unset, a value from 1 to 5000 in several spellings, or now and then
+one the CLI refuses. Scripted failures are aimed at the cap's last request and
+the one before it. Every step also asserts the fixture key is absent from
+stdout, stderr, and every file.
 
 A world never leaves the contract, so the oracle never fails internally on
 one, and every difference is a finding. `--seed` and `--only` reproduce a case.
@@ -211,13 +223,26 @@ one, and every difference is a finding. `--seed` and `--only` reproduce a case.
 `scale.py` builds a ForeverDB index of 1,014 vendors (about 35 MB) and a
 checkpoint four details short of complete, both with the oracle's own mapping
 and snapshot code. It compares lookups, `status`, and the final sync attempt
-through the engine, and prints each side's wall time. The replayed corpus and
-the fuzz use small datasets, so this is the only check of parity and speed at
-the size a finished sync produces.
+through the engine, and prints each side's wall time. It then runs a whole
+sync in one attempt, which a daily cap above 1,025 allows: 1,025 requests, with
+the checkpoint rewritten after each one as it grows to full size. The reference
+takes several minutes over that attempt. The replayed corpus and the fuzz use
+small datasets, so this is the only check of parity and speed at the size a
+finished sync produces.
 
 ```sh
 cargo build --release --features parity-seams --target-dir target/seams
 python3 parity/scale.py target/seams/release/everledger
+```
+
+## Recovery after every request
+
+`scripts/check_foreverdb_recovery.py` kills a sync at each of its six requests,
+with SIGINT and with SIGKILL, on both transports, and compares what the next
+attempts do with the journal and checkpoint left behind.
+
+```sh
+python3 scripts/check_foreverdb_recovery.py target/seams/debug/everledger
 ```
 
 ## One data directory, two implementations

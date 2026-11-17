@@ -11,7 +11,9 @@ runs both at once. This does:
 - **Takeover.** A 40-vendor sync needs two daily attempts. One implementation
   makes the first and the other finishes it, in both orders. The published
   index, the journal, and the finishing attempt's output must equal those of
-  the reference making both attempts.
+  the reference making both attempts. The two attempts run at the default
+  daily cap, and again with a different cap each, as two wrappers with
+  different environments would.
 - **Lock.** One implementation holds the sync lock mid-request while the other
   starts a refresh on the same directory. The second must wait, send no
   ForeverDB request, and then defer to the cooldown, in both orders.
@@ -50,9 +52,11 @@ def fixture():
     return Fixture(types.SimpleNamespace(routes=routes, requests=[], event_contract=None))
 
 
-def environment():
+def environment(cap=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith('EVERLEDGER_')}
     env.update(TZ='UTC', EVERLEDGER_ROSTER_TOKEN='fixture', EVERLEDGER_FOREVERDB_API_KEY='secret-fixture')
+    if cap is not None:
+        env['EVERLEDGER_FOREVERDB_DAILY_REQUESTS'] = cap
     return env
 
 
@@ -63,17 +67,17 @@ def a_day_passes(directory):
     path.write_text(json.dumps(state))
 
 
-def takeover(engine, first, second):
-    """Two attempts on one directory, each by the named side; the finishing attempt's observables."""
+def takeover(engine, first, second, caps):
+    """Two attempts on one directory, each by the named side under its own cap; the finishing attempt's observables."""
     server = fixture()
     server.large()
     try:
         with tempfile.TemporaryDirectory(prefix='everledger-handoff-') as directory, \
                 tempfile.TemporaryDirectory(prefix='everledger-handoff-controls-') as controls:
             argv = ['refresh', 'catalogue', '--json']
-            opening = engine.capture(first, argv, environment(), server, directory, snapshot(directory), Path(controls))
+            opening = engine.capture(first, argv, environment(caps[0]), server, directory, snapshot(directory), Path(controls))
             a_day_passes(directory)
-            closing = engine.capture(second, argv, environment(), server, directory, snapshot(directory), Path(controls))
+            closing = engine.capture(second, argv, environment(caps[1]), server, directory, snapshot(directory), Path(controls))
             return opening, Normalizer().transcript(closing)
     finally:
         server.close()
@@ -125,18 +129,21 @@ def main():
     candidate = [str(Path(sys.argv[1]).resolve())]
     engine = Engine(candidate)
     try:
-        _, reference = takeover(engine, ORACLE, ORACLE)
-        for first, second, label in ((ORACLE, candidate, 'Rust finishes a sync Python started'),
-                                     (candidate, ORACLE, 'Python finishes a sync Rust started')):
-            opening, closing = takeover(engine, first, second)
-            requests = sum(row['path'].startswith('/api/v1/') for row in opening['requests'])
-            check(requests == 36, f'{label}: the first attempt spends the 36-request cap')
-            for name in SYNC_FILES:
-                check(closing['files'].get(name) == reference['files'].get(name) and name in closing['files'],
-                      f'{label}: {name.rsplit("/", 1)[1]} equals the all-Python result')
-            check('vendors/foreverdb.net/pending.json' not in closing['files'], f'{label}: the checkpoint is gone')
-            for field in ('exit_code', 'stdout', 'requests', 'sleep_log'):
-                check(closing[field] == reference[field], f'{label}: finishing attempt has the same {field}')
+        # The cap of each attempt, and the requests the first one then spends on 40 vendors.
+        for caps, spent in (((None, None), 36), ((None, '5000'), 36), (('7', None), 7)):
+            _, reference = takeover(engine, ORACLE, ORACLE, caps)
+            for first, second, order in ((ORACLE, candidate, 'Rust finishes a sync Python started'),
+                                         (candidate, ORACLE, 'Python finishes a sync Rust started')):
+                label = f'{order} (caps {caps[0] or "default"}, then {caps[1] or "default"})'
+                opening, closing = takeover(engine, first, second, caps)
+                requests = sum(row['path'].startswith('/api/v1/') for row in opening['requests'])
+                check(requests == spent, f'{label}: the first attempt spends its {spent}-request cap')
+                for name in SYNC_FILES:
+                    check(closing['files'].get(name) == reference['files'].get(name) and name in closing['files'],
+                          f'{label}: {name.rsplit("/", 1)[1]} equals the all-Python result')
+                check('vendors/foreverdb.net/pending.json' not in closing['files'], f'{label}: the checkpoint is gone')
+                for field in ('exit_code', 'stdout', 'requests', 'sleep_log'):
+                    check(closing[field] == reference[field], f'{label}: finishing attempt has the same {field}')
         lock(engine, ORACLE, candidate, 'Python', 'Rust')
         lock(engine, candidate, ORACLE, 'Rust', 'Python')
     finally:

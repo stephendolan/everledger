@@ -249,6 +249,7 @@ class Engine:
         self.previous = {}
         self.candidate_files = {}
         self.normalizers = [Normalizer(), Normalizer()]
+        self.timeout = 30  # seconds one invocation may run
         self.dead_proxy = socket.socket()
         self.dead_proxy.bind(('127.0.0.1', 0))  # bound, deliberately not listening
 
@@ -300,7 +301,7 @@ class Engine:
                 stdout, stderr = process.communicate(timeout=15)
                 fixture.release.set()
             else:
-                stdout, stderr = process.communicate(timeout=30)
+                stdout, stderr = process.communicate(timeout=self.timeout)
         except BaseException:
             os.killpg(process.pid, signal.SIGKILL)
             fixture.release.set()

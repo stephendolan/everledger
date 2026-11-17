@@ -546,11 +546,17 @@ def vendor_dataset(rng):
     return {'pages': pages, 'details': {str(n): detail(n) for n in ids}}, item_ids
 
 
-def sync_script(rng):
+CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
+CAPS = [None, None, None, None, '1', '2', '3', '7', '36', '37', '50', '5000', '5000', ' 12 ', '+9', '1_0',
+        '4294967297', 'refused']  # 2**32 + 1 is 1 to a cap narrowed to 32 bits
+REFUSED_CAPS = ['', '0', '-3', 'x', '1.5']
+
+
+def sync_script(rng, cap):
     """Scripted ForeverDB responses for one attempt, keyed by request index."""
     script = {}
     for _ in range(rng.choice([0, 0, 0, 1, 1, 2])):
-        script[rng.choice([1, 1, 2, 3, 5, 9, 20, 36])] = rng.choice([
+        script[rng.choice([1, 1, 2, 3, 5, 9, 20, cap, cap, max(cap - 1, 1)])] = rng.choice([
             {'status': 502, 'body': {'retryable': True, 'retry_after': rng.choice([0, 30, 60, 75, 90.5, -5, 'soon'])}},
             {'status': 502, 'body': {'retryable': True}},
             {'status': 502, 'body': {'retryable': False}},
@@ -592,7 +598,19 @@ def sync_case(engine, rng, label, commands):
             attempt = Path(directory, 'vendors/foreverdb.net/attempt.json')
             step = 0
             for _ in range(rng.randrange(2, 6)):
-                fixture.scripts = sync_script(rng)
+                # Each attempt runs under its own cap: unset, a value, or one the CLI refuses.
+                setting = rng.choice(CAPS)
+                if setting == 'refused':
+                    setting = rng.choice(REFUSED_CAPS)
+                if setting is None:
+                    env.pop(CAP, None)
+                else:
+                    env[CAP] = setting
+                try:
+                    cap = int(setting or '36')
+                except ValueError:
+                    cap = 36
+                fixture.scripts = sync_script(rng, cap if cap > 0 else 36)
                 for argv in ([['refresh', 'catalogue', '--json']]
                              + [['vendors', str(rng.choice(item_ids + [999999])), *rng.choice([[], ['--json'], ['--in', 'IF']])]
                                 for _ in range(rng.choice([0, 1, 2]))]
