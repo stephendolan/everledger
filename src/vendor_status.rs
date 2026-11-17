@@ -157,7 +157,7 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
         ),
         (
             "last_attempt_requests",
-            i64::from(attempt.as_ref().map_or(0, |a| a.requests)).into(),
+            Document::from_typed(&attempt.as_ref().map_or(0, |a| a.requests))?,
         ),
         (
             "pending",

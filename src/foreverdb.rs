@@ -76,7 +76,7 @@ pub type Index = Payload<IndexData>;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Attempt {
     pub attempted_at: String,
-    pub requests: u32,
+    pub requests: u64,
     pub sync_id: Option<String>,
     #[serde(default)]
     pub failed: bool,
@@ -118,7 +118,7 @@ pub struct SyncData {
     pub configured: bool,
     pub complete: bool,
     #[serde(default)]
-    pub requests: u32,
+    pub requests: u64,
     #[serde(default)]
     pub failed: bool,
 }
@@ -325,7 +325,7 @@ fn sync_locked(
     let result = (|| {
         transport.validate(context)?;
         while let Some(offset) = engine.pending.view().next_offset {
-            if engine.attempt.view().requests >= crate::config::FOREVERDB_DAILY_REQUESTS {
+            if engine.attempt.view().requests >= context.config.foreverdb_daily_requests.get() {
                 break;
             }
             let Some(doc) = engine.get(&format!(
@@ -368,7 +368,7 @@ fn sync_locked(
                 if engine.pending.view().details.get(&id).is_some() {
                     continue;
                 }
-                if engine.attempt.view().requests >= crate::config::FOREVERDB_DAILY_REQUESTS {
+                if engine.attempt.view().requests >= context.config.foreverdb_daily_requests.get() {
                     break;
                 }
                 let Some(doc) = engine.get(&format!("/api/v1/vendors/{id}"))? else {
@@ -405,7 +405,10 @@ fn sync_locked(
                 ("configured", true.into()),
                 ("complete", complete.into()),
                 ("pending", (!complete).into()),
-                ("requests", i64::from(engine.attempt.view().requests).into()),
+                (
+                    "requests",
+                    Document::from_typed(&engine.attempt.view().requests)?,
+                ),
                 (
                     "total_requests",
                     Document::from_typed(&engine.pending.view().total_requests)?,
@@ -456,7 +459,7 @@ impl Engine<'_, '_> {
     }
     fn get(&mut self, path: &str) -> Result<Option<Document>> {
         loop {
-            if self.attempt.view().requests >= crate::config::FOREVERDB_DAILY_REQUESTS {
+            if self.attempt.view().requests >= self.context.config.foreverdb_daily_requests.get() {
                 return Ok(None);
             }
             let retry = self.pending.view().retry.clone();
@@ -472,8 +475,10 @@ impl Engine<'_, '_> {
                     .clock
                     .sleep((INTERVAL - (self.context.clock.monotonic() - last)).max(0.0))?;
             }
-            self.attempt
-                .set("requests", i64::from(self.attempt.view().requests + 1))?;
+            self.attempt.set(
+                "requests",
+                Document::from_typed(&(self.attempt.view().requests + 1))?,
+            )?;
             let total = self
                 .pending
                 .view()

@@ -51,7 +51,7 @@ fn conflict(code: &str) -> Result<Response> {
 }
 fn execute(args: &[&str], http: &Fixture) -> (ExitCode, String, String) {
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
-    let mut config = Config::from_values(&Default::default());
+    let mut config = Config::from_values(&Default::default()).unwrap();
     config.roster_url = "http://127.0.0.1".into();
     config.ahledger_url = "http://127.0.0.1".into();
     config.roster_token = "fixture-token".into();
