@@ -818,17 +818,25 @@ fn sync_checkpoint_write_failure_preserves_request_count() -> Result<()> {
 }
 
 #[test]
-fn failed_sync_skips_unreadable_indexes_and_unrefreshable_ninja_items() -> Result<()> {
+fn failed_sync_skips_index_io_but_preserves_ninja_decode_errors() -> Result<()> {
     let mut world = World::new("36");
     std::fs::create_dir_all(world.path("index.json"))?;
-    let ninja_dir = world.directory.join("vendors/wowforever.ninja");
-    std::fs::create_dir_all(&ninja_dir)?;
-    std::fs::write(ninja_dir.join("2604.json"), "invalid JSON")?;
     let (sources, synced) = everledger::vendors::refresh_cached(&world.context())?;
     assert!(synced.view().failed);
     assert!(sources.is_empty());
-    assert!(world.http.requests.borrow().is_empty());
-    assert!(world.diagnostics.contents().is_empty());
+    let ninja_dir = world.directory.join("vendors/wowforever.ninja");
+    std::fs::create_dir_all(&ninja_dir)?;
+    for bytes in [b"invalid JSON".as_slice(), &[0xff]] {
+        std::fs::write(ninja_dir.join("100.json"), bytes)?;
+        assert_eq!(
+            everledger::vendors::refresh_cached(&world.context())
+                .unwrap_err()
+                .code,
+            everledger::ExitCode::Error
+        );
+        assert!(world.http.requests.borrow().is_empty());
+        assert!(world.diagnostics.contents().is_empty());
+    }
     world.config.foreverdb_api_key = "".into();
     assert!(everledger::vendors::refresh_cached(&world.context()).is_err());
     Ok(())
@@ -941,5 +949,223 @@ fn sync_reads_request_fields_only_for_an_unfinished_attempt() -> Result<()> {
         assert_eq!(result.view().requests, 0);
         assert!(world.http.requests.borrow().is_empty());
     }
+    Ok(())
+}
+
+#[test]
+fn damaged_checkpoint_shapes_stop_without_a_request() -> Result<()> {
+    for raw in ["{}", "[]", "[1]", r#""x""#, "5", "true", "false", "0"] {
+        let world = World::new("36");
+        world.write("pending.json", &parse(raw)?);
+        assert_eq!(
+            world.sync().unwrap_err().code,
+            everledger::ExitCode::Error,
+            "{raw}"
+        );
+        assert!(world.http.requests.borrow().is_empty(), "{raw}");
+    }
+    Ok(())
+}
+
+#[test]
+fn cache_decoding_errors_are_not_failed_sync_results() -> Result<()> {
+    for file in ["index.json", "pending.json", "attempt.json"] {
+        let world = World::new("36");
+        std::fs::create_dir_all(world.path(file).parent().unwrap())?;
+        std::fs::write(world.path(file), [0xff])?;
+        assert_eq!(
+            world.sync().unwrap_err().code,
+            everledger::ExitCode::Error,
+            "{file}"
+        );
+        assert!(world.http.requests.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_retry_times_leave_the_first_attempt_write_open() -> Result<()> {
+    for retry in [
+        r#"{"not_before":"soon"}"#,
+        r#"{"not_before":null}"#,
+        r#""x""#,
+        r#"["2026-11-16T13:00:00Z"]"#,
+    ] {
+        let mut world = World::new("2");
+        assert_eq!(world.sync()?.view().requests, 2);
+        world.advance(86400);
+        world.cap("36");
+        let mut pending = world.disk("pending.json");
+        pending.set("retry", parse(retry)?)?;
+        world.write("pending.json", &pending);
+        let before = std::fs::read(world.path("pending.json"))?;
+        assert_eq!(
+            world.sync().unwrap_err().code,
+            everledger::ExitCode::Error,
+            "{retry}"
+        );
+        assert_eq!(world.http.requests.borrow().len(), 2);
+        assert_eq!(std::fs::read(world.path("pending.json"))?, before);
+        let attempt = world.disk("attempt.json");
+        assert_eq!(attempt.get("requests"), Some(&0i64.into()));
+        assert!(attempt.get("finished_at").is_none());
+        assert!(attempt.get("error").is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn numeric_format_and_empty_retry_resume_the_checkpoint() -> Result<()> {
+    let mut world = World::new("2");
+    assert_eq!(world.sync()?.view().requests, 2);
+    world.advance(86400);
+    world.cap("36");
+    let mut checkpoint = world.disk("pending.json");
+    checkpoint.set("format", 2.0)?;
+    checkpoint.set("retry", parse("{}")?)?;
+    world.write("pending.json", &checkpoint);
+    assert_eq!(world.sync()?.view().requests, 4);
+    assert_eq!(world.http.requests.borrow().len(), 6);
+    Ok(())
+}
+
+#[test]
+fn null_is_absence_and_plain_journal_readers_use_truthiness() -> Result<()> {
+    for file in ["attempt.json", "pending.json", "index.json"] {
+        let world = World::new("36");
+        world.write(file, &Document::Null);
+        assert!(foreverdb::read(&world.context(), file)?.is_none());
+        assert!(world.sync()?.view().complete, "{file}");
+    }
+    for raw in ["null", "[]", "{}", "false", "0", r#""""#] {
+        let world = World::new("36");
+        assert!(world.sync()?.view().complete);
+        world.write("attempt.json", &parse(raw)?);
+        assert!(
+            everledger::vendors::lookup(2604, &world.context()).is_ok(),
+            "{raw}"
+        );
+        assert!(
+            everledger::vendors::status::backend_status(&world.context()).is_ok(),
+            "{raw}"
+        );
+        assert_eq!(world.http.requests.borrow().len(), 6);
+    }
+    Ok(())
+}
+
+#[test]
+fn deferred_checkpoint_uses_truthiness_without_losing_presence() -> Result<()> {
+    for raw in [
+        "{}",
+        "[]",
+        "false",
+        "0",
+        r#""""#,
+        "null",
+        "[1]",
+        r#"{"total_requests":"x"}"#,
+    ] {
+        let world = World::new("6");
+        assert!(world.sync()?.view().complete);
+        world.write("pending.json", &parse(raw)?);
+        if raw == "[1]" || raw.contains("total_requests") {
+            assert_eq!(world.sync().unwrap_err().code, everledger::ExitCode::Error);
+        } else {
+            let result = world.sync()?;
+            assert_eq!(result.view().total_requests, 6, "{raw}");
+            assert_eq!(result.view().pending, raw != "null");
+            assert_eq!(result.view().complete, raw == "null");
+        }
+        assert_eq!(world.http.requests.borrow().len(), 6);
+    }
+    Ok(())
+}
+
+#[test]
+fn index_shape_and_invalid_fetched_at_do_not_fall_back_to_ninja() -> Result<()> {
+    for raw in ["[1]", r#"["2026-11-15T12:00:00Z"]"#, r#""x""#, "true", "5"] {
+        let world = World::new("36");
+        world.write("index.json", &parse(raw)?);
+        assert_eq!(world.sync().unwrap_err().code, everledger::ExitCode::Error);
+        assert_eq!(
+            everledger::vendors::lookup(2604, &world.context())
+                .unwrap_err()
+                .code,
+            everledger::ExitCode::Error
+        );
+        assert!(world.http.requests.borrow().is_empty());
+    }
+    let world = World::new("36");
+    assert!(world.sync()?.view().complete);
+    let mut index = world.disk("index.json");
+    index.set("fetched_at", "soon")?;
+    world.write("index.json", &index);
+    assert_eq!(
+        everledger::vendors::lookup(2604, &world.context())
+            .unwrap_err()
+            .code,
+        everledger::ExitCode::Error
+    );
+    assert_eq!(
+        everledger::vendors::status::backend_status(&world.context())
+            .unwrap_err()
+            .code,
+        everledger::ExitCode::Error
+    );
+    assert_eq!(world.http.requests.borrow().len(), 6);
+    Ok(())
+}
+
+#[test]
+fn typed_damage_refusals_stop_before_sending_a_foreverdb_request() -> Result<()> {
+    for (field, value) in [
+        ("failed", "1"),
+        ("status", r#""503""#),
+        ("spends", r#"[{"finished_at":"2026-11-15T12:00:00Z"}]"#),
+        (
+            "spends",
+            r#"[{"requests":"1","finished_at":"2026-11-15T12:00:00Z"}]"#,
+        ),
+    ] {
+        let world = World::new("36");
+        assert!(world.sync()?.view().complete);
+        world.advance(86400);
+        let mut journal = world.disk("attempt.json");
+        journal.set(field, parse(value)?)?;
+        world.write("attempt.json", &journal);
+        assert_eq!(
+            world.sync().unwrap_err().code,
+            everledger::ExitCode::Error,
+            "{field}: {value}"
+        );
+        assert_eq!(world.http.requests.borrow().len(), 6);
+    }
+    let world = World::new("36");
+    assert!(world.sync()?.view().complete);
+    world.advance(86400);
+    let mut index = world.disk("index.json");
+    index.set("items", Document::Array(vec![]))?;
+    world.write("index.json", &index);
+    assert_eq!(world.sync().unwrap_err().code, everledger::ExitCode::Error);
+    assert_eq!(world.http.requests.borrow().len(), 6);
+    Ok(())
+}
+
+#[test]
+fn truthy_journal_sequences_are_not_decoded_as_structs() -> Result<()> {
+    let world = World::new("36");
+    assert!(world.sync()?.view().complete);
+    world.write(
+        "attempt.json",
+        &parse(r#"["2026-11-15T12:00:00Z",0,false,null]"#)?,
+    );
+    assert_eq!(
+        everledger::vendors::lookup(2604, &world.context())
+            .unwrap_err()
+            .code,
+        everledger::ExitCode::Error
+    );
+    assert_eq!(world.http.requests.borrow().len(), 6);
     Ok(())
 }

@@ -469,11 +469,15 @@ fn index_omits_checkpoint_payload_and_ignores_legacy_fields() -> Result<()> {
     rewrite(&|index| {
         index.insert("record_count".into(), 2.into());
     });
-    assert_eq!(records(&context)?, None);
+    assert_eq!(records(&context)?, Some(2));
     rewrite(&|index| {
         index.insert("item_count".into(), 7.into());
     });
-    assert_eq!(records(&context)?, None);
+    assert_eq!(records(&context)?, Some(3));
+    rewrite(&|index| {
+        index.insert("format".into(), serde_json::json!(2.0));
+    });
+    assert_eq!(records(&context)?, Some(3));
     Ok(())
 }
 

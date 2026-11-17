@@ -99,11 +99,9 @@ pub struct ItemEntry {
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct IndexData {
-    pub format: i64,
     pub fetched_at: String,
     pub published_at: Option<String>,
     pub record_count: usize,
-    pub vendor_total: usize,
     pub item_count: usize,
     pub items: OrderedMap<ItemEntry>,
     pub sync_id: Option<String>,
@@ -181,7 +179,6 @@ struct Pending {
     details: OrderedMap<Detail>,
     metadata: Option<Metadata>,
     total_requests: u64,
-    retry: Option<Retry>,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum Deferred {
@@ -215,29 +212,51 @@ pub struct AttemptSummary {
 pub fn cache_dir(context: &Context<'_>) -> PathBuf {
     context.config.data_dir.join("vendors").join(BACKEND)
 }
-enum ReadFailure {
-    Io(std::io::Error),
+pub(crate) enum CacheError {
     Invalid(Failure),
+    Failure(Failure),
+    Io(std::io::Error),
 }
-pub fn read(context: &Context<'_>, name: &str) -> Result<Option<Document>> {
-    read_at(&cache_dir(context), name).map_err(|error| match error {
-        ReadFailure::Io(error) => error.into(),
-        ReadFailure::Invalid(error) => error,
-    })
-}
-fn read_at(dir: &Path, name: &str) -> std::result::Result<Option<Document>, ReadFailure> {
-    match std::fs::read_to_string(dir.join(name)) {
-        Ok(s) => crate::document::parse(&s)
-            .map(Some)
-            .map_err(ReadFailure::Invalid),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(ReadFailure::Io(e)),
+impl CacheError {
+    pub(crate) fn into_failure(self) -> Failure {
+        match self {
+            Self::Invalid(error) | Self::Failure(error) => error,
+            Self::Io(error) => error.into(),
+        }
     }
+}
+impl From<Failure> for CacheError {
+    fn from(error: Failure) -> Self {
+        Self::Invalid(error)
+    }
+}
+impl From<std::io::Error> for CacheError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+pub(crate) type CacheResult<T> = std::result::Result<T, CacheError>;
+pub fn read(context: &Context<'_>, name: &str) -> Result<Option<Document>> {
+    cached_read(context, name).map_err(CacheError::into_failure)
+}
+fn cached_read(context: &Context<'_>, name: &str) -> CacheResult<Option<Document>> {
+    read_at(&cache_dir(context), name)
+}
+fn read_at(dir: &Path, name: &str) -> CacheResult<Option<Document>> {
+    let bytes = match std::fs::read(dir.join(name)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let text = String::from_utf8(bytes).map_err(|e| Failure::shape("ForeverDB cache text", e))?;
+    let doc = crate::document::parse(&text)?;
+    Ok((!matches!(doc, Document::Null)).then_some(doc))
 }
 fn sync_read(context: &Context<'_>, name: &str) -> SyncRun<Option<Document>> {
     read_at(&cache_dir(context), name).map_err(|error| match error {
-        ReadFailure::Io(error) => SyncFailure::Failed(sync_io(error)),
-        ReadFailure::Invalid(error) => SyncFailure::InvalidCache(error),
+        CacheError::Io(error) => SyncFailure::Failed(sync_io(error)),
+        CacheError::Invalid(error) => SyncFailure::InvalidCache(error),
+        CacheError::Failure(error) => SyncFailure::Failed(error),
     })
 }
 enum SyncFailure {
@@ -254,6 +273,7 @@ fn load_attempt(context: &Context<'_>) -> SyncRun<Option<Document>> {
     let Some(mut data) = sync_read(context, "attempt.json")? else {
         return Ok(None);
     };
+    cache_object(&data, "ForeverDB attempt").map_err(SyncFailure::InvalidCache)?;
     let attempt: PreviousAttempt = data
         .decode("ForeverDB attempt")
         .map_err(SyncFailure::InvalidCache)?;
@@ -321,8 +341,15 @@ pub(super) fn finish_attempt(attempt: &mut Document, now: UtcInstant) -> Result<
     attempt.set("spends", Document::Array(spends))
 }
 pub fn attempt(context: &Context<'_>) -> Result<Option<AttemptSummary>> {
-    read(context, "attempt.json")?
-        .map(|d| d.decode("ForeverDB attempt"))
+    cached_attempt(context).map_err(CacheError::into_failure)
+}
+fn cached_attempt(context: &Context<'_>) -> CacheResult<Option<AttemptSummary>> {
+    cached_read(context, "attempt.json")?
+        .filter(Document::truthy)
+        .map(|d| {
+            cache_object(&d, "ForeverDB attempt")?;
+            Ok(d.decode("ForeverDB attempt")?)
+        })
         .transpose()
 }
 fn random_id() -> Result<String> {
@@ -371,44 +398,60 @@ fn remove(dir: &Path, name: &str) -> Result<()> {
     }
 }
 pub fn index(context: &Context<'_>) -> Result<Option<Index>> {
-    if transport::Transport::select(context.config)?.is_none() {
+    cached_index(context).map_err(CacheError::into_failure)
+}
+fn cached_index(context: &Context<'_>) -> CacheResult<Option<Index>> {
+    if transport::Transport::select(context.config)
+        .map_err(CacheError::Failure)?
+        .is_none()
+    {
         return Ok(None);
     }
-    decode_index(read(context, "index.json")?)
+    Ok(decode_index(cached_read(context, "index.json")?)?)
+}
+pub(crate) fn cache_object(doc: &Document, boundary: &str) -> Result<()> {
+    if matches!(doc, Document::Object(_)) {
+        Ok(())
+    } else {
+        Err(Failure::shape(boundary, "expected object"))
+    }
+}
+fn matching_format(doc: &Document) -> Result<bool> {
+    cache_object(doc, "ForeverDB cache")?;
+    Ok(matches!(doc.get("format"), Some(Document::Number(n)) if *n == Number::Small(FORMAT)))
 }
 fn decode_index(doc: Option<Document>) -> Result<Option<Index>> {
-    let Some(doc) = doc else {
+    let Some(doc) = doc.filter(Document::truthy) else {
         return Ok(None);
     };
-    if doc.get("format").and_then(Document::as_i64) != Some(FORMAT) {
+    if !matching_format(&doc)? {
         return Ok(None);
     }
-    let index: Index = Payload::decode(doc, "ForeverDB index")?;
-    let v = index.view();
-    if v.record_count != v.vendor_total || v.item_count != v.items.0.len() {
-        return Ok(None);
-    }
-    Ok(Some(index))
+    Payload::decode(doc, "ForeverDB index").map(Some)
 }
 pub fn usable_index(
     index: &Index,
     attempt: Option<&AttemptSummary>,
     context: &Context<'_>,
-) -> bool {
-    !attempt.is_some_and(|a| {
-        a.failed
-            && (age(Some(&index.view().fetched_at), context.clock).is_some_and(|a| a > 7 * 86400)
-                || a.status.is_some_and(|s| s < 500))
-    })
+) -> Result<bool> {
+    match attempt.filter(|a| a.failed) {
+        Some(a) => Ok(index_age(index, context)? <= 7 * 86400 && a.status.is_none_or(|s| s >= 500)),
+        None => Ok(true),
+    }
+}
+fn index_age(index: &Index, context: &Context<'_>) -> Result<i64> {
+    age(Some(&index.view().fetched_at), context.clock)
+        .ok_or_else(|| Failure::shape("ForeverDB index", "invalid fetched_at"))
 }
 pub fn active_index(context: &Context<'_>) -> Result<Option<Index>> {
-    let idx = index(context)?;
-    let a = if idx.is_some() {
-        attempt(context)?
-    } else {
-        None
+    cached_active_index(context).map_err(CacheError::into_failure)
+}
+pub(crate) fn cached_active_index(context: &Context<'_>) -> CacheResult<Option<Index>> {
+    let Some(index) = cached_index(context)? else {
+        return Ok(None);
     };
-    Ok(idx.filter(|i| usable_index(i, a.as_ref(), context)))
+    let attempt = cached_attempt(context)?;
+    Ok(usable_index(&index, attempt.as_ref(), context)?.then_some(index))
 }
 pub fn sync(context: &Context<'_>) -> Result<SyncResult> {
     let mut result = SyncData::default();
@@ -461,14 +504,17 @@ fn sync_locked(
         result.configured = true;
         result.complete = previous.is_some() && pending.is_none();
         result.pending = pending.is_some();
-        result.total_requests = match &pending {
+        result.total_requests = match pending.as_ref().filter(|d| d.truthy()) {
             Some(doc) => {
+                cache_object(doc, "ForeverDB checkpoint total")
+                    .map_err(SyncFailure::InvalidCache)?;
                 #[derive(Deserialize)]
                 struct Total {
                     #[serde(default)]
                     total_requests: u64,
                 }
-                doc.decode::<Total>("ForeverDB checkpoint total")?
+                doc.decode::<Total>("ForeverDB checkpoint total")
+                    .map_err(SyncFailure::InvalidCache)?
                     .total_requests
             }
             None => old_attempt.as_ref().map_or(0, |a| a.total_requests),
@@ -480,17 +526,23 @@ fn sync_locked(
         return Ok(());
     }
 
-    if pending
-        .as_ref()
-        .is_some_and(|d| d.get("format").and_then(Document::as_i64) != Some(FORMAT))
+    if let Some(doc) = pending.as_ref().filter(|d| d.truthy())
+        && !matching_format(doc).map_err(SyncFailure::InvalidCache)?
     {
         pending = None;
     }
-    if let (Some(p), Some(old)) = (&pending, &previous)
-        && p.get("sync_id").and_then(Document::as_str) == old.view().sync_id.as_deref()
-    {
-        remove(dir, "pending.json")?;
-        pending = None;
+    if let (Some(p), Some(old)) = (pending.as_ref().filter(|d| d.truthy()), &previous) {
+        #[derive(Deserialize)]
+        struct Identity {
+            sync_id: String,
+        }
+        let identity: Identity = p
+            .decode("ForeverDB checkpoint identity")
+            .map_err(SyncFailure::InvalidCache)?;
+        if Some(identity.sync_id.as_str()) == old.view().sync_id.as_deref() {
+            remove(dir, "pending.json")?;
+            pending = None;
+        }
     }
     let pending = match pending {
         Some(p) => p,
@@ -578,14 +630,14 @@ fn sync_locked(
                 .is_some_and(|m| *m != page.metadata)
             {
                 obsolete = true;
-                return Err(mapping::invalid());
+                return Err(mapping::invalid().into());
             }
             if page
                 .ids
                 .iter()
                 .any(|id| engine.pending.view().vendor_ids.contains(id))
             {
-                return Err(mapping::invalid());
+                return Err(mapping::invalid().into());
             }
             engine.pending.set("metadata", page.metadata.document())?;
             let mut ids = engine.pending.view().vendor_ids.clone();
@@ -638,7 +690,11 @@ fn sync_locked(
         engine.result.deferred = engine.deferred;
         Ok(())
     })();
-    if let Err(e) = &outcome {
+    if let Err(SyncFailure::InvalidCache(error)) = outcome {
+        interrupt.clear();
+        return Err(SyncFailure::InvalidCache(error));
+    }
+    if let Err(SyncFailure::Failed(e)) = &outcome {
         engine.finish()?;
         engine.attempt.set("failed", true)?;
         engine.attempt.set(
@@ -690,16 +746,28 @@ impl Engine<'_, '_> {
         );
         Ok(())
     }
-    fn get(&mut self, path: &str) -> Result<Option<Document>> {
+    fn get(&mut self, path: &str) -> SyncRun<Option<Document>> {
         loop {
             if self.attempt.view().requests >= self.budget.0 {
                 self.deferred = Some(Deferred::DailyLimit);
                 return Ok(None);
             }
-            let retry = self.pending.view().retry.clone();
+            let retry = self
+                .pending
+                .document()
+                .get("retry")
+                .filter(|d| d.truthy())
+                .map(|d| {
+                    cache_object(d, "ForeverDB retry").map_err(SyncFailure::InvalidCache)?;
+                    d.decode::<Retry>("ForeverDB retry")
+                        .map_err(SyncFailure::InvalidCache)
+                })
+                .transpose()?;
             self.checkpoint_interrupt()?;
             if let Some(retry) = &retry {
-                let delay = (instant(&retry.not_before)?.microseconds()
+                let delay = (instant(&retry.not_before)
+                    .map_err(SyncFailure::InvalidCache)?
+                    .microseconds()
                     - self.context.clock.now().microseconds()) as f64
                     / 1e6;
                 if delay > 300.0 {
@@ -742,10 +810,11 @@ impl Engine<'_, '_> {
             self.checkpoint_interrupt()?;
             match self.transport.request(path, self.context) {
                 Ok(raw) => {
-                    self.pending.remove("retry")?;
+                    self.interrupt
+                        .clear_retry(self.pending, self.context.clock)?;
                     return crate::http::decode_body(&raw)
                         .map(Some)
-                        .map_err(|_| mapping::invalid());
+                        .map_err(|_| SyncFailure::Failed(mapping::invalid()));
                 }
                 Err(error) => {
                     let body = error.body.as_ref();
@@ -775,12 +844,14 @@ impl Engine<'_, '_> {
                         }
                         continue;
                     }
-                    self.pending.remove("retry")?;
+                    self.interrupt
+                        .clear_retry(self.pending, self.context.clock)?;
                     return Err(Failure {
                         message: crate::human::refresh::sync_failed(status),
                         code: crate::ExitCode::Unreachable,
                         body: Some(Document::object([("status", status.into())])),
-                    });
+                    }
+                    .into());
                 }
             }
         }
@@ -892,6 +963,12 @@ pub fn provenance(
     Ok(vec![s])
 }
 pub fn index_sources(index: &Index, context: &Context<'_>) -> Result<Vec<Source>> {
+    cached_index_sources(index, context).map_err(CacheError::into_failure)
+}
+pub(crate) fn cached_index_sources(
+    index: &Index,
+    context: &Context<'_>,
+) -> CacheResult<Vec<Source>> {
     let rows = index
         .view()
         .items
@@ -899,19 +976,21 @@ pub fn index_sources(index: &Index, context: &Context<'_>) -> Result<Vec<Source>
         .iter()
         .flat_map(|(_, e)| e.vendors.clone())
         .collect::<Vec<_>>();
-    provenance(index, &rows, stale(index, context)?, context)
+    Ok(provenance(
+        index,
+        &rows,
+        cached_stale(index, context)?,
+        context,
+    )?)
 }
-fn stale(index: &Index, context: &Context<'_>) -> Result<bool> {
-    Ok(
-        age(Some(&index.view().fetched_at), context.clock).is_some_and(|s| s > 86400)
-            || attempt(context)?.is_some_and(|a| a.failed),
-    )
+fn cached_stale(index: &Index, context: &Context<'_>) -> CacheResult<bool> {
+    Ok(index_age(index, context)? > 86400 || cached_attempt(context)?.is_some_and(|a| a.failed))
 }
 pub fn lookup(item_id: i64, index: &Index, context: &Context<'_>) -> Result<Document> {
     let key = item_id.to_string();
     let entry = index.view().items.get(&key);
     let docs = index.document().get("items").and_then(|d| d.get(&key));
-    let stale = stale(index, context)?;
+    let stale = cached_stale(index, context).map_err(CacheError::into_failure)?;
     let sources = provenance(
         index,
         entry.map_or(&[], |e| e.vendors.as_slice()),
