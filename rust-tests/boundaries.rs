@@ -272,7 +272,7 @@ fn network_child() {
             );
         }
         "catalogue" => {
-            let mut config = everledger::config::Config::from_values(&Default::default());
+            let mut config = everledger::config::Config::from_values(&Default::default()).unwrap();
             config.data_dir = url.into();
             let store = everledger::catalogue::CatalogueStore::default();
             let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
@@ -360,7 +360,7 @@ fn roster_preserves_query_order_and_decodes_typed_views() {
         name: String,
     }
     let http = FixtureHttp::with_body(r#"{"z":1.0,"character":{"name":"Slade"},"z":2.0}"#);
-    let mut config = everledger::config::Config::from_values(&Default::default());
+    let mut config = everledger::config::Config::from_values(&Default::default()).unwrap();
     config.roster_token = "token".into();
     config.roster_url = "http://fixture".into();
     let payload = everledger::roster::roster::<Roster>(
@@ -399,7 +399,7 @@ fn roster_preserves_query_order_and_decodes_typed_views() {
 #[test]
 fn price_table_uses_copper_and_freshness() {
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
-    let config = everledger::config::Config::from_values(&Default::default());
+    let config = everledger::config::Config::from_values(&Default::default()).unwrap();
     let catalogue = everledger::catalogue::CatalogueStore::default();
     let http = FixtureHttp::with_body(
         "market|version|1794744000|2\n2604:88.5:87.5:709:::::3808\n100:::2:::::",
@@ -439,7 +439,7 @@ fn catalogue_load_retries_missing_files_and_caches_success() {
     let path =
         std::env::temp_dir().join(format!("everledger-catalogue-test-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
-    let mut config = everledger::config::Config::from_values(&Default::default());
+    let mut config = everledger::config::Config::from_values(&Default::default()).unwrap();
     config.data_dir = path.clone();
     let store = everledger::catalogue::CatalogueStore::default();
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
@@ -490,7 +490,7 @@ fn argparse_ascii_integers_are_i64() {
 #[cfg(feature = "parity-seams")]
 #[test]
 fn foreverdb_seam_fails_closed() {
-    let config = everledger::config::Config::from_values(&Default::default());
+    let config = everledger::config::Config::from_values(&Default::default()).unwrap();
     assert_eq!(
         config.foreverdb_base().unwrap_err().code,
         ExitCode::Unreachable
@@ -498,9 +498,9 @@ fn foreverdb_seam_fails_closed() {
     let config = everledger::config::Config::from_values(&std::collections::HashMap::from([(
         "EVERLEDGER_SEAM_FOREVERDB_URL".into(),
         "http://127.0.0.1:9999".into(),
-    )]));
+    )]))
+    .unwrap();
     assert_eq!(config.foreverdb_base().unwrap(), "http://127.0.0.1:9999");
-    assert_eq!(everledger::config::FOREVERDB_DAILY_REQUESTS, 36);
 }
 #[cfg(feature = "parity-seams")]
 #[test]
@@ -586,7 +586,7 @@ fn warnings_survive_command_failure() {
         everledger::cli::parse_from(["everledger", "margins", "--known", "X", "--char", "Y"])
             .unwrap();
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00Z").unwrap());
-    let config = everledger::config::Config::from_values(&Default::default());
+    let config = everledger::config::Config::from_values(&Default::default()).unwrap();
     let catalogue = everledger::catalogue::CatalogueStore::from_document(
         document::parse(include_str!("../tests/fixtures/catalogue-fixture.json")).unwrap(),
     )
@@ -615,7 +615,8 @@ fn empty_token_file_is_unset() {
     let config = everledger::config::Config::from_values(&std::collections::HashMap::from([(
         "EVERLEDGER_ROSTER_TOKEN_FILE".into(),
         String::new(),
-    )]));
+    )]))
+    .unwrap();
     assert!(config.roster_token_file.is_none());
     assert_eq!(
         config.roster_token().unwrap_err().code,
@@ -628,6 +629,7 @@ fn non_unicode_environment_does_not_panic() {
     use std::os::unix::ffi::OsStringExt;
     let (url, server) = server(vec![response(503, "", "{}")]);
     let output = Command::new(env!("CARGO_BIN_EXE_everledger"))
+        .env_remove("EVERLEDGER_FOREVERDB_DAILY_REQUESTS")
         .args(["price", "2604"])
         .env("EVERLEDGER_AHLEDGER_URL", &url)
         .env("EVERLEDGER_VENDOR_URL", &url)
@@ -684,7 +686,8 @@ fn configured_credentials_cannot_be_formatted() {
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect(),
-    );
+    )
+    .unwrap();
     let printed = format!("{config:?}");
     assert!(!printed.contains("roster-credential"), "{printed}");
     assert!(!printed.contains("foreverdb-credential"), "{printed}");

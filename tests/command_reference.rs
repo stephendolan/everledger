@@ -11,6 +11,7 @@ fn help(command: Option<&str>, columns: &str, force_color: bool) -> String {
         process.env_remove("CLICOLOR_FORCE");
     }
     let output = process
+        .env_remove("EVERLEDGER_FOREVERDB_DAILY_REQUESTS")
         .arg("--help")
         .env("COLUMNS", columns)
         .env("TERM", "xterm-256color")

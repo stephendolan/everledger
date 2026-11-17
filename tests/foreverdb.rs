@@ -35,6 +35,7 @@ impl Directory {
                 "http://127.0.0.1:1".into(),
             ),
         ]))
+        .unwrap()
     }
 }
 impl Drop for Directory {
@@ -45,7 +46,7 @@ impl Drop for Directory {
 struct Fixture<'a> {
     config: &'a Config,
     total: usize,
-    requests: RefCell<Vec<(String, u32, u64)>>,
+    requests: RefCell<Vec<(String, u64, u64)>>,
     fail_at: Option<usize>,
 }
 impl Http for Fixture<'_> {
@@ -121,7 +122,7 @@ fn journal_precedes_transport_and_budgeted_traversal_resumes() -> Result<()> {
     assert!(foreverdb::index(&context)?.is_none());
     let requests = http.requests.borrow();
     for (i, (_, attempt, total)) in requests.iter().enumerate() {
-        assert_eq!(*attempt, i as u32 + 1);
+        assert_eq!(*attempt, i as u64 + 1);
         assert_eq!(*total, i as u64 + 1);
     }
     drop(requests);
@@ -154,32 +155,53 @@ fn journal_precedes_transport_and_budgeted_traversal_resumes() -> Result<()> {
 }
 #[test]
 fn retry_at_cap_stays_pending_and_resumes_once() -> Result<()> {
-    let dir = Directory::new();
-    let config = dir.config();
-    let http = Fixture {
-        config: &config,
-        total: 40,
-        requests: RefCell::new(vec![]),
-        fail_at: Some(36),
-    };
-    let catalogue = everledger::catalogue::CatalogueStore::default();
-    let diag = WriterDiagnostics::<Vec<u8>>::default();
-    let clock = VirtualClock::new(instant("2026-11-15T12:00:00.789012Z")?);
-    let mut context = Context {
-        config: &config,
-        http: &http,
-        clock: &clock,
-        catalogue: &catalogue,
-        diagnostics: &diag,
-    };
-    assert_eq!(foreverdb::sync(&context)?.view().requests, 36);
-    let pending = foreverdb::read(&context, "pending.json")?.expect("checkpoint");
-    assert!(pending.get("retry").is_some());
-    let tomorrow = VirtualClock::new(instant("2026-11-16T13:00:00.789012Z")?);
-    context.clock = &tomorrow;
-    assert_eq!(foreverdb::sync(&context)?.view().requests, 6);
-    assert!(foreverdb::read(&context, "pending.json")?.is_none());
-    assert!(foreverdb::index(&context)?.is_some());
+    for (cap, resumed_requests, complete) in [
+        (1, 1, false),
+        (2, 2, false),
+        (36, 6, true),
+        (40, 2, true),
+        (41, 1, true),
+    ] {
+        let dir = Directory::new();
+        let mut config = dir.config();
+        config.foreverdb_daily_requests = Config::from_values(&HashMap::from([(
+            "EVERLEDGER_FOREVERDB_DAILY_REQUESTS".into(),
+            cap.to_string(),
+        )]))?
+        .foreverdb_daily_requests;
+        let http = Fixture {
+            config: &config,
+            total: 40,
+            requests: RefCell::new(vec![]),
+            fail_at: Some(cap),
+        };
+        let catalogue = everledger::catalogue::CatalogueStore::default();
+        let diag = WriterDiagnostics::<Vec<u8>>::default();
+        let clock = VirtualClock::new(instant("2026-11-15T12:00:00.789012Z")?);
+        let mut context = Context {
+            config: &config,
+            http: &http,
+            clock: &clock,
+            catalogue: &catalogue,
+            diagnostics: &diag,
+        };
+        assert_eq!(foreverdb::sync(&context)?.view().requests, cap as u64);
+        let pending = foreverdb::read(&context, "pending.json")?.expect("checkpoint");
+        assert!(pending.get("retry").is_some());
+        let tomorrow = VirtualClock::new(instant("2026-11-16T13:00:00.789012Z")?);
+        context.clock = &tomorrow;
+        let resumed = foreverdb::sync(&context)?;
+        assert_eq!(resumed.view().requests, resumed_requests);
+        assert_eq!(resumed.view().complete, complete);
+        assert_eq!(
+            foreverdb::read(&context, "pending.json")?.is_none(),
+            complete
+        );
+        assert_eq!(foreverdb::index(&context)?.is_some(), complete);
+        if let Some(pending) = foreverdb::read(&context, "pending.json")? {
+            assert!(pending.get("retry").is_none());
+        }
+    }
     Ok(())
 }
 #[test]
@@ -278,5 +300,79 @@ fn foreverdb_ignores_comparison_caches_from_a_different_ninja_url() -> Result<()
     let (status, _) = everledger::vendors::status::backend_status(&context)?;
     assert_eq!(status.view().coverage.ninja.item_count, 0);
     assert_eq!(http.requests.borrow().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn configured_caps_bound_requests_without_changing_pacing_or_publication() -> Result<()> {
+    struct TimedHttp<'a> {
+        fixture: Fixture<'a>,
+        clock: &'a VirtualClock,
+        starts: RefCell<Vec<f64>>,
+    }
+    impl Http for TimedHttp<'_> {
+        fn request(&self, request: &Request) -> Result<Response> {
+            use everledger::clock::Clock;
+            self.starts.borrow_mut().push(self.clock.monotonic());
+            self.fixture.request(request)
+        }
+    }
+    for (cap, expected_requests, complete) in [
+        ("1", 1, false),
+        ("40", 40, false),
+        ("41", 41, true),
+        ("5000", 41, true),
+        ("4294967296", 41, true),
+        ("9223372036854775807", 41, true),
+    ] {
+        let dir = Directory::new();
+        let mut config = dir.config();
+        config.foreverdb_daily_requests = Config::from_values(&HashMap::from([(
+            "EVERLEDGER_FOREVERDB_DAILY_REQUESTS".into(),
+            cap.into(),
+        )]))?
+        .foreverdb_daily_requests;
+        let clock = VirtualClock::new(instant("2026-11-15T12:00:00.789012Z")?);
+        let http = TimedHttp {
+            fixture: Fixture {
+                config: &config,
+                total: 40,
+                requests: RefCell::new(vec![]),
+                fail_at: None,
+            },
+            clock: &clock,
+            starts: RefCell::new(vec![]),
+        };
+        let catalogue = everledger::catalogue::CatalogueStore::default();
+        let diagnostics = WriterDiagnostics::<Vec<u8>>::default();
+        let context = Context {
+            config: &config,
+            http: &http,
+            clock: &clock,
+            catalogue: &catalogue,
+            diagnostics: &diagnostics,
+        };
+        let result = foreverdb::sync(&context)?;
+        assert_eq!(result.view().requests, expected_requests, "cap {cap}");
+        assert_eq!(result.view().complete, complete, "cap {cap}");
+        assert_eq!(foreverdb::index(&context)?.is_some(), complete, "cap {cap}");
+        assert_eq!(
+            foreverdb::read(&context, "pending.json")?.is_none(),
+            complete,
+            "cap {cap}"
+        );
+        let requests = http.fixture.requests.borrow();
+        assert_eq!(requests.len() as u64, expected_requests, "cap {cap}");
+        for (i, (_, attempt, total)) in requests.iter().enumerate() {
+            assert_eq!(*attempt, i as u64 + 1, "cap {cap}");
+            assert_eq!(*total, i as u64 + 1, "cap {cap}");
+        }
+        for pair in http.starts.borrow().windows(2) {
+            assert!(
+                (pair[1] - pair[0] - 2.1).abs() < 1e-10,
+                "cap {cap}: {pair:?}"
+            );
+        }
+    }
     Ok(())
 }

@@ -155,7 +155,7 @@ fn provenance_rendering() {
 fn verify_and_bridge() {
     use everledger::{Context, catalogue::CatalogueStore, config::Config, http::UreqHttp};
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00.123456Z").unwrap());
-    let config = Config::from_values(&Default::default());
+    let config = Config::from_values(&Default::default()).unwrap();
     for v in vectors("commands") {
         let catalogue = CatalogueStore::from_document(
             document::parse(v["catalogue"].as_str().unwrap()).unwrap(),

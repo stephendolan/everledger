@@ -1,5 +1,5 @@
 use crate::{Failure, Result};
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, num::NonZeroU64, path::PathBuf};
 
 /// A credential as configured. Formatting it never shows the value; `expose`
 /// is the one way to read it.
@@ -33,6 +33,24 @@ impl std::fmt::Debug for Secret {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DailyRequestCap(NonZeroU64);
+impl DailyRequestCap {
+    fn parse(value: &str) -> Result<Self> {
+        crate::cli::parse_integer(value)
+            .ok()
+            .and_then(|n| u64::try_from(n).ok())
+            .and_then(NonZeroU64::new)
+            .map(Self)
+            .ok_or_else(|| {
+                Failure::usage("EVERLEDGER_FOREVERDB_DAILY_REQUESTS must be a positive integer")
+            })
+    }
+    pub fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub data_dir: PathBuf,
@@ -42,6 +60,7 @@ pub struct Config {
     pub vendor_url: String,
     pub roster_token: Secret,
     pub roster_token_file: Option<PathBuf>,
+    pub foreverdb_daily_requests: DailyRequestCap,
     pub foreverdb_api_key: Secret,
     pub foreverdb_api_key_file: PathBuf,
     pub foreverdb_connector: String,
@@ -50,7 +69,7 @@ pub struct Config {
     pub foreverdb_url: Option<String>,
 }
 impl Config {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self> {
         Self::from_values(
             &std::env::vars_os()
                 .map(|(k, v)| {
@@ -62,13 +81,17 @@ impl Config {
                 .collect(),
         )
     }
-    pub fn from_values(env: &HashMap<String, String>) -> Self {
+    pub fn from_values(env: &HashMap<String, String>) -> Result<Self> {
         let get = |k: &str, d: &str| env.get(k).cloned().unwrap_or_else(|| d.into());
         let data_dir = PathBuf::from(get(
             "EVERLEDGER_DATA_DIR",
             &format!("{}/.everledger", get("HOME", ".")),
         ));
-        Self {
+        Ok(Self {
+            foreverdb_daily_requests: DailyRequestCap::parse(&get(
+                "EVERLEDGER_FOREVERDB_DAILY_REQUESTS",
+                "36",
+            ))?,
             roster_url: get("EVERLEDGER_ROSTER_URL", "http://localhost:8765")
                 .trim_end_matches('/')
                 .into(),
@@ -98,7 +121,7 @@ impl Config {
             data_dir,
             #[cfg(feature = "parity-seams")]
             foreverdb_url: env.get("EVERLEDGER_SEAM_FOREVERDB_URL").cloned(),
-        }
+        })
     }
     pub fn roster_token(&self) -> Result<String> {
         let mut token = self.roster_token.expose().to_owned();
@@ -128,4 +151,3 @@ impl Config {
         }
     }
 }
-pub const FOREVERDB_DAILY_REQUESTS: u32 = 36;

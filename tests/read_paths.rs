@@ -67,7 +67,8 @@ impl Fixture {
                 ("EVERLEDGER_ROSTER_TOKEN".into(), "fixture".into()),
             ]
             .into(),
-        );
+        )
+        .unwrap();
         Self {
             config,
             clock: VirtualClock::new(time::instant("2026-11-15T12:00:00.789012Z").unwrap()),
