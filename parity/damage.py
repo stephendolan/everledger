@@ -20,8 +20,9 @@ dropped, set to null, and given another JSON type. The candidate must do what
 the reference does, or refuse. No case is named: the rule is the class.
 
 To refuse is to exit 1 with nothing on stdout, having sent no request the
-reference did not send. A candidate that carries on where the reference
-fails, or sends a request the reference does not, fails the check.
+reference did not send and left the damaged file as it was. A candidate that
+carries on where the reference fails, or sends a request the reference does
+not, fails the check.
 
 **Responses that break HTTP.** A status line that is not HTTP and a body
 shorter than its declared length raise an `http.client` exception that the
@@ -95,8 +96,11 @@ def run(engine, scenario, command, argv, state):
         return engine.capture(command, argv, scenario.env, scenario.fixture, scenario.root, state, Path(controls))
 
 
-def compare(engine, scenario, candidate, label, state, commands, named=True):
-    """Both sides on one damaged state. A refusal passes if `SANCTIONED` names it, or if no name is asked for."""
+def compare(engine, scenario, candidate, label, state, commands, named=True, damaged=None):
+    """Both sides on one damaged state. A refusal passes if `SANCTIONED` names it, or if no name is asked for.
+
+    `damaged` names the damaged file; a candidate that refuses must leave it as it was.
+    """
     for argv in commands:
         reference, port = (run(engine, scenario, side, argv, state) for side in (ORACLE, candidate))
         paths = [[row['path'] for row in side['requests']] for side in (reference, port)]
@@ -107,7 +111,8 @@ def compare(engine, scenario, candidate, label, state, commands, named=True):
             continue
         sent = [sum(path.startswith('/api/v1/') for path in side) for side in paths]
         reason = SANCTIONED.get((label, argv[0]))
-        refused = port['exit_code'] == 1 and not port['stdout'] and paths[1] == paths[0][:len(paths[1])]
+        refused = (port['exit_code'] == 1 and not port['stdout'] and paths[1] == paths[0][:len(paths[1])]
+                   and (damaged is None or port['files'].get(damaged) == state.get(damaged)))
         summary = (f'{label}: {" ".join(argv)}: exit {reference["exit_code"]} and {port["exit_code"]}, '
                    f'ForeverDB requests {sent[0]} and {sent[1]}, other requests {len(paths[0]) - sent[0]} and {len(paths[1]) - sent[1]}')
         if named and reason and refused and sent[1] == 0:
@@ -335,16 +340,16 @@ def main():
         key = scenario.env[KEY]
         failed_sync = {1: {'status': 503, 'body': {}}}
 
-        def refreshed(label, state, named=True):
+        def refreshed(label, state, named=True, damaged=None):
             """A refresh that reaches the ninja cache: after a failed sync, an incomplete one, and none."""
             scenario.fixture.scripts = dict(failed_sync)
-            compare(engine, scenario, candidate, label + ', after a failed sync', state, [REFRESH], named)
+            compare(engine, scenario, candidate, label + ', after a failed sync', state, [REFRESH], named, damaged)
             scenario.fixture.scripts = {}
             scenario.env[CAP] = '2'
-            compare(engine, scenario, candidate, label + ', after an incomplete sync', state, [REFRESH], named)
+            compare(engine, scenario, candidate, label + ', after an incomplete sync', state, [REFRESH], named, damaged)
             scenario.env.pop(CAP)
             del scenario.env[KEY]
-            compare(engine, scenario, candidate, label + ', ForeverDB not configured', state, [REFRESH], named)
+            compare(engine, scenario, candidate, label + ', ForeverDB not configured', state, [REFRESH], named, damaged)
             scenario.env[KEY] = key
 
         for label, content in [('a file that is not JSON', NOT_JSON), ('a file that is not UTF-8', NOT_UTF8),
@@ -366,19 +371,19 @@ def main():
                                       ("a row's ", row, [STATUS, LOOKUP, HUMAN])):
             for label, content in damaged(index, where):
                 compare(engine, scenario, candidate, f'index: {part}{label}', with_file(synced, CACHE + 'index.json', content),
-                        commands, named=False)
+                        commands, named=False, damaged=CACHE + 'index.json')
         journal = json.loads(synced[CACHE + 'attempt.json'])
         for part, where in (('', ()), ("a spend's ", ('spends', 0))):
             for label, content in damaged(journal, where):
                 compare(engine, scenario, candidate, f'journal: {part}{label}', with_file(synced, CACHE + 'attempt.json', content),
-                        [REFRESH, STATUS, LOOKUP], named=False)
+                        [REFRESH, STATUS, LOOKUP], named=False, damaged=CACHE + 'attempt.json')
 
         engine.start_scenario()
         recent = reach(None, fresh, days=0)
         live = json.loads(recent[CACHE + 'attempt.json'])
         for label, content in damaged(live, ('spends', 0)):
             compare(engine, scenario, candidate, f"journal inside the window: a spend's {label}",
-                    with_file(recent, CACHE + 'attempt.json', content), [REFRESH], named=False)
+                    with_file(recent, CACHE + 'attempt.json', content), [REFRESH], named=False, damaged=CACHE + 'attempt.json')
 
         engine.start_scenario()
         midway = reach('2', fresh)
@@ -388,7 +393,7 @@ def main():
                             ("a sale's ", sale), ("a sale's item's ", (*sale, 'item')), ("a sale's row's ", (*sale, 'row'))):
             for label, content in damaged(checkpoint, where):
                 compare(engine, scenario, candidate, f'checkpoint: {part}{label}', with_file(midway, CACHE + 'pending.json', content),
-                        [REFRESH], named=False)
+                        [REFRESH], named=False, damaged=CACHE + 'pending.json')
 
         engine.start_scenario()
         engine.advance(seconds=elapsed(looked_up))
@@ -397,10 +402,11 @@ def main():
             for label, content in damaged(ninja, where):
                 state = with_file(cached, NINJA + '2604.json', content)
                 del scenario.env[KEY]
-                compare(engine, scenario, candidate, f'ninja cache: {part}{label}', state, [LOOKUP, HUMAN, STATUS], named=False)
+                compare(engine, scenario, candidate, f'ninja cache: {part}{label}', state, [LOOKUP, HUMAN, STATUS], named=False,
+                        damaged=NINJA + '2604.json')
                 scenario.env[KEY] = key
                 if whole:
-                    refreshed(f'ninja cache: {part}{label}', state, named=False)
+                    refreshed(f'ninja cache: {part}{label}', state, named=False, damaged=NINJA + '2604.json')
 
         engine.start_scenario()
         broken_responses(engine, scenario, module, candidate, fresh, cached)

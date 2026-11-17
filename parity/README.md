@@ -297,10 +297,10 @@ named in `SANCTIONED` with its reason.
 **Every field.** Each key of each object in the four files is in turn dropped,
 set to null, and given another JSON type: several hundred damaged files. The
 candidate must do what the reference does, or refuse. To refuse is to exit 1
-with nothing on stdout, having sent no request the reference did not send. A
-candidate that carries on where the reference fails, or sends a request the
-reference does not, fails the check. The summary line counts the refusals and
-the output lists them.
+with nothing on stdout, having sent no request the reference did not send and
+left the damaged file as it was. A candidate that carries on where the
+reference fails, or sends a request the reference does not, fails the check.
+The summary line counts the refusals and the output lists them.
 
 **Responses that break HTTP.** A status line that is not HTTP, and a body
 shorter than its declared length, from each source. The reference dies of an
