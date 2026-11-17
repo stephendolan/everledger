@@ -7,14 +7,17 @@ pub mod transport;
 use crate::{
     Context, Failure, Result,
     catalogue::OrderedMap,
+    clock::Clock,
+    config::DailyRequestCap,
     document::{Document, JsonMode, dumps},
     http::Payload,
     provenance::{Source, source},
-    time::{age, instant, iso},
+    time::{UtcInstant, age, instant, iso},
 };
 use mapping::{Basis, Identifier, Metadata};
 use serde::Deserialize;
 use std::{
+    borrow::Cow,
     fs::{File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
@@ -76,8 +79,11 @@ pub type Index = Payload<IndexData>;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Attempt {
     pub attempted_at: String,
+    #[serde(default)]
     pub requests: u64,
     pub sync_id: Option<String>,
+    #[serde(default)]
+    pub spends: Vec<Spend>,
     #[serde(default)]
     pub failed: bool,
     pub status: Option<u16>,
@@ -85,6 +91,20 @@ pub struct Attempt {
     pub last_request_at: Option<String>,
     #[serde(default)]
     pub total_requests: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct Spend {
+    pub requests: u64,
+    pub finished_at: String,
+}
+#[derive(Clone, Copy)]
+struct RequestBudget(u64);
+impl RequestBudget {
+    fn remaining(cap: DailyRequestCap, spends: &[Spend]) -> Self {
+        Self(spends.iter().fold(cap.get(), |remaining, spend| {
+            remaining.saturating_sub(spend.requests)
+        }))
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Detail {
@@ -127,14 +147,72 @@ pub fn cache_dir(context: &Context<'_>) -> PathBuf {
     context.config.data_dir.join("vendors").join(BACKEND)
 }
 pub fn read(context: &Context<'_>, name: &str) -> Result<Option<Document>> {
-    read_at(&cache_dir(context), name)
+    read_at(&cache_dir(context), name, context.clock)
 }
-fn read_at(dir: &Path, name: &str) -> Result<Option<Document>> {
-    match std::fs::read_to_string(dir.join(name)) {
-        Ok(s) => crate::document::parse(&s).map(Some),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
+fn read_at(dir: &Path, name: &str, clock: &dyn Clock) -> Result<Option<Document>> {
+    let mut data = match std::fs::read_to_string(dir.join(name)) {
+        Ok(s) => crate::document::parse(&s)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    if name == "attempt.json" {
+        let attempt: Attempt = data.decode("ForeverDB attempt")?;
+        if data.get("spends").is_none() || attempt.finished_at.as_deref().is_none_or(str::is_empty)
+        {
+            let finished = attempt
+                .finished_at
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .or(attempt.last_request_at.as_deref().filter(|s| !s.is_empty()))
+                .unwrap_or(&attempt.attempted_at);
+            let mut spends = data
+                .get("spends")
+                .and_then(Document::as_array)
+                .unwrap_or_default()
+                .to_vec();
+            spends.push(spend_document(attempt.requests, finished)?);
+            data.set("spends", Document::Array(spends))?;
+        }
+        prune_spends(&mut data, clock)?;
     }
+    Ok(Some(data))
+}
+fn spend_document(requests: u64, finished_at: &str) -> Result<Document> {
+    Ok(Document::object([
+        ("requests", Document::from_typed(&requests)?),
+        ("finished_at", finished_at.into()),
+    ]))
+}
+fn prune_spends(attempt: &mut Document, clock: &dyn Clock) -> Result<()> {
+    let raw = attempt
+        .get("spends")
+        .and_then(Document::as_array)
+        .ok_or_else(|| Failure::shape("ForeverDB spends", "expected array"))?;
+    let mut retained = Vec::new();
+    for doc in raw {
+        let spend: Spend = doc.decode("ForeverDB spend")?;
+        let seconds = age(Some(&spend.finished_at), clock)
+            .ok_or_else(|| Failure::shape("ForeverDB spend", "invalid finished_at"))?;
+        if seconds < 86400 {
+            retained.push(doc.clone());
+        }
+    }
+    attempt.set("spends", Document::Array(retained))
+}
+pub(super) fn finish_attempt(attempt: &mut Document, now: UtcInstant) -> Result<()> {
+    let state: Attempt = attempt.decode("ForeverDB attempt")?;
+    let finished = iso(now);
+    let mut spends = attempt
+        .get("spends")
+        .and_then(Document::as_array)
+        .ok_or_else(|| Failure::shape("ForeverDB spends", "expected array"))?
+        .to_vec();
+    if state.finished_at.as_deref().is_some_and(|s| !s.is_empty()) {
+        spends.pop();
+    }
+    spends.push(spend_document(state.requests, &finished)?);
+    attempt.set("finished_at", finished)?;
+    attempt.set("spends", Document::Array(spends))
 }
 pub fn attempt(context: &Context<'_>) -> Result<Option<Attempt>> {
     read(context, "attempt.json")?
@@ -146,7 +224,14 @@ fn random_id() -> Result<String> {
     File::open("/dev/urandom")?.read_exact(&mut bytes)?;
     Ok(bytes.iter().map(|n| format!("{n:02x}")).collect())
 }
-pub(super) fn write_at(dir: &Path, name: &str, doc: &Document) -> Result<()> {
+pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock) -> Result<()> {
+    let doc = if name == "attempt.json" {
+        let mut attempt = doc.clone();
+        prune_spends(&mut attempt, clock)?;
+        Cow::Owned(attempt)
+    } else {
+        Cow::Borrowed(doc)
+    };
     let path = dir.join(format!(
         "{name}.{}.tmp",
         random_id()?.chars().take(8).collect::<String>()
@@ -158,7 +243,7 @@ pub(super) fn write_at(dir: &Path, name: &str, doc: &Document) -> Result<()> {
             .write(true)
             .mode(0o600)
             .open(&path)?;
-        stream.write_all(dumps(doc, JsonMode::Stdout).as_bytes())?;
+        stream.write_all(dumps(&doc, JsonMode::Stdout).as_bytes())?;
         stream.sync_all()?;
         std::fs::rename(&path, dir.join(name))?;
         Ok(())
@@ -235,28 +320,31 @@ fn sync_locked(
     dir: &Path,
 ) -> Result<SyncResult> {
     let previous = index(context)?;
-    let old_attempt = attempt(context)?;
+    let old_record = read(context, "attempt.json")?;
+    let old_attempt: Option<Attempt> = old_record
+        .as_ref()
+        .map(|d| d.decode("ForeverDB attempt"))
+        .transpose()?;
     let mut pending = read(context, "pending.json")?;
-    if let Some(a) = &old_attempt {
-        let last = a
-            .finished_at
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .or(a.last_request_at.as_deref().filter(|s| !s.is_empty()))
-            .unwrap_or(&a.attempted_at);
-        if age(Some(last), context.clock).is_some_and(|s| s < 86400) {
-            return Payload::decode(
-                Document::object([
-                    ("configured", true.into()),
-                    ("complete", (previous.is_some() && pending.is_none()).into()),
-                    ("pending", pending.is_some().into()),
-                    ("requests", 0i64.into()),
-                    ("deferred", "daily sync limit".into()),
-                    ("failed", a.failed.into()),
-                ]),
-                "ForeverDB sync",
-            );
-        }
+    let budget = RequestBudget::remaining(
+        context.config.foreverdb_daily_requests,
+        old_attempt.as_ref().map_or(&[], |attempt| &attempt.spends),
+    );
+    if budget.0 == 0 {
+        return Payload::decode(
+            Document::object([
+                ("configured", true.into()),
+                ("complete", (previous.is_some() && pending.is_none()).into()),
+                ("pending", pending.is_some().into()),
+                ("requests", 0i64.into()),
+                ("deferred", "daily sync limit".into()),
+                (
+                    "failed",
+                    old_attempt.as_ref().is_some_and(|a| a.failed).into(),
+                ),
+            ]),
+            "ForeverDB sync",
+        );
     }
     if pending
         .as_ref()
@@ -296,6 +384,13 @@ fn sync_locked(
             ("requests", 0i64.into()),
             ("sync_id", pending.view().sync_id.clone().into()),
             (
+                "spends",
+                old_record
+                    .as_ref()
+                    .and_then(|d| d.get("spends").cloned())
+                    .unwrap_or(Document::Array(vec![])),
+            ),
+            (
                 "failed",
                 old_attempt.as_ref().is_some_and(|a| a.failed).into(),
             ),
@@ -310,13 +405,14 @@ fn sync_locked(
         ]),
         "ForeverDB attempt",
     )?;
-    write_at(dir, "attempt.json", attempt.document())?;
+    write_at(dir, "attempt.json", attempt.document(), context.clock)?;
     let interrupt = interrupt::Guard::new(dir)?;
     let mut engine = Engine {
         context,
         transport,
         pending: &mut pending,
         attempt: &mut attempt,
+        budget,
         last_start: None,
         interrupt: &interrupt,
     };
@@ -325,7 +421,7 @@ fn sync_locked(
     let result = (|| {
         transport.validate(context)?;
         while let Some(offset) = engine.pending.view().next_offset {
-            if engine.attempt.view().requests >= context.config.foreverdb_daily_requests.get() {
+            if engine.attempt.view().requests >= engine.budget.0 {
                 break;
             }
             let Some(doc) = engine.get(&format!(
@@ -361,14 +457,14 @@ fn sync_locked(
                 Document::Array(ids.into_iter().map(Document::from).collect()),
             )?;
             engine.pending.set("next_offset", page.next)?;
-            interrupt.write("pending.json", engine.pending.document())?;
+            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
         if engine.pending.view().next_offset.is_none() {
             for id in engine.pending.view().vendor_ids.clone() {
                 if engine.pending.view().details.get(&id).is_some() {
                     continue;
                 }
-                if engine.attempt.view().requests >= context.config.foreverdb_daily_requests.get() {
+                if engine.attempt.view().requests >= engine.budget.0 {
                     break;
                 }
                 let Some(doc) = engine.get(&format!("/api/v1/vendors/{id}"))? else {
@@ -381,7 +477,7 @@ fn sync_locked(
                 engine
                     .pending
                     .set_path(&["details", &id], Document::object([("data", data)]))?;
-                interrupt.write("pending.json", engine.pending.document())?;
+                interrupt.write("pending.json", engine.pending.document(), context.clock)?;
             }
         }
         let complete = engine.pending.view().next_offset.is_none()
@@ -389,17 +485,15 @@ fn sync_locked(
         if complete {
             let mut data = snapshot(engine.pending, previous.as_ref(), context)?;
             data.set("sync_id", engine.pending.view().sync_id.clone())?;
-            interrupt.write("index.json", &data)?;
+            interrupt.write("index.json", &data, context.clock)?;
             interrupt.remove("pending.json")?;
             engine.attempt.set("failed", false)?;
             engine.attempt.set("status", Document::Null)?;
         } else {
-            interrupt.write("pending.json", engine.pending.document())?;
+            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
-        engine
-            .attempt
-            .set("finished_at", iso(context.clock.now()))?;
-        interrupt.write("attempt.json", engine.attempt.document())?;
+        engine.finish()?;
+        interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
         Payload::decode(
             Document::object([
                 ("configured", true.into()),
@@ -418,9 +512,7 @@ fn sync_locked(
         )
     })();
     if let Err(e) = &result {
-        engine
-            .attempt
-            .set("finished_at", iso(context.clock.now()))?;
+        engine.finish()?;
         engine.attempt.set("failed", true)?;
         engine.attempt.set(
             "status",
@@ -430,11 +522,11 @@ fn sync_locked(
                 .cloned()
                 .unwrap_or(Document::Null),
         )?;
-        interrupt.write("attempt.json", engine.attempt.document())?;
+        interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
         if obsolete {
             interrupt.remove("pending.json")?;
         } else {
-            interrupt.write("pending.json", engine.pending.document())?;
+            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
     }
     interrupt.clear();
@@ -445,10 +537,17 @@ struct Engine<'a, 'b> {
     transport: &'a transport::Transport,
     pending: &'a mut Payload<Pending>,
     attempt: &'a mut Payload<Attempt>,
+    budget: RequestBudget,
     last_start: Option<f64>,
     interrupt: &'a interrupt::Guard,
 }
 impl Engine<'_, '_> {
+    fn finish(&mut self) -> Result<()> {
+        let mut doc = self.attempt.document().clone();
+        finish_attempt(&mut doc, self.context.clock.now())?;
+        *self.attempt = Payload::decode(doc, "ForeverDB attempt")?;
+        Ok(())
+    }
     fn checkpoint_interrupt(&self) -> Result<()> {
         self.interrupt.update(
             self.attempt.document(),
@@ -459,7 +558,7 @@ impl Engine<'_, '_> {
     }
     fn get(&mut self, path: &str) -> Result<Option<Document>> {
         loop {
-            if self.attempt.view().requests >= self.context.config.foreverdb_daily_requests.get() {
+            if self.attempt.view().requests >= self.budget.0 {
                 return Ok(None);
             }
             let retry = self.pending.view().retry.clone();
@@ -492,7 +591,7 @@ impl Engine<'_, '_> {
             self.attempt
                 .set("last_request_at", iso(self.context.clock.now()))?;
             self.interrupt
-                .write("attempt.json", self.attempt.document())?;
+                .write("attempt.json", self.attempt.document(), self.context.clock)?;
             self.last_start = Some(self.context.clock.monotonic());
             self.checkpoint_interrupt()?;
             match self.transport.request(path, self.context) {
@@ -533,8 +632,11 @@ impl Engine<'_, '_> {
                             "retry",
                             Document::object([("not_before", not_before.into())]),
                         )?;
-                        self.interrupt
-                            .write("pending.json", self.pending.document())?;
+                        self.interrupt.write(
+                            "pending.json",
+                            self.pending.document(),
+                            self.context.clock,
+                        )?;
                         continue;
                     }
                     self.pending.remove("retry")?;
