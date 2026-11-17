@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cache files no sync writes: what each implementation does with a damaged one.
+"""Cache files no sync writes, and responses no server should send.
 
 Usage: python3 parity/damage.py CANDIDATE
 
@@ -15,6 +15,12 @@ the candidate refuses it, the case is named in `SANCTIONED` with its reason. A
 candidate may refuse only by exiting 1 without a ForeverDB request. One that
 sends a request the reference does not is never sanctioned.
 
+The last part sends responses that break HTTP itself: a status line that is
+not HTTP, a body shorter than its declared length, a connection closed without
+a word. The reference dies of an `http.client` exception on the first two,
+which its handlers do not name. A candidate that reports the source
+unreachable there, after the same requests, is sanctioned.
+
 CANDIDATE needs the `parity-seams` feature.
 """
 import copy
@@ -27,6 +33,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from parity.corpus import CAP, DBScenario, load_cli
 from parity.engine import Engine, ROOT, elapsed, snapshot
+from parity.fixture import Raw
 
 ORACLE = [sys.executable, str(ROOT / 'parity/oracle.py')]
 CACHE = 'vendors/foreverdb.net/'
@@ -41,6 +48,11 @@ SANCTIONED = {(prefix + label, 'refresh'): SPENDS
               for prefix in ('journal: ', 'journal inside the window: ')
               for label in ('spends is an object', 'a spend of 1.5 requests', 'a spend of -1 requests',
                             'a spend of true requests')}
+BROKEN = {'a status line that is not HTTP': b'HTTP/1.1 abc\r\n\r\n',
+          'a body shorter than its Content-Length':
+              b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{"data": [',
+          'a connection closed without a response': b''}
+UNNAMED = 'a response that breaks HTTP: the reference dies of an exception its handlers do not name'
 counts = {'identical': 0, 'sanctioned': 0}
 failures = []
 
@@ -74,6 +86,37 @@ def compare(engine, scenario, candidate, label, state, commands):
         else:
             failures.append(summary)
             print(f'FAIL        {summary}')
+
+
+def broken_responses(engine, scenario, module, candidate, state):
+    routes = module.Handler.routes
+    places = (('ForeverDB, first request of a sync', REFRESH, None),
+              ('the AHledger price quote', ['price', '2604', '--json'], '/v1/prices/forever.pvp.alliance.us/2604'),
+              ('the roster', ['char', '--json'], '/characters'))
+    for label, data in BROKEN.items():
+        for place, argv, route in places:
+            saved = dict(routes)
+            if route:
+                routes[route] = (200, Raw(data))
+            else:
+                scenario.fixture.scripts = {1: {'body': Raw(data)}}
+            try:
+                reference, port = (run(engine, scenario, side, argv, state) for side in (ORACLE, candidate))
+            finally:
+                routes.clear()
+                routes.update(saved)
+                scenario.fixture.scripts = {}
+            paths = [[row['path'] for row in side['requests']] for side in (reference, port)]
+            summary = f'{label}, from {place}: exit {reference["exit_code"]} and {port["exit_code"]}'
+            if reference['exit_code'] == port['exit_code'] and paths[0] == paths[1] and reference['stdout'] == port['stdout']:
+                counts['identical'] += 1
+            elif (reference['exit_code'] == 1 and b'http.client.' in reference['stderr'] and port['exit_code'] == 4
+                  and paths[0] == paths[1]):
+                counts['sanctioned'] += 1
+                print(f'sanctioned  {summary} ({UNNAMED})')
+            else:
+                failures.append(summary)
+                print(f'FAIL        {summary}')
 
 
 def with_file(state, name, content):
@@ -205,6 +248,9 @@ def main():
                 {**cached, ninja + '100.json': NOT_UTF8}, [REFRESH])
         scenario.fixture.scripts = {}
         compare(engine, scenario, candidate, 'ninja cache: a file that is not JSON, after an incomplete sync', spoiled, [REFRESH])
+
+        engine.start_scenario()
+        broken_responses(engine, scenario, module, candidate, fresh)
     finally:
         scenario.close()
         engine.close()

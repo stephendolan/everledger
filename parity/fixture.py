@@ -10,6 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 HEADERS = ('Authorization', 'User-Agent', 'X-API-Key', 'X-Surrogate-Test')
 
 
+class Raw:
+    """Bytes to write to the socket as they are, for responses that are not valid HTTP."""
+
+    def __init__(self, data):
+        self.data = data
+
+
 class Fixture:
     def __init__(self, vocabulary):
         self.vocabulary = vocabulary
@@ -32,6 +39,10 @@ class Fixture:
                         owner.held.set()
                         if not owner.release.wait(25):
                             raise TimeoutError('held fixture response was never released')
+                    if isinstance(payload, Raw):
+                        self.wfile.write(payload.data)
+                        self.close_connection = True
+                        return
                     self.send_response(status)
                     self.send_header('Last-Modified', 'Sat, 14 Nov 2026 20:20:39 GMT')
                     for key, value in headers.items():
