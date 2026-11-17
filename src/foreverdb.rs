@@ -9,7 +9,7 @@ use crate::{
     catalogue::OrderedMap,
     clock::Clock,
     config::DailyRequestCap,
-    document::{Document, JsonMode, dumps},
+    document::{Document, JsonMode, Number, dumps},
     http::Payload,
     provenance::{Source, source},
     time::{UtcInstant, age, instant, iso},
@@ -26,6 +26,41 @@ use std::{
 pub const BACKEND: &str = "foreverdb.net";
 pub const FORMAT: i64 = 2;
 const INTERVAL: f64 = 2.1;
+fn retry_at(value: Option<&Document>, now: UtcInstant) -> Result<UtcInstant> {
+    let invalid = || Failure::error("ForeverDB retry delay outside datetime range");
+    let delay = match value {
+        Some(Document::Number(number)) => match number {
+            Number::Small(n) => *n as f64,
+            Number::Integer(text) => text
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite())
+                .ok_or_else(invalid)?,
+            Number::Float(n) => *n,
+        },
+        Some(
+            Document::Null
+            | Document::Bool(_)
+            | Document::String(_)
+            | Document::Array(_)
+            | Document::Object(_),
+        )
+        | None => 60.0,
+    };
+    let delay = if delay.is_finite() && delay >= 0.0 {
+        delay
+    } else {
+        60.0
+    };
+    let seconds = delay.max(60.0).ceil() + 1.0;
+    if seconds > (i64::MAX / 1_000_000) as f64 {
+        return Err(invalid());
+    }
+    let micros = (seconds as i64)
+        .checked_mul(1_000_000)
+        .ok_or_else(invalid)?;
+    now.add_microseconds(micros).map_err(|_| invalid())
+}
 #[derive(Clone, Debug, Deserialize)]
 pub struct Item {
     pub id: i64,
@@ -611,23 +646,10 @@ impl Engine<'_, '_> {
                         && retry.is_none()
                         && response.and_then(|d| d.get("retryable")) == Some(&Document::Bool(true))
                     {
-                        let delay = response
-                            .and_then(|d| d.get("retry_after"))
-                            .filter(|d| matches!(d, Document::Number(_)))
-                            .and_then(Document::as_f64)
-                            .filter(|n| n.is_finite() && *n >= 0.0)
-                            .unwrap_or(60.0)
-                            .max(60.0)
-                            .ceil()
-                            + 1.0;
-                        if delay > (i64::MAX / 1_000_000) as f64 {
-                            return Err(Failure::unreachable("ForeverDB sync failed (HTTP 502)"));
-                        }
-                        let not_before = iso(self
-                            .context
-                            .clock
-                            .now()
-                            .add_microseconds((delay * 1e6) as i64)?);
+                        let not_before = iso(retry_at(
+                            response.and_then(|d| d.get("retry_after")),
+                            self.context.clock.now(),
+                        )?);
                         self.pending.set(
                             "retry",
                             Document::object([("not_before", not_before.into())]),
