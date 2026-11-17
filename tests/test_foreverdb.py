@@ -1,4 +1,5 @@
 """No network: observed wire shapes with explicit synthetic regression cases."""
+import importlib.util
 import json
 from pathlib import Path
 import tempfile
@@ -9,6 +10,35 @@ import everledger_core as core
 import everledger_foreverdb as db
 
 FIXTURE = Path(__file__).parent / 'fixtures/foreverdb.json'
+
+
+def configured_db():
+    spec = importlib.util.spec_from_file_location('configured_foreverdb', db.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class ForeverDBConfiguration(unittest.TestCase):
+    def test_unset_daily_requests_defaults_to_36(self):
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(configured_db().DAILY_REQUESTS, 36)
+
+    def test_valid_daily_requests_is_parsed_once(self):
+        for value in ('1', '5000'):
+            with self.subTest(value=value), patch.dict('os.environ', {
+                    'EVERLEDGER_FOREVERDB_DAILY_REQUESTS': value}):
+                configured = configured_db()
+                with patch.dict('os.environ', {'EVERLEDGER_FOREVERDB_DAILY_REQUESTS': 'invalid'}):
+                    self.assertEqual(configured.DAILY_REQUESTS, int(value))
+
+    def test_invalid_daily_requests_is_a_usage_error(self):
+        for value in ('', 'invalid', '1.5', '0', '-1'):
+            with self.subTest(value=value), patch.dict('os.environ', {
+                    'EVERLEDGER_FOREVERDB_DAILY_REQUESTS': value}):
+                with self.assertRaisesRegex(core.Failure, 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS') as error:
+                    configured_db()
+                self.assertEqual(error.exception.code, 2)
 
 
 class ForeverDB(unittest.TestCase):
@@ -128,6 +158,23 @@ class ForeverDB(unittest.TestCase):
         self.assertEqual(resumed['requests'], 5)
         self.assertEqual(resumed['total_requests'], 41)
         self.assertEqual(len(db.lookup(2604)['vendors']), 40)
+
+    def test_sync_honors_raised_daily_cap_from_environment(self):
+        template = self.fixture['details']['8681']['data']
+        self.fixture['pages'] = [{'data': [dict(template, id=n) for n in range(1, 41)],
+                                  'meta': {'build': 'fixture', 'total': 40, 'limit': 100, 'offset': 0, 'next': None}}]
+        self.fixture['details'] = {str(n): {'data': dict(template, id=n)} for n in range(1, 41)}
+        for cap, requests, complete in ((40, 40, False), (5000, 41, True)):
+            with self.subTest(cap=cap), patch.dict('os.environ', {
+                    'EVERLEDGER_FOREVERDB_DAILY_REQUESTS': str(cap)}):
+                configured = configured_db()
+                self.requests.clear()
+                with patch.multiple(configured, CACHE=self.directory / str(cap), request=self.get):
+                    result = configured.sync()
+                    self.assertEqual(result['requests'], requests)
+                    self.assertEqual(len(self.requests), requests)
+                    self.assertEqual(result['complete'], complete)
+                    self.assertEqual(configured.index() is not None, complete)
 
     def test_mid_detail_interrupt_resumes_and_old_index_survives(self):
         db.sync()

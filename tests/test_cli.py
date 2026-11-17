@@ -53,6 +53,7 @@ class CLI(unittest.TestCase):
         self.env = dict(os.environ, TZ='UTC', EVERLEDGER_DATA_DIR=self.tmp.name,
                         EVERLEDGER_ROSTER_URL=base, EVERLEDGER_ROSTER_TOKEN='fixture',
                         EVERLEDGER_AHLEDGER_URL=base, EVERLEDGER_VENDOR_URL=base)
+        self.env.pop('EVERLEDGER_FOREVERDB_DAILY_REQUESTS', None)
         self.env.pop('EVERLEDGER_FOREVERDB_API_KEY', None)
         self.env.pop('EVERLEDGER_FOREVERDB_API_KEY_FILE', None)
         self.env.pop('EVERLEDGER_FOREVERDB_VIA_CONNECTOR', None)
@@ -426,6 +427,17 @@ class CLI(unittest.TestCase):
                 self.assertNotRegex(result.stdout, r'\b(?:None|null)\b')
         data = json.loads(self.run_cli('char','--json').stdout)
         self.assertIsNone(data['characters'][0]['level'])
+
+    def test_invalid_foreverdb_daily_requests_exits_with_usage_error(self):
+        for value in ('', 'invalid', '1.5', '0', '-1'):
+            with self.subTest(value=value):
+                self.env['EVERLEDGER_FOREVERDB_DAILY_REQUESTS'] = value
+                result = self.run_cli('refresh', 'catalogue', '--json', code=2)
+                self.assertIn('EVERLEDGER_FOREVERDB_DAILY_REQUESTS', result.stderr)
+                self.assertIn('positive integer', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertEqual(result.stdout, '')
+                self.assertEqual(Handler.requests, [])
 
     def test_readme_command_reference_matches_help(self):
         readme = (ROOT / 'README.md').read_text()
