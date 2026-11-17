@@ -15,7 +15,7 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
-ORACLE_COMMIT = 'd28214c'
+ORACLE_COMMIT = 'b6c6b1c'
 CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 _reference = None
 
@@ -71,12 +71,16 @@ INTERNAL = [
     'invalid_daily_requests_is_a_usage_error', 'sync_honors_raised_daily_cap_from_environment',
     'window_spend_across_two_attempts_defers_at_cap', 'raised_cap_resumes_inside_window_with_remaining_budget',
     'window_expiry_restores_only_expired_spend_then_full_budget',
-    'legacy_checkpoint_migrates_own_requests_at_finish_or_last_request',
     'abrupt_exit_preserves_prior_window_spend', '502_retry_counts_against_remaining_window_budget',
+    'index_omits_checkpoint_payload_and_ignores_legacy_fields',
+    'sync_result_shape_on_success_failure_deferred_and_unconfigured',
+    'refresh_cached_returns_setup_failure_without_raising', 'sync_checkpoint_write_failure_preserves_request_count',
+    '502_long_wait_is_pending_and_resumes_after_not_before', '502_numeric_delays_never_overflow_or_sleep_over_300',
 ]
 TRANSLATIONS = {
     'cache_failure_window': 'The two in-process lookup(refresh=True) calls become refresh catalogue, followed by vendors; the same two-day and eight-day cache states and 503 response are retained.',
     'sync_foreverdb': 'The in-process transport patch becomes refresh catalogue against real fixture HTTP with the virtual clock.',
+    'refresh_sync_failure_reports_catalogue_and_spend_with_or_without_cache': 'The original runs the CLI in a subprocess with its transport patched to fail. Here refresh catalogue runs against a scripted 503 on the first ForeverDB request, with the original assertions.',
     'abrupt_exit_spend_uses_the_last_request_start': 'SIGKILL at the third held vendor request, at a cap of 3. The next invocation starts one second short of 24 hours after that request began, when attempted_at is already more than 24 hours old, and is deferred; one second later the spend has expired. (The original moves its clock five minutes per request and checks 23h55m.)',
     'changed_extraction_discards_checkpoint_and_recovers_next_day': 'A cap of 1 reads one list page; the next day the second page carries another build, twice. Then, on a cleared cache, 36 list pages spend the default cap before the changed build appears on page 37, and the restarted traversal meets it again a day later.',
     '502_retry_at_budget_boundary_resumes_next_day': 'A cap of 1 whose only request is a retryable 502. Then, on a cleared cache, the same boundary at the default cap: the list request and 35 details, with the 502 as request 36.',
@@ -85,7 +89,12 @@ TRANSLATIONS = {
     'window_spend_across_two_attempts_defers_at_cap': 'A cap of 12 through the variable; the scenario clock moves 34 minutes between the two attempts.',
     'raised_cap_resumes_inside_window_with_remaining_budget': 'Caps of 2 and then 6 through the variable, 34 minutes apart on the scenario clock.',
     'window_expiry_restores_only_expired_spend_then_full_budget': 'The original holds its clock still during an attempt; here an attempt takes virtual time, so each boundary is taken from the journal: one second before the first spend is 24 hours old, that second, and the second on which the next spend expires.',
-    'legacy_checkpoint_migrates_own_requests_at_finish_or_last_request': 'The legacy journal is written into the cache directory with timestamps relative to the scenario clock.',
+    'index_omits_checkpoint_payload_and_ignores_legacy_fields': 'The legacy fields are written into the published index between two lookups; the next sync republishes without them.',
+    'sync_result_shape_on_success_failure_deferred_and_unconfigured': 'The four results are read as vendor_sync from refresh catalogue: no key, a scripted 503, a cap of 1, and the default cap.',
+    'refresh_cached_returns_setup_failure_without_raising': 'The key file variable names a directory; refresh, status, and a lookup follow.',
+    'sync_checkpoint_write_failure_preserves_request_count': 'The original patches the writer to fail. Here a directory takes the file\'s place while the first request is held, so the rename that publishes the next write fails: once for the checkpoint, once for the journal\'s reservation of the second request.',
+    '502_long_wait_is_pending_and_resumes_after_not_before': 'A scripted retry_after of 301; the scenario clock moves 302 seconds before the last attempt.',
+    '502_numeric_delays_never_overflow_or_sleep_over_300': 'Each delay is sent as a JSON literal in a scripted 502, among them Infinity, -Infinity, NaN, and a 1,001-digit integer, each on a cleared cache.',
     'abrupt_exit_preserves_prior_window_spend': 'SIGKILL at the held first request of the second attempt stands in for SystemExit.',
     '502_retry_counts_against_remaining_window_budget': 'A retryable 502 is scripted at the first request of the second attempt, which is the only one its budget allows.',
     'key_files_precedence_and_no_key_dormancy': 'Dormant refresh and status plus separate default-file, explicit-file, and environment-key refreshes make key precedence visible in HTTP headers.',
@@ -100,12 +109,12 @@ TRANSLATIONS = {
 def accounting(module):
     names = sorted(name[5:] for name in dir(module.CLI) if name.startswith('test_'))
     rows = [{'test': 'CLI.test_' + name, 'scenarios': ['cli/' + name], 'not_cli_observable': None} for name in names]
-    # Detect both additions and removals, rather than silently printing 82.
+    # Detect both additions and removals, rather than silently printing 93.
     import ast
     tree = ast.parse((ROOT / 'tests/test_foreverdb.py').read_text())
     owners = {node.name[5:]: owner.name for owner in tree.body if isinstance(owner, ast.ClassDef)
               for node in owner.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
-    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 82:
+    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 93:
         raise ValueError('test inventory drift: update the corpus accounting')
     rows += [{'test': owners[name] + '.test_' + name, 'scenarios': ['foreverdb/' + name], 'not_cli_observable': None} for name in INTERNAL]
     return rows
@@ -144,6 +153,28 @@ def replay_cli(engine, module, name):
             path.write_text(json.dumps(cached))
             self.run_cli('refresh', 'catalogue', '--json', code=4)
             self.run_cli('vendors', '2604', '--json', code=3)
+
+        def test_refresh_sync_failure_reports_catalogue_and_spend_with_or_without_cache(self):
+            self.refresh_routes()
+            self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+            fixture.scripts = {1: {'status': 503, 'body': {'echo': 'secret-fixture'}}}
+            for cached in (False, True):
+                if cached:
+                    self.run_cli('vendors', '2604', code=3)
+                for as_json in (False, True):
+                    result = self.run_cli('refresh', 'catalogue', *(['--json'] if as_json else []), code=4)
+                    self.assertNotIn('secret-fixture', result.stdout + result.stderr)
+                    self.assertEqual(result.stderr, '')
+                    if as_json:
+                        data = json.loads(result.stdout)
+                        self.assertEqual(data['refreshed'], 'catalogue')
+                        self.assertEqual((data['vendor_sync']['failed'], data['vendor_sync']['requests']), (True, 1))
+                    else:
+                        self.assertIn('catalogue refreshed', result.stdout)
+                        self.assertIn('ForeverDB sync: failed; 1 requests this refresh', result.stdout)
+                        self.assertEqual(result.stdout.count('ForeverDB sync failed'), 1)
+                        if not cached:
+                            self.assertNotIn('retaining', result.stdout)
 
     case = Replay('test_' + name)
     case.server = fixture.server
@@ -398,19 +429,53 @@ def replay_db(engine, module, name):
             s.clock_to(first, days=1); s.sync()               # the first has expired
             s.clock_to(second, days=1); s.sync()              # and now the second
             s.tomorrow(); s.sync(); s.status()
-        elif name == 'legacy_checkpoint_migrates_own_requests_at_finish_or_last_request':
-            for timestamp in ('finished_at', 'last_request_at'):
-                stamp = lambda **ago: (s.engine.now() - datetime.timedelta(**ago)).isoformat(timespec='seconds').replace('+00:00', 'Z')
-                for stale in ('pending.json', 'index.json'):
-                    (s.cache / stale).unlink(missing_ok=True)
-                s.cache.mkdir(parents=True, exist_ok=True)
-                (s.cache / 'attempt.json').write_text(json.dumps({
-                    'attempted_at': stamp(days=2), timestamp: stamp(minutes=34), 'requests': 2,
-                    'total_requests': 100, 'sync_id': 'legacy', 'failed': False}))
-                s.env[CAP] = '2'
-                s.sync()
-                s.env[CAP] = '6'
-                s.sync(); s.sync(); s.status()
+        elif name == 'index_omits_checkpoint_payload_and_ignores_legacy_fields':
+            s.sync(); s.lookup()
+            path = s.cache / 'index.json'
+            index = json.loads(path.read_text())
+            index.update(details={'obsolete': 'ignored'}, sync_requests=-1)
+            path.write_text(json.dumps(index))
+            s.lookup(); s.status(); s.tomorrow(); s.sync(); s.lookup()
+        elif name == 'sync_result_shape_on_success_failure_deferred_and_unconfigured':
+            key = s.env.pop('EVERLEDGER_FOREVERDB_API_KEY')
+            s.sync(); s.status()
+            s.env['EVERLEDGER_FOREVERDB_API_KEY'] = key
+            f.scripts = {1: {'status': 503, 'body': {'secret': 'private upstream'}}}
+            s.sync(forbidden=('private upstream',))
+            f.scripts = {}
+            s.env[CAP] = '1'
+            s.sync()
+            s.env.pop(CAP)
+            s.sync(); s.status()
+        elif name == 'refresh_cached_returns_setup_failure_without_raising':
+            s.env['EVERLEDGER_FOREVERDB_API_KEY'] = ''
+            s.env['EVERLEDGER_FOREVERDB_API_KEY_FILE'] = str(s.root)
+            s.sync(); s.status(); s.lookup()
+        elif name == 'sync_checkpoint_write_failure_preserves_request_count':
+            page = f.forever['pages'][0]
+            for blocked in ('pending.json', 'attempt.json'):
+                shutil.rmtree(s.cache, ignore_errors=True)
+
+                def block(blocked=blocked):
+                    path = s.cache / blocked
+                    path.unlink(missing_ok=True)
+                    path.mkdir()
+                f.scripts = {1: {'hold': True, 'body': page}}
+                s.sync(interfere=block)
+                f.scripts = {}
+                s.status(); s.sync()
+        elif name == '502_long_wait_is_pending_and_resumes_after_not_before':
+            f.scripts = {1: {'status': 502, 'body': {'retryable': True, 'retry_after': 301}}}
+            s.sync(); s.status()
+            f.scripts = {}
+            s.sync()
+            s.advance(seconds=302)
+            s.sync(); s.lookup()
+        elif name == '502_numeric_delays_never_overflow_or_sleep_over_300':
+            for delay in ('0', '60', '299.9', '300', '301', '1e15', '1' + '0' * 1000, 'Infinity', '-Infinity', 'NaN'):
+                shutil.rmtree(s.cache, ignore_errors=True)
+                f.scripts = {1: {'status': 502, 'body': '{"retryable": true, "retry_after": %s}' % delay}}
+                s.sync(); s.status()
         elif name == 'abrupt_exit_preserves_prior_window_spend':
             s.env[CAP] = '8'
             s.sync()

@@ -301,7 +301,8 @@ class Engine:
                    EVERLEDGER_PARITY_ELAPSED=str(controls / 'elapsed'))
         return env
 
-    def capture(self, command, args, given, fixture, directory, initial, controls, death=None, plain=False):
+    def capture(self, command, args, given, fixture, directory, initial, controls, death=None, plain=False,
+                interfere=None):
         restore(directory, initial)
         fixture.reset()
         (controls / 'elapsed').write_text('0.0')
@@ -320,6 +321,13 @@ class Engine:
                 # server is released; otherwise a response can win the race.
                 stdout, stderr = process.communicate(timeout=15)
                 fixture.release.set()
+            elif interfere:
+                # Change the data directory while the process waits on a held response.
+                if not fixture.held.wait(15):
+                    raise TimeoutError('process did not reach held response')
+                interfere()
+                fixture.release.set()
+                stdout, stderr = process.communicate(timeout=self.timeout)
             else:
                 stdout, stderr = process.communicate(timeout=self.timeout)
         except BaseException:
@@ -336,7 +344,7 @@ class Engine:
                 'sleep_log': (controls / 'sleeps').read_bytes(), 'files': snapshot(directory),
                 'modes': modes(directory)}
 
-    def step(self, name, args, given, fixture, directory, death=None, policy=None, forbidden=()):
+    def step(self, name, args, given, fixture, directory, death=None, policy=None, forbidden=(), interfere=None):
         requests_before = list(fixture.vocabulary.requests)
         before = snapshot(directory)
         self.candidate_files = changes(self.previous, before, self.candidate_files)
@@ -354,8 +362,9 @@ class Engine:
                 if rendering == 0:
                     start_norms = copy.deepcopy(self.normalizers)
                 a = self.capture([sys.executable, str(ROOT / 'parity/oracle.py')], argv,
-                                 given, fixture, directory, before, controls, death)
-                b = self.capture(self.candidate, argv, given, fixture, directory, candidate_before, controls, death)
+                                 given, fixture, directory, before, controls, death, interfere=interfere)
+                b = self.capture(self.candidate, argv, given, fixture, directory, candidate_before, controls, death,
+                                 interfere=interfere)
                 if '--help' in argv and (not a['stdout'] or not b['stdout']):
                     self.errors.append(name + ': help must have non-empty stdout')
                 state, diffs = compare(norms[0].transcript(a), norms[1].transcript(b), policy_for(argv, a, policy))
