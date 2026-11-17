@@ -1,6 +1,7 @@
 """Vendor-only, checkpointed ForeverDB sync; no request occurs during lookup/status."""
 import datetime as dt
 import fcntl
+import http.client
 import importlib
 import json
 import math
@@ -82,15 +83,16 @@ def request(url, headers):
             raise Failure('ForeverDB connector request preparation failed', 4) from None
     req.add_header('User-Agent', USER_AGENT)
     try:
-        with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
-            return response.read(), dict(response.headers)
-    except urllib.error.HTTPError as error:
         try:
-            body = json.loads(error.read())
-        except (ValueError, UnicodeError):
-            body = None
-        raise Failure('ForeverDB HTTP error', 4, {'status': error.code, 'response': body}) from None
-    except (urllib.error.URLError, OSError):
+            with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
+                return response.read(), dict(response.headers)
+        except urllib.error.HTTPError as error:
+            try:
+                body = json.loads(error.read())
+            except (ValueError, UnicodeError):
+                body = None
+            raise Failure('ForeverDB HTTP error', 4, {'status': error.code, 'response': body}) from None
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
         raise Failure('ForeverDB transport failed', 4) from None
 
 
