@@ -43,7 +43,6 @@ pub(super) struct Guard {
     snapshot: Arc<Mutex<Option<Snapshot>>>,
     interrupted: Arc<AtomicBool>,
     flag_id: signal_hook::SigId,
-    default_id: signal_hook::SigId,
     default_enabled: Arc<AtomicBool>,
     dir: PathBuf,
     handle: Handle,
@@ -56,8 +55,6 @@ impl Guard {
         let flag_id = signal_hook::flag::register(SIGINT, Arc::clone(&interrupted))?;
         let mut signals = Signals::new([SIGINT])?;
         let handle = signals.handle();
-        let default_id =
-            signal_hook::flag::register_conditional_default(SIGINT, Arc::clone(&default_enabled))?;
         let snapshot: Arc<Mutex<Option<Snapshot>>> = Arc::new(Mutex::new(None));
         let state = Arc::clone(&snapshot);
         let directory = PathBuf::from(dir);
@@ -95,7 +92,6 @@ impl Guard {
             snapshot,
             interrupted,
             flag_id,
-            default_id,
             default_enabled,
             dir: directory,
             handle,
@@ -157,6 +153,5 @@ impl Drop for Guard {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
-        signal_hook::low_level::unregister(self.default_id);
     }
 }
