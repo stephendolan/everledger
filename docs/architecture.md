@@ -72,16 +72,33 @@ five exit codes.
 
 ## The ForeverDB sync
 
-The service allows 36 requests per 24 hours and a full sync needs 1,025, so a
-sync is a traversal spread over weeks. Its correctness is an ordering:
+A sync spends a budget of requests over a rolling 24 hours. The cap is 36
+unless `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` sets it. `attempt.json` records
+what each attempt spent and when it ended; a spend counts for 24 hours, and an
+attempt may send the cap less the spends still counting. A full sync needs
+1,025 requests, so at the default cap it is a traversal spread over weeks, and
+at a cap above 1,025 it is one attempt. Its correctness is an ordering either
+way:
 
-- The attempt journal is written before each request is sent, so the cooldown
-  holds if the process dies mid-request.
+- The attempt journal is written before each request is sent, so a request is
+  counted even if the process dies while it is in flight. The next reader
+  dates that attempt's spend from its last request start.
 - The checkpoint is written after each finished page and each finished detail.
 - The index is published by atomic replace only when every detail is present.
-- The cap is a compile-time constant with no override.
+- The budget is fixed when an attempt starts. Spends that expire while it runs
+  leave the journal and add nothing to it.
+- Request starts are 2.1 seconds apart at any cap.
 - One `flock` on `sync.lock` serializes syncs, including against the Python
   implementation on the same data directory.
+
+`attempt.json` has one reader and one writer. The reader adds the spend of a
+journal that records none for its own attempt (one written before spends
+existed, or one left by a killed attempt) and drops expired spends; the writer
+drops them again. `status` and `vendors` read the journal through that reader.
+
+The cap is read once, before the arguments, into `config::DailyRequestCap`,
+which cannot be zero. A value that is not a positive integer ends every
+invocation as a usage error, whatever the command.
 
 The connector transport runs each request through `foreverdb_connector.py`, a
 Python process that calls the `dynamic_credentials` helper and performs the
