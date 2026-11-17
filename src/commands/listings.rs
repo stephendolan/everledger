@@ -16,7 +16,7 @@ use crate::{
     http::Payload,
     journal::{recount, row_payloads, source_documents},
     market::PriceTable,
-    provenance::{Field, Source, SourceData, sources, stale_code},
+    provenance::{Field, Source, SourceData, is_stale, sources},
 };
 use serde::Deserialize;
 
@@ -116,6 +116,13 @@ pub fn listings(
     )?;
     let mut used = sources(data.document())?;
     used.extend(pricing_sources(&data, "scans", "pricing")?);
+    let mut unique: Vec<Source> = vec![];
+    for source in used {
+        if !unique.iter().any(|s| s.document() == source.document()) {
+            unique.push(source);
+        }
+    }
+    let used = unique;
     data.set("sources", source_documents(used))?;
     let mut rows = listing_rows(&data)?;
     for row in &mut rows {
@@ -200,12 +207,11 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     data.set("sources", source_documents(used))?;
     let mut freshness = vec![market_source];
     freshness.extend(listing_sources(&data)?);
-    let code = stale_code(&freshness);
+    let stale = is_stale(&freshness);
     let lines = crate::human::listings::lines(&listing_rows(&data)?);
     let mut document = data.into_document();
     disclose_item_source(&mut document, item.as_ref(), context)?;
     let mut output = CommandOutput::new(document, lines);
-    output.code = code;
-    output.stale = Some(code == crate::ExitCode::Stale);
+    output.stale = stale;
     Ok(output)
 }

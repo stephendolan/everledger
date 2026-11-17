@@ -41,5 +41,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     ]);
     let mut output = CommandOutput::new(data, lines);
     output.code = code;
+    output.stale = code == crate::ExitCode::Stale;
     Ok(output)
 }

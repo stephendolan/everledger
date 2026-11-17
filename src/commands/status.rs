@@ -9,7 +9,7 @@ use crate::{
     commands::CommandOutput,
     document::Document,
     http::Request,
-    provenance::{Field, Source, sources, stale_code},
+    provenance::{Field, Source, is_stale, sources},
     vendors::status::Backend,
 };
 use serde::Deserialize;
@@ -39,8 +39,8 @@ impl Probe {
         }
     }
 }
-fn probe(probe: &Probe, context: &Context<'_>) -> Result<(Document, Vec<Source>, ExitCode)> {
-    let (data, code) = match probe {
+fn probe(probe: &Probe, context: &Context<'_>) -> Result<(Document, Vec<Source>, bool)> {
+    let (data, stale) = match probe {
         Probe::Roster => {
             let data = crate::roster::roster::<ServiceStatus>(
                 context.http,
@@ -48,12 +48,12 @@ fn probe(probe: &Probe, context: &Context<'_>) -> Result<(Document, Vec<Source>,
                 "/characters",
                 &[],
             )?;
-            (data.into_document(), ExitCode::Answer)
+            (data.into_document(), false)
         }
         Probe::Outcomes => {
             let query = crate::journal::EventQuery {
                 view: crate::journal::View::default(),
-                limit: Some(0),
+                limit: Some(1),
                 query: crate::journal::Query::Window {
                     since: None,
                     until: None,
@@ -61,15 +61,17 @@ fn probe(probe: &Probe, context: &Context<'_>) -> Result<(Document, Vec<Source>,
                 },
             };
             (
-                crate::journal::fetch_events(query, context)?.into_document(),
-                ExitCode::Answer,
+                crate::journal::event_page(&query, context)?
+                    .data
+                    .into_document(),
+                false,
             )
         }
         Probe::Listings => {
             let data: crate::commands::listings::Listings =
                 crate::roster::roster(context.http, context.config, "/listings", &[])?;
-            let code = stale_code(&crate::commands::listings::listing_sources(&data)?);
-            (data.into_document(), code)
+            let stale = is_stale(&crate::commands::listings::listing_sources(&data)?);
+            (data.into_document(), stale)
         }
     };
     let view: ServiceStatus = data.decode("service status")?;
@@ -86,7 +88,7 @@ fn probe(probe: &Probe, context: &Context<'_>) -> Result<(Document, Vec<Source>,
             ("sources", source_documents(&used)),
         ]),
         used,
-        code,
+        stale,
     ))
 }
 fn source_documents(sources: &[Source]) -> Document {
@@ -109,6 +111,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let mut used = vec![];
     let mut roster_sources = vec![];
     let mut code = ExitCode::Answer;
+    let mut stale = false;
     match crate::catalogue::load_catalogue(context) {
         Ok(cat) => {
             let (ok, checks) = crate::commands::verify::check_catalogue(cat);
@@ -130,11 +133,11 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     }
     for probe_kind in [Probe::Roster, Probe::Outcomes, Probe::Listings] {
         match probe(&probe_kind, context) {
-            Ok((row, sources, probe_code)) => {
+            Ok((row, sources, probe_stale)) => {
                 roster_sources.extend(sources.clone());
                 used.extend(sources);
                 rows.push(row);
-                accumulate(&mut code, probe_code);
+                stale |= probe_stale;
             }
             Err(e) => failure(probe_kind.name(), e, &mut rows, &mut code),
         }
@@ -158,7 +161,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                     row.set(key, value.clone())?;
                 }
             }
-            accumulate(&mut code, stale_code(std::slice::from_ref(&source)));
+            stale |= is_stale(std::slice::from_ref(&source));
             used.push(source);
             rows.push(row);
         }
@@ -181,7 +184,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             vendor.set("state", state)?;
         }
     }
-    accumulate(&mut code, stale_code(&source));
+    stale |= is_stale(&source);
     used.extend(source);
     rows.push(vendor.document().clone());
     let typed = rows
@@ -195,6 +198,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     ]);
     let mut output = CommandOutput::new(data, lines);
     output.code = code;
+    output.stale = stale;
     output.source_families = vec![("roster service".into(), roster_sources)];
     Ok(output)
 }

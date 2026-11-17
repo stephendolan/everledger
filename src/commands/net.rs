@@ -21,7 +21,7 @@ use crate::{
     },
     document::Document,
     journal::{self, Selectors},
-    provenance::{Field, sources},
+    provenance::{Field, is_stale, sources},
 };
 use serde::{Deserialize, Serialize};
 
@@ -173,9 +173,13 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         "unverified: real posting/invoice/expiry cycle required",
     )?;
     document.set("match_basis", Document::from_typed(&match_basis)?)?;
+    let stale = is_stale(&listing_sources(&current)?);
+    document.set("stale", stale)?;
     let mut used = sources(data.document())?;
     used.extend(sources(current.document())?);
     used.push(catalogue::catalogue_source(cat, context.clock)?);
     document.set("sources", journal::source_documents(used))?;
-    Ok(CommandOutput::new(document, lines))
+    let mut output = CommandOutput::new(document, lines);
+    output.stale = stale;
+    Ok(output)
 }

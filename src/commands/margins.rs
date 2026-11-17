@@ -7,8 +7,6 @@ pub struct Args {
     pub level: Option<i64>,
     #[arg(long = "char", allow_negative_numbers = true)]
     pub char: Option<String>,
-    #[arg(long = "known", allow_negative_numbers = true, hide = true)]
-    pub known: Option<String>,
     #[arg(long = "json", help = "one JSON document using API field names")]
     pub json: bool,
 }
@@ -77,23 +75,7 @@ pub fn quote(
 }
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let cat = catalogue::load_catalogue(context)?;
-    if let Some(known) = args.known.as_ref().filter(|s| !s.is_empty()) {
-        context.diagnostics.warn("deprecated --known; use --char")?;
-        if args
-            .char
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .is_some_and(|n| n != known)
-        {
-            return Err(Failure::usage("--known conflicts with --char"));
-        }
-    }
-    let name = args
-        .known
-        .as_ref()
-        .filter(|s| !s.is_empty())
-        .or(args.char.as_ref())
-        .filter(|s| !s.is_empty());
+    let name = args.char.as_ref().filter(|s| !s.is_empty());
     let mut used = vec![catalogue::catalogue_source(cat, context.clock)?];
     let ch = if let Some(n) = name {
         let s = read_roster::character(context, n)?;
@@ -253,7 +235,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         })
         .collect::<Result<Vec<_>>>()?;
     let lines = crate::human::margins::render(&rows);
-    let code = crate::provenance::stale_code(&used);
+    let stale = crate::provenance::is_stale(&used);
     let mut out = CommandOutput::new(
         Document::object([
             ("margins", Document::Array(docs)),
@@ -264,6 +246,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         ]),
         lines,
     );
-    out.code = code;
+    out.stale = stale;
     Ok(out)
 }

@@ -69,6 +69,7 @@ pub struct SourceData {
     pub scanned_at: Option<String>,
     pub mtime: Option<String>,
     pub updated_at: Option<String>,
+    pub fetched_at: Option<String>,
     #[serde(default)]
     pub scan_age_seconds: Field<SourceAge>,
     #[serde(default)]
@@ -107,8 +108,11 @@ pub fn sources(data: &Document) -> Result<Vec<Source>> {
         _ => Err(crate::Failure::shape("sources", "expected array or object")),
     }
 }
+pub fn is_stale(items: &[Source]) -> bool {
+    items.iter().any(|s| s.view().stale == Some(true))
+}
 pub fn stale_code(items: &[Source]) -> ExitCode {
-    if items.iter().any(|s| s.view().stale == Some(true)) {
+    if is_stale(items) {
         ExitCode::Stale
     } else {
         ExitCode::Answer

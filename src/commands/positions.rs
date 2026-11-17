@@ -9,13 +9,13 @@ pub struct Args {
     pub json: bool,
 }
 use crate::{
-    Context, Copper, ExitCode, Failure, Result,
+    Context, Copper, Failure, Result,
     catalogue::{self, Item, ItemRow, RecordedItem, item_matches},
     commands::{CommandOutput, listings},
     document::Document,
     http::Payload,
-    journal::{self, Character, SelectedCharacter, Selectors},
-    provenance::{Field, sources, stale_code},
+    journal::{self, Character, Selectors},
+    provenance::{Field, is_stale, sources},
     roster::{character_path, roster},
 };
 use serde::{Deserialize, Serialize};
@@ -176,13 +176,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         .transpose()?;
     let (prices, market_source) = crate::market::market_table(context)?;
     let chars: Payload<Characters> = roster(context.http, context.config, "/characters", &[])?;
-    let entries = if let Some(name) = args.char.as_deref().filter(|s| !s.is_empty()) {
-        let selected: Payload<SelectedCharacter> =
-            roster(context.http, context.config, &character_path(name), &[])?;
-        vec![selected.view().selected()?.clone()]
-    } else {
-        chars.view().characters.clone()
-    };
     let params = journal::event_params(
         Selectors {
             character: args.char.as_deref(),
@@ -196,6 +189,14 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         },
         context,
     )?;
+    let entries = if args.char.as_deref().is_some_and(|s| !s.is_empty()) {
+        vec![Character {
+            name: params.view.char.clone().map_or(Field::Null, Field::Value),
+            short_name: None,
+        }]
+    } else {
+        chars.view().characters.clone()
+    };
     let journal = journal::item_events(params, item.as_ref(), context)?;
     let item_id = item.as_ref().map(|i| i.id.to_string());
     let current = listings::listings(
@@ -337,7 +338,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         row.match_basis.dedup();
     }
     let complete = availability.iter().all(|a| a.available == Some(true));
-    let stale = stale_code(&freshness) == ExitCode::Stale;
+    let stale = is_stale(&freshness);
     let lines = crate::human::positions::lines(&rows, complete);
     let mut document = Document::object([
         (
@@ -366,11 +367,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     ]);
     catalogue::disclose_item_source(&mut document, item.as_ref(), context)?;
     let mut output = CommandOutput::new(document, lines);
-    output.stale = Some(stale);
-    output.code = if stale {
-        ExitCode::Stale
-    } else {
-        ExitCode::Answer
-    };
+    output.stale = stale;
     Ok(output)
 }

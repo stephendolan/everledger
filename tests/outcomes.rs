@@ -290,3 +290,261 @@ fn character_resolution_precedes_after_validation_and_allows_null_name() {
         "empty --after; bootstrap with: everledger events --limit 0 --json\n"
     );
 }
+
+#[test]
+fn stale_notice_and_exit_code_follow_the_same_freshness_decision() {
+    for json in [false, true] {
+        for (command, stale) in [
+            ("sales", false),
+            ("purchases", false),
+            ("events", false),
+            ("expirations", true),
+            ("net", true),
+        ] {
+            let journal = body(
+                r#"{"events":[{"type":"posting","venue":"auction","item":{"id":2604},"count":1},{"type":"expiration","venue":"auction","item":{"id":2604},"count":1}],"sources":[{"file":"Journalator.lua","mtime":"2020-01-01T00:00:00Z","stale":true}]}"#,
+            );
+            let mut responses = vec![journal];
+            if command == "expirations" {
+                responses.push(body("m|v|1\n2604:88:87:709:::::10"));
+            } else if command == "net" {
+                responses.push(body(r#"{"listings":[],"scans":[{"available":true,"pricing":{"available":true,"source":{"file":"scan.lua","stale":true}}}]}"#));
+            }
+            let http = Fixture::new(responses);
+            let mut args = vec![command];
+            if command == "net" {
+                args.push("2604");
+            }
+            if json {
+                args.push("--json");
+            }
+            let (code, output, stderr) = execute(&args, &http);
+            assert_eq!(
+                code,
+                if stale {
+                    ExitCode::Stale
+                } else {
+                    ExitCode::Answer
+                },
+                "{args:?}: {stderr}"
+            );
+            assert!(stderr.is_empty());
+            if json {
+                let data = document::parse(&output).unwrap();
+                if command == "net" {
+                    assert_eq!(data.get("stale"), Some(&Document::Bool(true)));
+                }
+            } else {
+                assert_eq!(
+                    output
+                        .matches("stale: data exceeds its freshness limit")
+                        .count(),
+                    usize::from(stale),
+                    "{args:?}"
+                );
+                let lines = output.lines().collect::<Vec<_>>();
+                assert!(lines.last().unwrap().starts_with("source:"));
+                assert!(lines.last().unwrap().contains("Journalator.lua"));
+                if stale {
+                    assert_eq!(
+                        lines[lines.len() - 2],
+                        "stale: data exceeds its freshness limit"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn expirations_without_rows_never_fetch_the_market_and_old_journal_is_not_stale() {
+    for json in [false, true] {
+        for rows in [false, true] {
+            let mut responses = vec![body(if rows {
+                r#"{"events":[{"type":"expiration","item":{"id":2604},"count":1}],"sources":[{"file":"old.lua","stale":true}]}"#
+            } else {
+                r#"{"events":[],"sources":[{"file":"old.lua","stale":true}]}"#
+            })];
+            if rows {
+                responses.push(body("m|v|1794744000\n2604:88:87:709.9:::::10"));
+            }
+            let http = Fixture::new(responses);
+            let mut args = vec!["expirations"];
+            if json {
+                args.push("--json");
+            }
+            let (code, output, stderr) = execute(&args, &http);
+            assert_eq!(code, ExitCode::Answer, "{stderr}");
+            assert!(!output.contains("stale: data exceeds"));
+            assert_eq!(http.requests.borrow().len(), if rows { 2 } else { 1 });
+            if rows && json {
+                let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+                assert!(json["expirations"][0]["market"]["quantity"].is_i64());
+                let data = document::parse(&output).unwrap();
+                assert_eq!(
+                    data.get("expirations").unwrap().as_array().unwrap()[0]
+                        .get("market")
+                        .unwrap()
+                        .get("quantity"),
+                    Some(&Document::from(709_i64))
+                );
+            } else if rows {
+                assert!(output.contains("listed 709 |"));
+            }
+        }
+    }
+}
+
+#[test]
+fn listing_sources_keep_only_first_occurrences_in_order() {
+    let http = Fixture::new([
+        body("m|v|1794744000\n2604:88:87:709:::::10"),
+        body(
+            r#"{"listings":[],"sources":[{"file":"A","stale":false},{"stale":false,"file":"A"},{"file":"B","stale":false}],"scans":[{"pricing":{"source":{"file":"A","stale":false}}},{"pricing":{"source":{"file":"C","stale":false}}},{"pricing":{"source":{"file":"C","stale":false}}}]}"#,
+        ),
+    ]);
+    let (code, output, stderr) = execute(&["listings", "--json"], &http);
+    assert_eq!(code, ExitCode::Answer, "{stderr}");
+    let data = document::parse(&output).unwrap();
+    let used = data.get("sources").unwrap().as_array().unwrap();
+    assert_eq!(used.len(), 4);
+    assert_eq!(
+        used.iter()
+            .take(3)
+            .map(|s| s.get("file").unwrap().as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["A", "B", "C"]
+    );
+    assert_eq!(
+        document::dumps(&used[0], document::JsonMode::Stdout),
+        r#"{"file": "A", "stale": false}"#
+    );
+    assert_eq!(data.get("scans").unwrap().as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn selected_positions_resolve_the_character_once_and_use_the_resolved_name() {
+    let http = Fixture::new([
+        body("m|v|1794744000\n2604:88:87:709:::::10"),
+        body(r#"{"characters":[{"name":"Other"}]}"#),
+        body(r#"{"character":{"name":"Slade Undertow","short_name":"Wrong"}}"#),
+        body(r#"{"events":[]}"#),
+        body(r#"{"listings":[]}"#),
+        body(r#"{"bags":{"available":true,"items":[{"item_id":2604,"count":4}]}}"#),
+    ]);
+    let (code, output, stderr) = execute(
+        &["positions", "--char", "Slade", "--item", "2604", "--json"],
+        &http,
+    );
+    assert_eq!(code, ExitCode::Answer, "{stderr}");
+    assert_eq!(
+        *http.requests.borrow(),
+        [
+            "http://127.0.0.1/v1/pricetable/forever.pvp.alliance.us",
+            "http://127.0.0.1/characters",
+            "http://127.0.0.1/characters/Slade",
+            "http://127.0.0.1/events?limit=500&since=1794139200",
+            "http://127.0.0.1/listings?char=Slade&item=2604",
+            "http://127.0.0.1/characters/Slade%20Undertow/inventory",
+        ]
+    );
+    let data = document::parse(&output).unwrap();
+    let row = &data.get("positions").unwrap().as_array().unwrap()[0];
+    assert_eq!(row.get("held").and_then(Document::as_i64), Some(4));
+    assert_eq!(
+        row.get("locations").unwrap().as_array().unwrap()[0]
+            .get("character")
+            .and_then(Document::as_str),
+        Some("Slade Undertow")
+    );
+}
+
+#[test]
+fn reconciled_net_omits_deposits_lost_and_carries_freshness() {
+    for json in [false, true] {
+        let http = Fixture::new([
+            body(
+                r#"{"events":[{"type":"posting","venue":"auction","item":{"id":2604},"count":1},{"type":"sale","venue":"auction","item":{"id":2604},"count":1}],"sources":[{"file":"old.lua","stale":true}]}"#,
+            ),
+            body(r#"{"listings":[],"sources":[{"file":"scan.lua","stale":false}]}"#),
+        ]);
+        let mut args = vec!["net", "2604"];
+        if json {
+            args.push("--json");
+        }
+        let (code, output, stderr) = execute(&args, &http);
+        assert_eq!(code, ExitCode::Answer, "{stderr}");
+        assert!(!output.contains("deposits lost"));
+        assert!(!output.contains("stale: data exceeds"));
+        if json {
+            let data = document::parse(&output).unwrap();
+            assert_eq!(data.get("unaccounted"), Some(&Document::from(0_i64)));
+            assert_eq!(data.get("deposits_lost_copper"), Some(&Document::Null));
+            assert_eq!(data.get("stale"), Some(&Document::Bool(false)));
+        }
+    }
+}
+
+#[test]
+fn positions_freshness_uses_market_roster_inventory_and_listings_but_not_journal_age() {
+    for stale_kind in [
+        "none",
+        "market",
+        "characters",
+        "listing",
+        "inventory",
+        "journal",
+    ] {
+        for json in [false, true] {
+            let stale = ["market", "characters", "listing", "inventory"].contains(&stale_kind);
+            let epoch = if stale_kind == "market" {
+                1
+            } else {
+                1794744000
+            };
+            let http = Fixture::new([
+                body(&format!("m|v|{epoch}\n2604:88:87:709:::::10")),
+                body(&format!(
+                    r#"{{"characters":[{{"name":"Slade"}}],"sources":[{{"file":"roster.lua","stale":{}}}]}}"#,
+                    stale_kind == "characters"
+                )),
+                body(&format!(
+                    r#"{{"events":[],"sources":[{{"file":"Journalator.lua","mtime":"2020-01-01T00:00:00Z","stale":{}}}]}}"#,
+                    stale_kind == "journal"
+                )),
+                body(&format!(
+                    r#"{{"listings":[],"scans":[{{"pricing":{{"source":{{"file":"scan.lua","stale":{}}}}}}}]}}"#,
+                    stale_kind == "listing"
+                )),
+                body(&format!(
+                    r#"{{"sources":[{{"file":"inventory.lua","stale":{}}}]}}"#,
+                    stale_kind == "inventory"
+                )),
+            ]);
+            let mut args = vec!["positions"];
+            if json {
+                args.push("--json");
+            }
+            let (code, output, stderr) = execute(&args, &http);
+            assert_eq!(
+                code,
+                if stale {
+                    ExitCode::Stale
+                } else {
+                    ExitCode::Answer
+                },
+                "{stale_kind}: {stderr}"
+            );
+            assert_eq!(
+                output.matches("stale: data exceeds").count(),
+                usize::from(stale && !json)
+            );
+            if json {
+                assert_eq!(
+                    document::parse(&output).unwrap().get("stale"),
+                    Some(&Document::Bool(stale))
+                );
+            }
+        }
+    }
+}

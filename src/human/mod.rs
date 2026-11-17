@@ -47,7 +47,8 @@ pub fn source_lines(items: &[Source], families: &SourceFamilies, clock: &dyn Clo
         let when = nonempty(v.saved_at.as_deref())
             .or(nonempty(v.scanned_at.as_deref()))
             .or(nonempty(v.mtime.as_deref()))
-            .or(nonempty(v.updated_at.as_deref()));
+            .or(nonempty(v.updated_at.as_deref()))
+            .or(nonempty(v.fetched_at.as_deref()));
         let seconds = match &v.scan_age_seconds {
             Field::Missing => match &v.file_age_seconds {
                 Field::Missing => match &v.age_seconds {
@@ -60,7 +61,8 @@ pub fn source_lines(items: &[Source], families: &SourceFamilies, clock: &dyn Clo
             },
             Field::Null => None,
             Field::Value(a) => Some(*a),
-        };
+        }
+        .or_else(|| crate::time::age(when, clock).map(SourceAge::Integer));
         let index = groups
             .iter()
             .position(|g| g.name == name)
@@ -156,7 +158,7 @@ pub fn emit(
     data: &Document,
     lines: &[String],
     as_json: bool,
-    stale: Option<bool>,
+    stale: bool,
     families: &SourceFamilies,
     clock: &dyn Clock,
 ) -> Result<String> {
@@ -164,19 +166,6 @@ pub fn emit(
         return Ok(dumps(data, JsonMode::Stdout) + "\n");
     }
     let items = sources(data)?;
-    let stale = stale.unwrap_or_else(|| {
-        items.iter().any(|s| {
-            s.view().stale == Some(true)
-                && !s
-                    .view()
-                    .file
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .or(s.view().name.as_deref())
-                    .unwrap_or("")
-                    .contains("Journalator")
-        })
-    });
     let mut lines = lines.to_vec();
     if stale {
         lines.push("stale: data exceeds its freshness limit".into());

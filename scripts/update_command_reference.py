@@ -14,7 +14,9 @@ def main():
     readme = Path(__file__).resolve().parents[1] / 'README.md'
     prefix, reference = readme.read_bytes().split(b'```text\n', 1)
     reference, suffix = reference.split(b'## ForeverDB backend\n', 1)
-    commands = [None, *re.findall(rb'^## ([a-z]+)\n', reference, re.MULTILINE)]
+    help_text = subprocess.run([str(binary), '--help'], capture_output=True, check=True).stdout
+    command_section = help_text.split(b'Commands:\n', 1)[1].split(b'\nOptions:', 1)[0]
+    commands = [None, *re.findall(rb'^  ([a-z]+)\s', command_section, re.MULTILINE)]
     blocks = []
     for command in commands:
         argv = [str(binary)]

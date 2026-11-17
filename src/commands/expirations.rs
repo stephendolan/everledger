@@ -46,8 +46,10 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let mut lines = crate::human::events::event_lines(&rows);
     let mut document = data.document().clone();
     document.remove("events");
+    let mut stale = false;
     if !rows.is_empty() {
         let (prices, market_source) = crate::market::market_table(context)?;
+        stale = market_source.view().stale == Some(true);
         let mut used = sources(&document)?;
         used.push(market_source);
         document.set("sources", journal::source_documents(used))?;
@@ -73,5 +75,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         lines.push(crate::human::events::journal_unavailable(&data));
     }
     disclose_item_source(&mut document, item.as_ref(), context)?;
-    Ok(CommandOutput::new(document, lines))
+    let mut output = CommandOutput::new(document, lines);
+    output.stale = stale;
+    Ok(output)
 }

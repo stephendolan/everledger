@@ -91,15 +91,18 @@ source_cases=[[],[{'name':'A','updated_at':'2026-11-15T12:00:00Z','stale':True}]
     [{'name':'A','saved_at':'z','age_seconds':5},{'name':'A','saved_at':'a','age_seconds':20},{'name':'A','mtime':None,'age_seconds':None}],
     [{'file':'/a/A.lua','file_age_seconds':3,'detail':'Data from A; x'},{'file':'/b/B.lua','age_seconds':10,'detail':'Data from B; y'}],
     [{'name':'A','age_seconds':5,'file_age_seconds':None,'scan_age_seconds':None}],
-    [{'name':'A','age_seconds':1.0},{'name':'B','age_seconds':1.25}]]
+    [{'name':'A','age_seconds':1.0},{'name':'B','age_seconds':1.25}],
+    [{'name':'vendor','fetched_at':'2026-11-15T11:00:00Z','age_seconds':None}],
+    [{'name':'scan','scanned_at':'2026-11-15T10:00:00Z','scan_age_seconds':None,'age_seconds':5}]]
 vec=[]
 for rows in source_cases:
     for family in [False,True]:
         families={'family':[{k:v for k,v in reversed(list(r.items()))} for r in rows]} if family else {}
         data={'sources':rows}
-        output=io.StringIO()
-        with contextlib.redirect_stdout(output):core.emit(data,['row'],False,source_families=families)
-        vec.append(dict(data=data,families=families,output=output.getvalue()))
+        for stale in [False,True]:
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):core.emit(data,['row'],False,stale=stale,source_families=families)
+            vec.append(dict(data=data,stale=stale,families=families,output=output.getvalue()))
 write('emit',vec)
 print('generated randomized float and provenance vectors')
 import runpy
@@ -114,11 +117,11 @@ with tempfile.TemporaryDirectory() as directory:
     core.DATA_DIR=Path(directory)
     for cat in [fixture,null]:
         (core.DATA_DIR/'catalogue.json').write_text(json.dumps(cat))
-        for args in [['verify'],['bridge','tailoring','1','20'],['bridge','TAILORING','1','40'],['bridge','bad','1','20'],['bridge','tailoring','20','1']]:
+        for args in [['bridge','tailoring','1','20'],['bridge','TAILORING','1','40'],['bridge','bad','1','20'],['bridge','tailoring','20','1']]:
             for flags in [[],['--json']]:
                 core.load_catalogue.cache_clear();stdout=io.StringIO();stderr=io.StringIO()
                 with contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):code=ns['main'](args+flags)
                 vec.append(dict(catalogue=json.dumps(cat),args=args+flags,code=code,stdout=stdout.getvalue(),stderr=stderr.getvalue()))
 write('commands',vec)
-print('generated 20 end-to-end command vectors')
+print(f'generated {len(vec)} end-to-end command vectors')
 write('human',[dict(payload=json.dumps(v),output=core.human(v)) for v in [None,'',True,False,1,1.0,'hello','a\x00\b\f\u00a0\u200b']])

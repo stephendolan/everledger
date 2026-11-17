@@ -144,15 +144,22 @@ fn provenance_rendering() {
             })
             .collect();
         assert_eq!(
-            everledger::human::emit(&data, &["row".into()], false, None, &families, &clock)
-                .unwrap(),
+            everledger::human::emit(
+                &data,
+                &["row".into()],
+                false,
+                v["stale"].as_bool().unwrap(),
+                &families,
+                &clock
+            )
+            .unwrap(),
             v["output"].as_str().unwrap(),
             "{v}"
         );
     }
 }
 #[test]
-fn verify_and_bridge() {
+fn bridge_commands() {
     use everledger::{Context, catalogue::CatalogueStore, config::Config, http::UreqHttp};
     let clock = VirtualClock::new(time::instant("2026-11-15T12:00:00.123456Z").unwrap());
     let config = Config::from_values(&Default::default()).unwrap();
