@@ -1,9 +1,9 @@
 use super::write_at;
 use crate::{
     Failure, Result,
-    clock::{Clock, SystemClock},
+    clock::{Clock, SystemClock, VirtualClock},
     document::Document,
-    time::{UtcInstant, iso},
+    time::UtcInstant,
 };
 use signal_hook::{
     consts::SIGINT,
@@ -53,11 +53,12 @@ impl Guard {
                     } else {
                         SystemClock::default().now()
                     };
-                    let _ = s.attempt.set("finished_at", iso(now));
+                    let _ = super::finish_attempt(&mut s.attempt, now);
+                    let clock = VirtualClock::new(now);
                     let _ = s.attempt.set("failed", true);
                     let _ = s.attempt.set("status", Document::Null);
-                    let _ = write_at(&dir, "attempt.json", &s.attempt);
-                    let _ = write_at(&dir, "pending.json", &s.pending);
+                    let _ = write_at(&dir, "attempt.json", &s.attempt, &clock);
+                    let _ = write_at(&dir, "pending.json", &s.pending, &clock);
                 }
                 eprintln!("{}", crate::human::refresh::interrupted());
                 let _ = signal_hook::low_level::emulate_default_handler(signal);
@@ -77,13 +78,13 @@ impl Guard {
             std::thread::park();
         }
     }
-    pub fn write(&self, name: &str, doc: &Document) -> Result<()> {
+    pub fn write(&self, name: &str, doc: &Document, clock: &dyn Clock) -> Result<()> {
         self.wait_if_interrupted();
         let mut state = self
             .snapshot
             .lock()
             .map_err(|_| Failure::error("ForeverDB interrupt state unavailable"))?;
-        write_at(&self.dir, name, doc)?;
+        write_at(&self.dir, name, doc, clock)?;
         if let Some(state) = state.as_mut() {
             match name {
                 "attempt.json" => state.attempt = doc.clone(),
