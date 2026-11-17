@@ -254,6 +254,22 @@ attempts do with the journal and checkpoint left behind.
 python3 scripts/check_foreverdb_recovery.py target/seams/debug/everledger
 ```
 
+## Interrupts and retry delays
+
+`interrupts.py` stages what the runner cannot: it holds a process at a chosen
+request and signals it. Each implementation must end by SIGINT, with its
+journal closed, when the reader of its stderr has gone, and again when the
+signal arrives after the sync, during the ninja refresh that follows an
+incomplete one. The script also runs a retryable 502 through `retry_after`
+values from seconds to numbers no date can hold. Both sides must send the same
+requests and exit with the same code. Where the reference dies of an overflow
+its journal stays open and the candidate's is closed and marked failed, which
+the script reports as sanctioned.
+
+```sh
+python3 parity/interrupts.py target/seams/debug/everledger
+```
+
 ## One data directory, two implementations
 
 During cutover both implementations read and write the same data directory.

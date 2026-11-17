@@ -42,6 +42,13 @@ decoded, with the exit code Python would have produced. This covers a
 container where a scalar belongs, a number where a string belongs, and a
 missing required field.
 
+The ForeverDB attempt journal is one such payload. Its `spends` must be a
+list, and each spend needs a `finished_at` and a `requests` that is a
+non-negative integer. Python reads `requests` only while it syncs, so `status`
+and `vendors` accept a spend without one, and its arithmetic takes a fraction
+or a negative number as written: a negative one enlarges the budget. Rust
+refuses that journal wherever it is read, with exit code 1.
+
 ## Inputs the port does not accept
 
 - **Non-ASCII digits.** Python reads any Unicode decimal digit as a number, in
