@@ -88,6 +88,9 @@ way:
 - The budget is fixed when an attempt starts. Spends that expire while it runs
   leave the journal and add nothing to it.
 - Request starts are 2.1 seconds apart at any cap.
+- An interrupt during a sync closes the journal on a second thread and then
+  ends the process as SIGINT ends one, whatever fails on the way, so a stopped
+  process never keeps the lock. Outside a sync SIGINT has its default effect.
 - One `flock` on `sync.lock` serializes syncs, including against the Python
   implementation on the same data directory.
 
