@@ -10,13 +10,30 @@ use signal_hook::{
     iterator::{Handle, Signals},
 };
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
 };
+struct EndBySigint;
+impl Drop for EndBySigint {
+    fn drop(&mut self) {
+        let _ = signal_hook::low_level::emulate_default_handler(SIGINT);
+    }
+}
+fn default_sigint() -> Result<Arc<AtomicBool>> {
+    static ENABLED: OnceLock<Result<Arc<AtomicBool>>> = OnceLock::new();
+    ENABLED
+        .get_or_init(|| {
+            let enabled = Arc::new(AtomicBool::new(true));
+            signal_hook::flag::register_conditional_default(SIGINT, Arc::clone(&enabled))?;
+            Ok(enabled)
+        })
+        .clone()
+}
 struct Snapshot {
     attempt: Document,
     pending: Document,
@@ -26,16 +43,21 @@ pub(super) struct Guard {
     snapshot: Arc<Mutex<Option<Snapshot>>>,
     interrupted: Arc<AtomicBool>,
     flag_id: signal_hook::SigId,
+    default_id: signal_hook::SigId,
+    default_enabled: Arc<AtomicBool>,
     dir: PathBuf,
     handle: Handle,
     thread: Option<JoinHandle<()>>,
 }
 impl Guard {
     pub fn new(dir: &Path) -> Result<Self> {
-        let mut signals = Signals::new([SIGINT])?;
-        let handle = signals.handle();
+        let default_enabled = default_sigint()?;
         let interrupted = Arc::new(AtomicBool::new(false));
         let flag_id = signal_hook::flag::register(SIGINT, Arc::clone(&interrupted))?;
+        let mut signals = Signals::new([SIGINT])?;
+        let handle = signals.handle();
+        let default_id =
+            signal_hook::flag::register_conditional_default(SIGINT, Arc::clone(&default_enabled))?;
         let snapshot: Arc<Mutex<Option<Snapshot>>> = Arc::new(Mutex::new(None));
         let state = Arc::clone(&snapshot);
         let directory = PathBuf::from(dir);
@@ -45,7 +67,8 @@ impl Guard {
         #[cfg(not(feature = "parity-seams"))]
         let virtual_clock = false;
         let thread = std::thread::spawn(move || {
-            if let Some(signal) = signals.forever().next() {
+            if signals.forever().next().is_some() {
+                let _termination = EndBySigint;
                 let mut state = state.lock().ok();
                 if let Some(s) = state.as_mut().and_then(|state| state.as_mut()) {
                     let now = if virtual_clock {
@@ -60,14 +83,20 @@ impl Guard {
                     let _ = write_at(&dir, "attempt.json", &s.attempt, &clock);
                     let _ = write_at(&dir, "pending.json", &s.pending, &clock);
                 }
-                eprintln!("{}", crate::human::refresh::interrupted());
-                let _ = signal_hook::low_level::emulate_default_handler(signal);
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "{}",
+                    crate::human::refresh::interrupted()
+                );
             }
         });
+        default_enabled.store(false, Ordering::SeqCst);
         Ok(Self {
             snapshot,
             interrupted,
             flag_id,
+            default_id,
+            default_enabled,
             dir: directory,
             handle,
             thread: Some(thread),
@@ -121,11 +150,13 @@ impl Guard {
 }
 impl Drop for Guard {
     fn drop(&mut self) {
+        self.default_enabled.store(true, Ordering::SeqCst);
         self.wait_if_interrupted();
         signal_hook::low_level::unregister(self.flag_id);
         self.handle.close();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        signal_hook::low_level::unregister(self.default_id);
     }
 }

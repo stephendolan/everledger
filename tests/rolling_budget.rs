@@ -18,6 +18,7 @@ use std::{
 struct TestClock {
     wall: Cell<UtcInstant>,
     elapsed: Cell<f64>,
+    sleeps: RefCell<Vec<f64>>,
 }
 impl Clock for TestClock {
     fn now(&self) -> UtcInstant {
@@ -27,12 +28,14 @@ impl Clock for TestClock {
         self.elapsed.get()
     }
     fn sleep(&self, seconds: f64) -> Result<()> {
+        self.sleeps.borrow_mut().push(seconds);
         self.elapsed.set(self.elapsed.get() + seconds);
         Ok(())
     }
 }
 enum Injected {
     Retryable,
+    RetryAfter(Document),
     Failure,
     AbruptExit,
 }
@@ -60,6 +63,22 @@ impl Http for Fixture {
                         body: Some(parse(
                             r#"{"status":502,"response":{"retryable":true,"echo":"secret-fixture"}}"#,
                         )?),
+                    });
+                }
+                Injected::RetryAfter(delay) => {
+                    return Err(Failure {
+                        message: "upstream".into(),
+                        code: everledger::ExitCode::Unreachable,
+                        body: Some(Document::object([
+                            ("status", 502i64.into()),
+                            (
+                                "response",
+                                Document::object([
+                                    ("retryable", true.into()),
+                                    ("retry_after", delay),
+                                ]),
+                            ),
+                        ])),
                     });
                 }
                 Injected::Failure => {
@@ -133,6 +152,7 @@ impl World {
         let clock = Rc::new(TestClock {
             wall: Cell::new(instant("2026-11-15T12:00:00Z").unwrap()),
             elapsed: Cell::new(0.0),
+            sleeps: RefCell::new(vec![]),
         });
         let http = Fixture {
             clock: Rc::clone(&clock),
@@ -558,5 +578,78 @@ fn attempt_writes_prune_expired_spends_without_replenishing_the_fixed_budget() -
     let attempt = std::fs::read_to_string(world.path("attempt.json"))?;
     assert!(attempt.contains("\"sync_id\":"));
     assert!(attempt.find("\"sync_id\":").unwrap() < attempt.find("\"spends\":").unwrap());
+    Ok(())
+}
+
+#[test]
+fn retry_delay_values_match_python_or_close_the_attempt_with_one_request() -> Result<()> {
+    enum Expected {
+        Retry(f64),
+        Undatable,
+    }
+    let huge = format!("1{}", "0".repeat(309));
+    for (raw, expected) in [
+        ("75", Expected::Retry(76.0)),
+        ("90.5", Expected::Retry(92.0)),
+        ("-5", Expected::Retry(61.0)),
+        (r#""soon""#, Expected::Retry(61.0)),
+        ("true", Expected::Retry(61.0)),
+        ("null", Expected::Retry(61.0)),
+        ("1e11", Expected::Retry(100_000_000_001.0)),
+        ("3e11", Expected::Undatable),
+        ("1e13", Expected::Undatable),
+        ("1e14", Expected::Undatable),
+        ("1e20", Expected::Undatable),
+        ("100000000000000000000", Expected::Undatable),
+        ("1e300", Expected::Undatable),
+        ("1e999", Expected::Retry(61.0)),
+        ("-1e999", Expected::Retry(61.0)),
+        (huge.as_str(), Expected::Undatable),
+        (format!("-{huge}").as_str(), Expected::Undatable),
+    ] {
+        let world = World::new("36");
+        world
+            .http
+            .scripts
+            .borrow_mut()
+            .insert(1, Injected::RetryAfter(parse(raw)?));
+        match expected {
+            Expected::Retry(seconds) => {
+                assert!(world.sync()?.view().complete, "{raw}");
+                assert_eq!(world.http.requests.borrow().len(), 7, "{raw}");
+                assert_eq!(
+                    world
+                        .clock
+                        .sleeps
+                        .borrow()
+                        .iter()
+                        .copied()
+                        .find(|n| *n > 0.0),
+                    Some(seconds),
+                    "{raw}"
+                );
+            }
+            Expected::Undatable => {
+                let failure = world.sync().unwrap_err();
+                assert_eq!(failure.code, everledger::ExitCode::Error, "{raw}");
+                assert_eq!(world.http.requests.borrow().len(), 1, "{raw}");
+                assert!(world.clock.sleeps.borrow().is_empty(), "{raw}");
+                let journal = world.disk("attempt.json");
+                assert_eq!(journal.get("failed"), Some(&Document::Bool(true)), "{raw}");
+                assert!(
+                    journal
+                        .get("finished_at")
+                        .and_then(Document::as_str)
+                        .is_some_and(|s| !s.is_empty()),
+                    "{raw}"
+                );
+                assert_eq!(
+                    world.spends(),
+                    Document::Array(vec![spend(1, "2026-11-15T12:00:00Z")])
+                );
+                assert!(world.disk("pending.json").get("retry").is_none(), "{raw}");
+            }
+        }
+    }
     Ok(())
 }
