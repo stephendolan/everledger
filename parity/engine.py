@@ -281,7 +281,8 @@ class Engine:
         self.clock = self.now() + datetime.timedelta(**delta)
 
     def environment(self, given, fixture, directory, controls):
-        env = {k: v for k, v in given.items() if k.startswith('EVERLEDGER_') or k in ('TZ', 'PATH', 'LANG', 'LC_ALL', 'SYSTEMROOT')}
+        env = {k: v for k, v in given.items()
+               if k.startswith('EVERLEDGER_') or k in ('TZ', 'PATH', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'SSL_CERT_FILE')}
         for key in list(env):
             if key.startswith(('EVERLEDGER_SEAM_', 'EVERLEDGER_PARITY_')):
                 del env[key]

@@ -311,6 +311,22 @@ both sides do when the connection closes without a response.
 python3 parity/damage.py target/seams/debug/everledger
 ```
 
+## TLS
+
+Every other check reaches its fixture over plain HTTP, so none of them runs a
+handshake or verifies a certificate. `tls.py` mints a throwaway certificate
+authority, gives the fixture a certificate for `localhost`, and has both
+implementations fetch over TLS. With the authority in `SSL_CERT_FILE` both
+sides must give the same answers: a vendor lookup, a price, status, a catalogue
+rebuild, and a ForeverDB sync by key and by connector. Without the authority,
+and again when the fixture is addressed by a name its certificate does not
+carry, each side must end with exit code 4 and no request may reach the
+fixture. The check needs the `openssl` command.
+
+```sh
+python3 parity/tls.py target/seams/debug/everledger
+```
+
 ## One data directory, two implementations
 
 During cutover both implementations read and write the same data directory.

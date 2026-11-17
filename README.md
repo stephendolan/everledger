@@ -370,6 +370,20 @@ cargo build --release
 cargo test
 ```
 
+A host without a Rust toolchain takes a statically linked binary, built at
+`target/x86_64-unknown-linux-musl/release/everledger`:
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-linux-musl
+```
+
+`CC_x86_64_unknown_linux_musl` names the C compiler for the TLS library's C
+sources; `gcc` serves where no musl compiler wrapper is installed. The binary
+verifies TLS against the host's certificate bundle, found in the standard
+locations or named by `SSL_CERT_FILE`, and runs `python3` from the path when
+the ForeverDB connector is in use.
+
 Regenerate the command reference from the built binary:
 
 ```sh
