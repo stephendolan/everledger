@@ -14,7 +14,11 @@ runs both at once. This does:
   those of the reference making both attempts. The attempts run a day apart
   at the default cap, and back to back under a different cap each, as two
   wrappers with different environments would: the second attempt then spends
-  what the first left of its own cap.
+  what the first left of its own cap. The implementation that did not publish
+  the index then answers a vendor lookup from it.
+- **An index without the blocks nothing reads.** The reference never reads the
+  index's `details` or `sync_requests`. Both implementations must answer from
+  an index that lacks them, and sync again over it.
 - **Lock.** One implementation holds the sync lock mid-request while the other
   starts a refresh on the same directory, both at a cap of 6. The second must
   wait, send no ForeverDB request, and then find the window spent, in both
@@ -40,6 +44,8 @@ PAGES = ['alchemy', 'blacksmithing', 'enchanting', 'engineering', 'leatherworkin
          'cooking', 'first-aid', 'fishing', 'mining', 'herbalism', 'skinning']
 ORACLE = [sys.executable, str(ROOT / 'parity/oracle.py')]
 SYNC_FILES = ('vendors/foreverdb.net/index.json', 'vendors/foreverdb.net/attempt.json')
+REFRESH = ['refresh', 'catalogue', '--json']
+LOOKUPS = (['vendors', '2604', '--json'], ['vendors', '2604'])
 failures = []
 
 
@@ -65,7 +71,8 @@ def environment(cap=None):
 def takeover(engine, first, second, caps, gap):
     """Two attempts on one directory, gap seconds apart, each by the named side under its own cap.
 
-    Returns the first attempt's transcript and the finishing attempt's observables.
+    Returns the first attempt's transcript, the finishing attempt's observables, and what the
+    first side then answers from the index the second published.
     """
     server = fixture()
     server.large()
@@ -77,7 +84,36 @@ def takeover(engine, first, second, caps, gap):
             opening = engine.capture(first, argv, environment(caps[0]), server, directory, snapshot(directory), Path(controls))
             engine.advance(seconds=elapsed(opening) + gap)
             closing = engine.capture(second, argv, environment(caps[1]), server, directory, snapshot(directory), Path(controls))
-            return opening, Normalizer().transcript(closing)
+            engine.advance(seconds=elapsed(closing))
+            published = snapshot(directory)
+            answers = [engine.capture(first, lookup, environment(caps[1]), server, directory, published, Path(controls))
+                       for lookup in LOOKUPS]
+            return opening, Normalizer().transcript(closing), [(answer['exit_code'], answer['stdout']) for answer in answers]
+    finally:
+        server.close()
+
+
+def unread_blocks(engine, candidate):
+    """Both sides read an index that lacks `details` and `sync_requests`, then sync again over it."""
+    server = fixture()
+    try:
+        with tempfile.TemporaryDirectory(prefix='everledger-handoff-') as directory, \
+                tempfile.TemporaryDirectory(prefix='everledger-handoff-controls-') as controls:
+            engine.start_scenario()
+            synced = engine.capture(ORACLE, REFRESH, environment(), server, directory, snapshot(directory), Path(controls))
+            engine.advance(seconds=elapsed(synced))
+            path = Path(directory, SYNC_FILES[0])
+            index = json.loads(path.read_text())
+            path.write_text(json.dumps({key: value for key, value in index.items() if key not in ('details', 'sync_requests')},
+                                       ensure_ascii=False))
+            trimmed = snapshot(directory)
+            for argv in (*LOOKUPS, REFRESH):
+                reference, port = (engine.capture(side, argv, environment(), server, directory, trimmed, Path(controls))
+                                   for side in (ORACLE, candidate))
+                same = all(reference[field] == port[field] for field in ('exit_code', 'stdout', 'requests', 'sleep_log'))
+                check(same and reference['exit_code'] == 0,
+                      f'an index without details or sync_requests: {" ".join(argv)} gives the same answer '
+                      f'(exit {reference["exit_code"]} and {port["exit_code"]})')
     finally:
         server.close()
 
@@ -132,12 +168,12 @@ def main():
     try:
         # Each attempt's cap, the seconds between the two, and what the first then spends on 40 vendors.
         for caps, gap, spent in (((None, None), 86400, 36), ((None, '5000'), 0, 36), (('7', '50'), 0, 7)):
-            _, reference = takeover(engine, ORACLE, ORACLE, caps, gap)
+            _, reference, reference_answers = takeover(engine, ORACLE, ORACLE, caps, gap)
             for first, second, order in ((ORACLE, candidate, 'Rust finishes a sync Python started'),
                                          (candidate, ORACLE, 'Python finishes a sync Rust started')):
                 label = (f'{order} (caps {caps[0] or "default"} then {caps[1] or "default"}, '
                          f'{"a day apart" if gap else "back to back"})')
-                opening, closing = takeover(engine, first, second, caps, gap)
+                opening, closing, answers = takeover(engine, first, second, caps, gap)
                 requests = sum(row['path'].startswith('/api/v1/') for row in opening['requests'])
                 check(requests == spent, f'{label}: the first attempt spends its {spent}-request cap')
                 for name in SYNC_FILES:
@@ -146,6 +182,10 @@ def main():
                 check('vendors/foreverdb.net/pending.json' not in closing['files'], f'{label}: the checkpoint is gone')
                 for field in ('exit_code', 'stdout', 'requests', 'sleep_log'):
                     check(closing[field] == reference[field], f'{label}: finishing attempt has the same {field}')
+                reader = 'Python' if first is ORACLE else 'Rust'
+                check(answers == reference_answers and all(code == 0 for code, _ in answers),
+                      f'{label}: {reader} then answers a vendor lookup from the index the other published')
+        unread_blocks(engine, candidate)
         lock(engine, ORACLE, candidate, 'Python', 'Rust')
         lock(engine, candidate, ORACLE, 'Rust', 'Python')
     finally:

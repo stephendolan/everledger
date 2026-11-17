@@ -275,8 +275,10 @@ python3 parity/interrupts.py target/seams/debug/everledger
 During cutover both implementations read and write the same data directory.
 The runner gives each side its own copy of the state, so `handoff.py` covers
 what it cannot: one implementation finishing a sync the other started, in both
-orders, a day apart and back to back under different caps, and one waiting on
-the sync lock the other holds.
+orders, a day apart and back to back under different caps; the one that did not
+publish the index then answering a lookup from it; both reading an index
+without the `details` and `sync_requests` blocks, which nothing reads; and one
+waiting on the sync lock the other holds.
 
 ```sh
 python3 parity/handoff.py target/seams/debug/everledger
