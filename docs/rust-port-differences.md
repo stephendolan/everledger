@@ -39,8 +39,11 @@ A response that breaks HTTP itself is a second case. A status line that is not
 HTTP, or a body shorter than its declared length, raises an `http.client`
 exception that the reference's handlers do not name: it exits 1 with a
 traceback and, in the middle of a sync, leaves its journal open. Rust treats
-such a response as it treats a refused connection: the source is unreachable,
-the exit code is 4, and a sync records the failed attempt.
+such a response as both implementations treat a connection that closes without
+a response: the source is unreachable. What follows is what follows any
+unreachable source. A command that needs the source exits 4, a sync records
+the failed attempt, a lookup or refresh that holds a cached copy serves it as
+stale, and a refresh after a failed sync goes on to the next item.
 
 ## Shape drift fails at the boundary
 
@@ -50,20 +53,35 @@ decoded, with the exit code Python would have produced. This covers a
 container where a scalar belongs, a number where a string belongs, and a
 missing required field.
 
-The ForeverDB cache files are such payloads when something other than a sync
-wrote them. Rust refuses each of these with exit code 1, before any ForeverDB
-request:
+The cache files are such payloads when something other than this program wrote
+them: the ForeverDB journal, checkpoint, and index, and the ninja cache files.
+Each field that every writer writes must be present and hold its type; a field
+a writer may leave null may be null. A command that reads a file failing that
+exits 1 with nothing on stdout, and sends no request Python would not have
+sent. Python computes with what it finds, so the two differ wherever Python
+gets by:
 
-- a journal whose `spends` are not a list of spends, each with a `finished_at`
-  and a whole, non-negative `requests`; whose `failed` is not a boolean; or
-  whose `status` is not a number;
-- a checkpoint whose `next_offset` or `total_requests` is not a number;
-- an index whose `items` are not an object.
+- **In the journal**, `spends` that are not a list of spends, each with a
+  `finished_at` and a whole, non-negative `requests`; a `failed` that is not a
+  boolean; a `status` that is not a number. A negative spend enlarges Python's
+  budget, and an expired spend is dropped unread.
+- **In the checkpoint**, a `next_offset` or `total_requests` that is not a
+  number, and a seller row with a field missing or of another type. Python
+  sends text for `next_offset` to the service as the offset.
+- **In the index**, `items` that are not an object, a count or `fetched_at`
+  missing, and a seller row with a field missing or of another type. Python
+  answers the lookups that do not touch the field, and a refresh syncs and
+  replaces the file. A list of items fails only when the next index is built
+  from it, after the requests are spent.
+- **In a ninja cache file**, a field missing or of another type. Python prints
+  the rows as they are, and a refresh fetches the item again and replaces the
+  file.
+- **In the journal, checkpoint, or index**, a `sync_id` that is not text.
+  Python compares whatever it finds.
 
-Python computes with what it finds. A negative spend enlarges its budget, an
-expired spend is dropped unread, text for `next_offset` goes to the service as
-the offset, and a list of items fails only when the next index is built from
-it, after the requests are spent.
+Rust goes on refusing such a file until it is removed: no command writes over
+a file it cannot read. Rust is never the more lenient of the two. Where Python
+fails on a damaged file, Rust fails too.
 
 ## Inputs the port does not accept
 
@@ -87,6 +105,12 @@ SIGINT ends one. Both record what the attempt spent. They differ at the edges:
   checkpoint changed in memory and before the write that follows. Python
   writes what it holds in memory; Rust writes the state it last wrote. The
   next attempt fetches that one page or detail again, inside its budget.
+- **While a failure is being recorded.** An interrupt can land after a request
+  has failed and before the journal and checkpoint that record the failure are
+  both written. Python leaves each file as that moment finds it: the failure in
+  the journal, or the journal still open. Rust records the attempt as
+  interrupted and keeps its checkpoint, which is what both do when the
+  interrupt lands while the request is in flight.
 - **Before the signal thread exists.** An interrupt during the first journal
   write of an attempt ends the Rust process at once and can leave that write's
   temporary file behind. Python removes its temporary file as it unwinds.
