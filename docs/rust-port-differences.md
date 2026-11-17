@@ -64,11 +64,13 @@ refuses that journal wherever it is read, with exit code 1.
 
 ## A stricter ForeverDB index
 
-A ForeverDB index activates only when its record, vendor, and item counts agree
-with its contents. Python checks the format number alone. Every index either
-implementation publishes passes; the difference shows only for a file edited or
-damaged after publication, which Rust treats as absent and answers from the
-ninja cache.
+A ForeverDB index activates only when its counts agree with its contents: the
+record count with the vendor total, the item count with the items, and the
+record count with the `details` block when the index carries one. Python
+checks the format number alone and never reads `details`, so an index without
+that block is whole to both. Every index either implementation publishes
+passes; the difference shows only for a file edited or damaged after
+publication, which Rust treats as absent and answers from the ninja cache.
 
 ## Interrupts
 

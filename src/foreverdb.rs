@@ -107,7 +107,7 @@ pub struct IndexData {
     pub vendor_total: usize,
     pub item_count: usize,
     pub items: OrderedMap<ItemEntry>,
-    pub details: OrderedMap<Detail>,
+    pub details: Option<OrderedMap<Detail>>,
     pub sync_id: Option<String>,
 }
 pub type Index = Payload<IndexData>;
@@ -305,7 +305,11 @@ pub fn index(context: &Context<'_>) -> Result<Option<Index>> {
     }
     let index: Index = Payload::decode(doc, "ForeverDB index")?;
     let v = index.view();
-    if v.record_count != v.details.0.len()
+    // Nothing reads the index's copy of the checkpoint, so an index without it
+    // is whole. One that carries it must carry all of it.
+    if v.details
+        .as_ref()
+        .is_some_and(|details| v.record_count != details.0.len())
         || v.record_count != v.vendor_total
         || v.item_count != v.items.0.len()
     {

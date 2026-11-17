@@ -376,3 +376,62 @@ fn configured_caps_bound_requests_without_changing_pacing_or_publication() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn index_is_read_with_or_without_details_and_refused_when_counts_disagree() -> Result<()> {
+    let dir = Directory::new();
+    let config = dir.config();
+    let http = Fixture {
+        config: &config,
+        total: 3,
+        requests: RefCell::new(vec![]),
+        fail_at: None,
+    };
+    let catalogue = everledger::catalogue::CatalogueStore::default();
+    let diag = WriterDiagnostics::<Vec<u8>>::default();
+    let clock = VirtualClock::new(instant("2026-11-15T12:00:00Z")?);
+    let context = Context {
+        config: &config,
+        http: &http,
+        clock: &clock,
+        catalogue: &catalogue,
+        diagnostics: &diag,
+    };
+    assert!(foreverdb::sync(&context)?.view().complete);
+    let path = config.data_dir.join("vendors/foreverdb.net/index.json");
+    let published: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path)?).expect("published index is JSON");
+    let rewrite = |edit: &dyn Fn(&mut serde_json::Map<String, serde_json::Value>)| {
+        let mut index = published.clone();
+        edit(index.as_object_mut().expect("index is an object"));
+        std::fs::write(&path, index.to_string()).expect("rewrite index");
+    };
+    let records = |context: &Context<'_>| -> Result<Option<usize>> {
+        Ok(foreverdb::index(context)?.map(|index| index.view().record_count))
+    };
+    assert_eq!(records(&context)?, Some(3));
+    // The reference never reads `details` or `sync_requests`: an index without them is whole.
+    rewrite(&|index| {
+        index.remove("details");
+        index.remove("sync_requests");
+    });
+    assert_eq!(records(&context)?, Some(3));
+    rewrite(&|index| {
+        index.insert("details".into(), serde_json::Value::Null);
+    });
+    assert_eq!(records(&context)?, Some(3));
+    // A block or a count that disagrees with the rest marks a damaged file.
+    rewrite(&|index| {
+        index.insert("details".into(), serde_json::json!({}));
+    });
+    assert_eq!(records(&context)?, None);
+    rewrite(&|index| {
+        index.insert("record_count".into(), 2.into());
+    });
+    assert_eq!(records(&context)?, None);
+    rewrite(&|index| {
+        index.insert("item_count".into(), 7.into());
+    });
+    assert_eq!(records(&context)?, None);
+    Ok(())
+}
