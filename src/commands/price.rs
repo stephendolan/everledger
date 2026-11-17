@@ -106,7 +106,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         ("sales", field("sales")?),
         ("sources", Document::Array(vec![source.into_document()])),
     ]);
-    let vendors = crate::vendors::lookup(item.id, false, context)?;
+    let vendors = crate::vendors::lookup(item.id, context)?;
     match &vendors {
         VendorAnswer::Ninja(a) => {
             quote.set("vendors", a.sellers_document()?)?;

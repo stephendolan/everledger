@@ -217,16 +217,13 @@ pub enum VendorAnswer {
     Ninja(NinjaAnswer),
     Foreverdb(ForeverdbAnswer),
 }
-pub fn lookup(item_id: i64, refresh: bool, context: &Context<'_>) -> Result<VendorAnswer> {
-    if refresh && crate::foreverdb::transport::Transport::select(context.config)?.is_some() {
-        refresh_cached(context)?;
-    }
+pub fn lookup(item_id: i64, context: &Context<'_>) -> Result<VendorAnswer> {
     if let Some(index) = crate::foreverdb::active_index(context)? {
         return Ok(VendorAnswer::Foreverdb(ForeverdbAnswer::lookup(
             item_id, &index, context,
         )?));
     }
-    let mut answer = ninja_lookup(item_id, refresh, context)?;
+    let mut answer = ninja_lookup(item_id, false, context)?;
     if crate::foreverdb::transport::Transport::select(context.config)?.is_some()
         && crate::foreverdb::attempt(context)?.is_some_and(|a| a.failed)
     {

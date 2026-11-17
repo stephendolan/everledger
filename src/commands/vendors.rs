@@ -19,7 +19,7 @@ use crate::{
 };
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let item = crate::catalogue::item_for(&args.item.join(" "), context)?;
-    let mut answer = vendors::lookup(item.id, false, context)?;
+    let mut answer = vendors::lookup(item.id, context)?;
     match &mut answer {
         VendorAnswer::Ninja(a) => {
             if let Some(q) = args.zone.as_deref().filter(|s| !s.is_empty()) {

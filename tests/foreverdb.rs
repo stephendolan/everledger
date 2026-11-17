@@ -324,7 +324,7 @@ fn foreverdb_ignores_comparison_caches_from_a_different_ninja_url() -> Result<()
         r#"{"backend_url":"http://127.0.0.1:9999","vendors":"unrelated shape","published_at":false}"#,
     )?;
     assert!(matches!(
-        everledger::vendors::lookup(2604, false, &context)?,
+        everledger::vendors::lookup(2604, &context)?,
         everledger::vendors::VendorAnswer::Foreverdb(_)
     ));
     let (status, _) = everledger::vendors::status::backend_status(&context)?;
@@ -504,7 +504,7 @@ fn rows_use_own_zone_and_coords_even_when_legacy_locations_are_present() -> Resu
     index["items"]["2604"]["vendors"][0]["locations"] =
         serde_json::json!([{"zone":"Stormwind","zone_slug":"stormwind","x":1,"y":2}]);
     std::fs::write(path, index.to_string())?;
-    let answer = everledger::vendors::lookup(2604, false, &context)?;
+    let answer = everledger::vendors::lookup(2604, &context)?;
     let lines = everledger::human::vendors::render(&answer).join("\n");
     assert!(lines.contains("Ironforge: coordinates unknown"));
     assert!(!lines.contains("Stormwind"));

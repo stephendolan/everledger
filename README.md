@@ -163,11 +163,9 @@ Arguments:
   <ITEM>...  
 
 Options:
-      --in <ZONE>    zone/city substring; aliases IF, SW, Darn, Org, TB, UC
-      --char <CHAR>  character scope; faction filtering unavailable
-      --all          all zones (also the default; no faction filtering)
-      --json         one JSON document using API field names
-  -h, --help         Print help
+      --in <ZONE>  zone/city substring; aliases IF, SW, Darn, Org, TB, UC
+      --json       one JSON document using API field names
+  -h, --help       Print help
 ```
 
 ## char
@@ -333,10 +331,10 @@ Options:
 ```text
 Rebuild catalogue and refresh the configured vendor backend
 
-Usage: everledger refresh [OPTIONS] [TARGET]
+Usage: everledger refresh [OPTIONS] <TARGET>
 
 Arguments:
-  [TARGET]  [possible values: catalogue]
+  <TARGET>  [possible values: catalogue]
 
 Options:
       --json  one JSON document using API field names
