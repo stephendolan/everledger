@@ -12,6 +12,11 @@ import urllib.parse
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / 'tests/fixtures'
 NOW = datetime.datetime.now(datetime.UTC).isoformat().replace('+00:00', 'Z')
+MALFORMED_HTTP = {
+    'bad status line': b'HTTP/1.1 abc\r\n\r\n',
+    'truncated body': b'HTTP/1.1 200 OK\r\nContent-Length: 500\r\n\r\n{"data": [',
+    'truncated error body': b'HTTP/1.1 404 Not Found\r\nContent-Length: 500\r\n\r\n{"error":',
+}
 
 class Handler(http.server.BaseHTTPRequestHandler):
     routes = {}
@@ -24,6 +29,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status, payload = self.event_contract(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         else:
             status, payload = self.routes.get(self.path, self.routes.get(self.path.split('?')[0], (404, {})))
+        if isinstance(payload, bytes):
+            self.wfile.write(payload)
+            self.close_connection = True
+            return
         self.send_response(status)
         self.send_header('Last-Modified', 'Sat, 14 Nov 2026 20:20:39 GMT')
         self.end_headers()
@@ -604,6 +613,106 @@ class CLI(unittest.TestCase):
         Handler.routes['/events']=(503,{'error_code':'unreadable_snapshot'})
         self.assertEqual(self.run_cli('sales','--json',code=4).stdout,'')
         self.run_cli('vendors','not in catalogue',code=1)
+
+    def test_malformed_http_reads_are_source_unreachable(self):
+        routes = (
+            ('/characters', ('char',)),
+            ('/v1/prices/forever.pvp.alliance.us/2604', ('price', '2604')),
+            ('/items/2604.json', ('vendors', '2604')),
+            ('/items/2604.pins.json', ('vendors', '2604')),
+        )
+        for name, response in MALFORMED_HTTP.items():
+            for route, command in routes:
+                original = Handler.routes.get(route)
+                Handler.routes[route] = (200, response)
+                try:
+                    for as_json in (False, True):
+                        with self.subTest(response=name, route=route, json=as_json):
+                            result = self.run_cli(*command, *(['--json'] if as_json else []), code=4)
+                            self.assertEqual(result.stdout, '')
+                            url = self.env['EVERLEDGER_VENDOR_URL'] + route
+                            self.assertTrue(result.stderr.startswith(url + ': source unreachable ('), result.stderr)
+                            self.assertNotIn('Traceback', result.stderr)
+                finally:
+                    if original is None:
+                        Handler.routes.pop(route)
+                    else:
+                        Handler.routes[route] = original
+
+    def test_malformed_http_sync_finalizes_attempt_and_spend(self):
+        self.refresh_routes()
+        self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+        fixture = json.loads((FIX / 'foreverdb.json').read_text())
+        script = """
+import os, runpy
+from unittest.mock import patch
+import everledger_foreverdb as db
+with patch.object(db, 'BASE', os.environ['EVERLEDGER_VENDOR_URL']), patch.object(db, 'INTERVAL', 0):
+    runpy.run_path('everledger', run_name='__main__')
+"""
+        cache = Path(self.tmp.name, 'vendors/foreverdb.net')
+        for name, response in MALFORMED_HTTP.items():
+            for midflight in (False, True):
+                for as_json in (False, True):
+                    with self.subTest(response=name, midflight=midflight, json=as_json):
+                        for path in cache.glob('*.json'):
+                            path.unlink()
+                        count = 2 if midflight else 1
+                        self.env['EVERLEDGER_FOREVERDB_DAILY_REQUESTS'] = str(count)
+                        Handler.routes['/api/v1/vendors'] = (200, fixture['pages'][0] if midflight else response)
+                        Handler.routes['/api/v1/vendors/8681'] = (200, response)
+                        command = ['python3', '-c', script, 'refresh', 'catalogue', *(['--json'] if as_json else [])]
+                        result = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True)
+                        self.assertEqual(result.returncode, 4, result.stderr + result.stdout)
+                        self.assertEqual(result.stderr, '')
+                        self.assertNotIn('Traceback', result.stdout + result.stderr)
+                        self.assertNotIn('secret-fixture', result.stdout + result.stderr)
+                        if as_json:
+                            data = json.loads(result.stdout)
+                            self.assertEqual(data['refreshed'], 'catalogue')
+                            self.assertEqual(data['vendor_sync'], {
+                                'configured': True, 'complete': False, 'pending': True,
+                                'requests': count, 'total_requests': count, 'failed': True,
+                                'deferred': None, 'status': None, 'error': 'ForeverDB sync failed'})
+                        else:
+                            self.assertIn('catalogue refreshed', result.stdout)
+                            self.assertIn(f'ForeverDB sync: failed; {count} requests this refresh; ForeverDB sync failed', result.stdout)
+                        attempt = json.loads((cache / 'attempt.json').read_text())
+                        self.assertTrue(attempt['failed'])
+                        self.assertIsNone(attempt['status'])
+                        self.assertEqual(attempt['error'], 'ForeverDB sync failed')
+                        self.assertEqual(attempt['requests'], count)
+                        self.assertIsNotNone(datetime.datetime.fromisoformat(attempt['finished_at']))
+                        self.assertEqual(attempt['spends'], [{'requests': count, 'finished_at': attempt['finished_at']}])
+                        self.assertTrue((cache / 'pending.json').exists())
+                        self.assertFalse((cache / 'index.json').exists())
+                        Handler.requests.clear()
+                        deferred = subprocess.run(['python3', '-c', script, 'refresh', 'catalogue', '--json'],
+                                                  cwd=ROOT, env=self.env, text=True, capture_output=True)
+                        self.assertEqual(deferred.returncode, 4, deferred.stderr + deferred.stdout)
+                        sync = json.loads(deferred.stdout)['vendor_sync']
+                        self.assertEqual((sync['requests'], sync['total_requests'], sync['deferred']),
+                                         (0, count, 'daily sync limit'))
+                        self.assertFalse(any(p.startswith('/api/v1/') for p in Handler.requests))
+
+    def test_malformed_http_refresh_serves_cached_vendors_as_stale(self):
+        self.refresh_routes()
+        self.run_cli('vendors', '2604', '--json')
+        cache = Path(self.tmp.name, 'vendors/wowforever.ninja/2604.json')
+        before = cache.read_bytes()
+        for name, response in MALFORMED_HTTP.items():
+            for route in ('/items/2604.json', '/items/2604.pins.json'):
+                original = Handler.routes[route]
+                Handler.routes[route] = (200, response)
+                try:
+                    with self.subTest(response=name, route=route):
+                        result = self.run_cli('refresh', 'catalogue', '--json', code=3)
+                        self.assertEqual(result.stderr, '')
+                        data = json.loads(result.stdout)
+                        self.assertTrue(any(source.get('stale') for source in data['sources']))
+                        self.assertEqual(cache.read_bytes(), before)
+                finally:
+                    Handler.routes[route] = original
 
     def test_vendor_status_raw_and_unknown_price(self):
         payload={'item':22,'zones':{'test':{'zone':{'name':'Test'},'vendors':{

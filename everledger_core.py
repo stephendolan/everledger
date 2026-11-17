@@ -1,4 +1,5 @@
 import datetime as dt
+import http.client
 import json
 from functools import cache
 import os
@@ -72,15 +73,16 @@ def money(value):
 def request(url, headers=None):
     req = urllib.request.Request(url, headers={'User-Agent': 'everledger', **(headers or {})})
     try:
-        with urllib.request.urlopen(req, timeout=20) as response:
-            return response.read(), dict(response.headers)
-    except urllib.error.HTTPError as e:
         try:
-            body = json.loads(e.read())
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        raise Failure(f'{url}: HTTP {e.code}', 2 if e.code in (400, 422) else 1 if e.code in (404, 409) else 4, {'status': e.code, 'response': body}) from e
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                return response.read(), dict(response.headers)
+        except urllib.error.HTTPError as e:
+            try:
+                body = json.loads(e.read())
+            except (ValueError, UnicodeDecodeError):
+                body = None
+            raise Failure(f'{url}: HTTP {e.code}', 2 if e.code in (400, 422) else 1 if e.code in (404, 409) else 4, {'status': e.code, 'response': body}) from e
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
         raise Failure(f'{url}: source unreachable ({e})', 4) from e
 
 
