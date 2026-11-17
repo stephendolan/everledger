@@ -83,12 +83,12 @@ def vendor(payload, expected_id):
         rows.append({'item': {'id': item_id, 'name': sale.get('name')}, 'row': {
             'npc_id': expected_id, 'name': name, 'title': payload.get('title', ''),
             'zone': zone, 'zone_slug': location['zone_slug'], 'mapId': location['mapId'],
-            'side': payload.get('side'), 'locations': [deepcopy(location)],
+            'side': payload.get('side'),
             'coords': [[location['x'], location['y']]] if location['x'] is not None and location['y'] is not None else [],
             'price_copper': price // stack if price is not None and price % stack == 0 else None,
-            'stack_price_copper': price, 'stack': stack, 'price_raw': price,
+            'stack_price_copper': price, 'stack': stack,
             'limited': sale['limited'], 'limitedStockCount': stock,
-            'status_raw': sale.get('seenInForever'), 'status': claim, 'basis': claim,
-            'vendor_basis': basis(payload), 'sale_basis': label, 'price_basis': label,
+            'status_raw': sale.get('seenInForever'), 'basis': claim,
+            'vendor_basis': basis(payload), 'sale_basis': label,
             'raw': {'vendor_seen': payload.get('seenInForever'), 'sell': deepcopy(sale)}}})
     return {'sells': rows}

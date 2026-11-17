@@ -98,6 +98,10 @@ class BudgetExhausted(Exception):
     pass
 
 
+class RetryDeferred(Exception):
+    pass
+
+
 def prune_spends(attempt):
     attempt['spends'] = [spend for spend in attempt['spends'] if age(spend['finished_at']) < 86400]
 
@@ -107,17 +111,10 @@ def read(name):
         data = json.loads((CACHE / name).read_text())
     except FileNotFoundError:
         return None
-    if name == 'attempt.json':
-        if 'spends' not in data or not data.get('finished_at'):
-            finished = data.get('finished_at') or data.get('last_request_at') or data['attempted_at']
-            data.setdefault('spends', []).append({'requests': data.get('requests', 0), 'finished_at': finished})
-        prune_spends(data)
     return data
 
 
 def write(name, data):
-    if name == 'attempt.json':
-        prune_spends(data)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=CACHE,
@@ -130,6 +127,21 @@ def write(name, data):
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def load_attempt():
+    data = read('attempt.json')
+    if data is not None:
+        if not data.get('finished_at'):
+            finished = data.get('last_request_at') or data['attempted_at']
+            data['spends'].append({'requests': data['requests'], 'finished_at': finished})
+        prune_spends(data)
+    return data
+
+
+def save_attempt(data):
+    prune_spends(data)
+    write('attempt.json', data)
 
 
 def index():
@@ -149,31 +161,41 @@ def snapshot(pending, previous):
         entry['vendors'].sort(key=lambda row: (row['zone'].casefold(), row['name'].casefold(), row['npc_id']))
     return {'format': FORMAT, 'backend': BACKEND, 'fetched_at': iso(now()), **pending['metadata'],
             'record_count': len(pending['details']), 'item_count': len(items),
-            'items': items, 'details': pending['details'],
-            'sync_requests': pending['total_requests']}
+            'items': items}
 
 
 def sync():
-    mode = transport()
-    if not mode:
-        return {'configured': False, 'complete': False, 'requests': 0}
-    key = api_key() if mode == 'env-key' else None
-    CACHE.mkdir(parents=True, exist_ok=True)
-    with (CACHE / 'sync.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        return _sync(key)
+    result = {'configured': False, 'complete': False, 'pending': False, 'requests': 0,
+              'total_requests': 0, 'failed': False, 'deferred': None, 'status': None, 'error': None}
+    try:
+        mode = transport()
+        if not mode:
+            return result
+        result['configured'] = True
+        key = api_key() if mode == 'env-key' else None
+        CACHE.mkdir(parents=True, exist_ok=True)
+        with (CACHE / 'sync.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return {**result, **_sync(key, result)}
+    except (Failure, OSError) as error:
+        return {**result, 'configured': True, 'failed': True,
+                'pending': (CACHE / 'pending.json').exists(),
+                'error': str(error) if isinstance(error, Failure) else 'ForeverDB sync failed'}
 
 
-def _sync(key):
+def _sync(key, result):
     previous = index()
-    attempt = read('attempt.json')
+    attempt = load_attempt()
     pending = read('pending.json')
     spends = (attempt or {}).get('spends', [])
     budget = DAILY_REQUESTS - sum(spend['requests'] for spend in spends)
     if budget <= 0:
         return {'configured': True, 'complete': previous is not None and pending is None,
                 'pending': pending is not None, 'requests': 0,
-                'deferred': 'daily sync limit', 'failed': attempt.get('failed', False)}
+                'total_requests': (pending or attempt).get('total_requests', 0),
+                'deferred': 'daily sync limit', 'failed': attempt.get('failed', False),
+                'status': attempt.get('status'),
+                'error': attempt.get('error')}
     if pending and pending.get('format') != FORMAT:
         pending = None
     if pending and previous and pending['sync_id'] == previous.get('sync_id'):
@@ -187,9 +209,11 @@ def _sync(key):
     attempt = {'attempted_at': iso(now()), 'requests': 0, 'sync_id': pending['sync_id'], 'spends': spends,
                'failed': (attempt or {}).get('failed', False),
                'status': (attempt or {}).get('status')}
-    write('attempt.json', attempt)
+    result['total_requests'] = pending['total_requests']
+    save_attempt(attempt)
     last_start = None
     obsolete = False
+    deferred = None
 
     def get(path):
         nonlocal last_start
@@ -198,14 +222,20 @@ def _sync(key):
                 raise BudgetExhausted()
             retry = pending.get('retry')
             if retry:
-                time.sleep(max(0, (instant(retry['not_before']) - now()).total_seconds()))
+                wait = (instant(retry['not_before']) - now()).total_seconds()
+                if wait > 300:
+                    raise RetryDeferred()
+                if wait > 0:
+                    time.sleep(min(300, max(60, wait)))
             if last_start is not None:
                 time.sleep(max(0, INTERVAL - (time.monotonic() - last_start)))
-            attempt['requests'] += 1
-            pending['total_requests'] += 1
-            attempt['total_requests'] = pending['total_requests']
-            attempt['last_request_at'] = iso(now())
-            write('attempt.json', attempt)
+            reservation = {**attempt, 'requests': attempt['requests'] + 1,
+                           'total_requests': pending['total_requests'] + 1,
+                           'last_request_at': iso(now())}
+            save_attempt(reservation)
+            attempt.update(reservation)
+            pending['total_requests'] = attempt['total_requests']
+            result.update(requests=attempt['requests'], total_requests=pending['total_requests'])
             last_start = time.monotonic()
             try:
                 headers = {'User-Agent': USER_AGENT}
@@ -218,10 +248,15 @@ def _sync(key):
                 response = body.get('response')
                 if status == 502 and not retry and isinstance(response, dict) and response.get('retryable') is True:
                     delay = response.get('retry_after', 60)
-                    if type(delay) not in (int, float) or not math.isfinite(delay) or delay < 0:
+                    if type(delay) not in (int, float) or isinstance(delay, float) and not math.isfinite(delay) or delay < 0:
                         delay = 60
-                    pending['retry'] = {'not_before': iso(now() + dt.timedelta(seconds=math.ceil(max(60, delay)) + 1))}
+                    timestamp = now()
+                    maximum = (dt.datetime.max.replace(tzinfo=dt.timezone.utc) - timestamp).total_seconds() - 1
+                    delay = math.ceil(min(maximum, max(60, delay)))
+                    pending['retry'] = {'not_before': (timestamp + dt.timedelta(seconds=delay)).isoformat().replace('+00:00', 'Z')}
                     write('pending.json', pending)
+                    if delay > 300:
+                        raise RetryDeferred()
                     continue
                 pending.pop('retry', None)
                 raise Failure('ForeverDB sync failed' + (f' (HTTP {status})' if status else ''),
@@ -259,7 +294,9 @@ def _sync(key):
                     pending['details'][vendor_id] = {'data': data}
                     write('pending.json', pending)
         except BudgetExhausted:
-            pass
+            deferred = 'daily sync limit'
+        except RetryDeferred:
+            deferred = 'retry wait'
         complete = pending['next_offset'] is None and len(pending['details']) == len(pending['vendor_ids'])
         if complete:
             data = snapshot(pending, previous)
@@ -268,30 +305,34 @@ def _sync(key):
             (CACHE / 'pending.json').unlink(missing_ok=True)
             attempt['failed'] = False
             attempt['status'] = None
+            attempt['error'] = None
         else:
             write('pending.json', pending)
         attempt['finished_at'] = iso(now())
         attempt['spends'] = spends + [{'requests': attempt['requests'], 'finished_at': attempt['finished_at']}]
-        write('attempt.json', attempt)
+        save_attempt(attempt)
         return {'configured': True, 'complete': complete, 'pending': not complete,
-                'requests': attempt['requests'], 'total_requests': pending['total_requests']}
+                'requests': attempt['requests'], 'total_requests': pending['total_requests'],
+                'failed': False, 'deferred': deferred}
     except (Failure, OSError, KeyboardInterrupt) as error:
         attempt['finished_at'] = iso(now())
         attempt['spends'] = spends + [{'requests': attempt['requests'], 'finished_at': attempt['finished_at']}]
         attempt['failed'] = True
         attempt['status'] = (error.body or {}).get('status') if isinstance(error, Failure) else None
-        write('attempt.json', attempt)
+        attempt['error'] = str(error) if isinstance(error, Failure) else 'ForeverDB sync failed'
+        save_attempt(attempt)
         if obsolete:
             (CACHE / 'pending.json').unlink(missing_ok=True)
         else:
             write('pending.json', pending)
-        raise
+        if isinstance(error, KeyboardInterrupt):
+            raise
+        return {'configured': True, 'complete': False, 'pending': not obsolete,
+                'requests': attempt['requests'], 'total_requests': pending['total_requests'],
+                'failed': True, 'status': attempt['status'], 'error': attempt['error']}
 
 
-def lookup(item_id, data=None):
-    data = data if data is not None else index()
-    if data is None:
-        raise Failure('ForeverDB index unavailable; run: everledger refresh catalogue', 4)
+def lookup(item_id, data):
     entry = data['items'].get(str(item_id))
     rows = entry['vendors'] if entry else None
     attempt = read('attempt.json') or {}

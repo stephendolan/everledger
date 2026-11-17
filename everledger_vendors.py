@@ -4,7 +4,6 @@ from email.utils import parsedate_to_datetime
 import json
 import os
 import re
-import sys
 import tempfile
 
 from everledger_core import DATA_DIR, Failure, age, iso, now, request, source
@@ -129,9 +128,7 @@ def ninja_fallback(data):
     return data
 
 
-def lookup(item_id, refresh=False):
-    if refresh and foreverdb.transport():
-        refresh_cached()
+def lookup(item_id):
     data = active_index()
     if data is not None:
         result = foreverdb.lookup(item_id, data)
@@ -143,31 +140,32 @@ def lookup(item_id, refresh=False):
         result['_fallback_vendors'] = (cached.get('vendors') or []) if cached.get('backend_url') == BASE else []
         compare_coverage(result)
         return result
-    result = ninja_lookup(item_id, refresh=refresh)
+    result = ninja_lookup(item_id)
     if foreverdb.transport() and (foreverdb.read('attempt.json') or {}).get('failed'):
         ninja_fallback(result)
     return result
 
 
 def refresh_cached():
-    failure = None
+    synced = foreverdb.sync()
     try:
-        synced = foreverdb.sync()
-    except Failure as error:
-        failure = error
-        synced = {'configured': True, 'complete': False, 'failed': True}
-        print(f'{error}; retaining previous vendor caches', file=sys.stderr)
-    data = active_index()
-    if data is not None:
-        return foreverdb.index_sources(data), synced
+        data = active_index()
+        if data is not None:
+            return foreverdb.index_sources(data), synced
+    except (Failure, OSError):
+        if not synced['failed']:
+            raise
     paths = sorted(CACHE.glob('*.json'))
-    if failure and not paths:
-        raise failure
     used = []
     for path in paths:
-        result = ninja_lookup(int(path.stem), refresh=True)
-        if failure or synced.get('failed'):
-            ninja_fallback(result)
+        try:
+            result = ninja_lookup(int(path.stem), refresh=True)
+            if synced['failed']:
+                ninja_fallback(result)
+        except Failure:
+            if synced['failed']:
+                continue
+            raise
         used += result['sources']
     return used, synced
 
@@ -187,7 +185,7 @@ def backend_status():
             'item_count': completed['item_count'] if completed else 0,
             'last_attempt_at': attempt.get('attempted_at'),
             'last_attempt_requests': attempt.get('requests', 0),
-            'pending': foreverdb.read('pending.json') is not None if configured else False}
+            'pending': (foreverdb.CACHE / 'pending.json').exists() if configured else False}
     cached = [json.loads(path.read_text()) for path in CACHE.glob('*.json')]
     cached = [item for item in cached if item.get('backend_url') == BASE]
     ninja_rows = [row for item in cached for row in item.get('vendors') or []]
@@ -203,7 +201,7 @@ def backend_status():
         return summary, foreverdb.index_sources(data)
     rows = ninja_rows
     summary = {'source': 'vendors', 'backend': BACKEND, 'cache_items': len(cached),
-               'published_at': max((item.get('published_at') or '' for item in cached), default=None),
+               'published_at': max((item['published_at'] for item in cached if item.get('published_at')), default=None),
                **{basis: sum(row['basis'] == basis for row in rows)
                   for basis in ('seen', 'baseline', 'unverified')}, 'foreverdb': info, 'coverage': coverage}
     return summary, [source(BACKEND, summary['published_at'],
@@ -237,11 +235,10 @@ def stock_label(row):
 
 def select_zone(data, query):
     data = deepcopy(data)
-    zones = sorted({p['zone'] for v in data['vendors'] or [] for p in v.get('locations', [v])})
+    zones = sorted({v['zone'] for v in data['vendors'] or []})
     q = ALIASES.get(query.casefold(), query.casefold())
     def matches_zone(vendor):
-        return any(q in p['zone'].casefold() or q in p['zone_slug'].casefold()
-                   for p in vendor.get('locations', [vendor]))
+        return q in vendor['zone'].casefold() or q in vendor['zone_slug'].casefold()
 
     if data['vendors'] is not None:
         data['vendors'] = [v for v in data['vendors'] if matches_zone(v)]
@@ -268,7 +265,8 @@ def lines(data):
     from everledger_core import money, human
     for v in rows:
         if data['backend'] == foreverdb.BACKEND:
-            locations = '; '.join(f"{human(p['zone'])}: {human(p.get('x'))}, {human(p.get('y'))}" for p in v['locations']) or 'location unknown'
+            coords = ', '.join(human(n) for n in v['coords'][0]) if v['coords'] else 'coordinates unknown'
+            locations = f"{human(v['zone'])}: {coords}"
             result.append(f"  {human(v['name'])} ({human(v['title'])}) | {locations} | {human(v['side'])} | listed price {listed_price(v)}{stock_label(v)} | sale/price {v['sale_basis']}; vendor {v['vendor_basis']}")
             continue
         coords = ', '.join(human(n) for n in v['coords'][0]) if v['coords'] else 'coordinates unknown'

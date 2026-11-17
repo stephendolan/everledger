@@ -129,8 +129,10 @@ def source_lines(items, families=None):
         name = s.get('name') or Path(s.get('file') or s.get('path') or 'roster').name
         family = next((label for label, members in (families or {}).items() if s in members), None)
         name = family or name
-        when = s.get('saved_at') or s.get('scanned_at') or s.get('mtime') or s.get('updated_at')
+        when = s.get('saved_at') or s.get('scanned_at') or s.get('mtime') or s.get('updated_at') or s.get('fetched_at')
         seconds = s.get('scan_age_seconds', s.get('file_age_seconds', s.get('age_seconds', age(when))))
+        if seconds is None:
+            seconds = age(when)
         group = groups.setdefault(name, {'times': set(), 'ages': set(), 'credits': set(), 'files': set(), 'family': family})
         group['files'].add(s.get('file') or s.get('path') or s.get('name') or 'unknown')
         group['times'].add(human(when))
@@ -160,23 +162,21 @@ def source_lines(items, families=None):
     print('source: ' + ('; '.join(summaries) or 'unknown (age unknown)'))
 
 
-def emit(data, lines, as_json, stale=None, source_families=None):
+def emit(data, lines, as_json, stale=False, source_families=None):
     if as_json:
         print(json.dumps(data, ensure_ascii=False))
     else:
         for line in lines:
             print(line)
         items = sources(data)
-        if stale is None:
-            stale = any(s.get('stale') for s in items
-                        if 'Journalator' not in str(s.get('file') or s.get('name') or ''))
         if stale:
             print('stale: data exceeds its freshness limit')
         source_lines(items, source_families)
+    return 3 if stale else 0
 
 
-def stale_code(items):
-    return 3 if any(s.get('stale') for s in items) else 0
+def is_stale(items):
+    return any(s.get('stale', False) for s in items)
 
 
 @cache
@@ -242,7 +242,7 @@ def market_table():
             return float(cells[i]) if cells[i] else None
         prices[int(cells[0])] = {'median_copper': round(number(1)) if number(1) is not None else None,
                                 'floor_copper': round(number(2)) if number(2) is not None else None,
-                                'quantity': number(3), 'sales_per_day': number(8) / 10 if number(8) is not None else None}
+                                'quantity': int(number(3)) if number(3) is not None else None, 'sales_per_day': number(8) / 10 if number(8) is not None else None}
     timestamp = iso(dt.datetime.fromtimestamp(int(head[2]), UTC))
     s = source('AHledger ' + MARKET, timestamp)
     s['stale'] = s['age_seconds'] > 900

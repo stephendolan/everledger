@@ -94,7 +94,7 @@ class ForeverDB(unittest.TestCase):
         result = db.sync()
         self.assertTrue(result['complete'])
         self.assertEqual(result['requests'], 6)
-        data = db.lookup(2604)
+        data = db.lookup(2604, db.index())
         self.assertEqual({v['name'] for v in data['vendors']}, {
             'Poranna Snowbraid', 'Outfitter Eric', 'Bombus Finespindle'})
         rows = {v['name']: v for v in data['vendors']}
@@ -102,28 +102,41 @@ class ForeverDB(unittest.TestCase):
         self.assertEqual(rows['Outfitter Eric']['vendor_basis'], 'seen')
         self.assertEqual(rows['Bombus Finespindle']['basis'], 'seen')
         self.assertEqual(rows['Outfitter Eric']['coords'], [[43.4, 29.3]])
-        self.assertEqual(rows['Outfitter Eric']['locations'][0]['mapId'], 87)
+        self.assertEqual(rows['Outfitter Eric']['mapId'], 87)
+        for row in rows.values():
+            self.assertTrue({'status', 'price_basis', 'price_raw', 'locations'}.isdisjoint(row))
         self.assertEqual(rows['Outfitter Eric']['side'], 'Alliance')
-        self.assertEqual(db.lookup(2488)['vendors'][0]['price_copper'], 536)
-        self.assertEqual(db.lookup(2488)['vendors'][0]['basis'], 'seen')
-        self.assertEqual(db.lookup(9001)['vendors'][0]['basis'], 'baseline')
+        self.assertEqual(db.lookup(2488, db.index())['vendors'][0]['price_copper'], 536)
+        self.assertEqual(db.lookup(2488, db.index())['vendors'][0]['basis'], 'seen')
+        self.assertEqual(db.lookup(9001, db.index())['vendors'][0]['basis'], 'baseline')
         import everledger_vendors as vendors
-        self.assertIn('sale/price Classic-only baseline', '\n'.join(vendors.lines(db.lookup(9001))))
+        self.assertIn('sale/price Classic-only baseline', '\n'.join(vendors.lines(db.lookup(9001, db.index()))))
         self.assertEqual(rows['Outfitter Eric']['price_copper'], 50)
         self.assertIn('Data from ForeverDB.net', data['sources'][0]['detail'])
         self.assertIn('https://foreverdb.net', data['sources'][0]['detail'])
 
+    def test_index_omits_checkpoint_payload_and_ignores_legacy_fields(self):
+        db.sync()
+        path = self.directory / 'index.json'
+        data = json.loads(path.read_text())
+        self.assertNotIn('details', data)
+        self.assertNotIn('sync_requests', data)
+        expected = db.lookup(2604, data)
+        data.update(details={'obsolete': 'ignored'}, sync_requests=-1)
+        path.write_text(json.dumps(data))
+        self.assertEqual(db.lookup(2604, db.index()), expected)
+
     def test_no_index_record_and_known_empty_after_removal(self):
         db.sync()
-        self.assertIsNone(db.lookup(999999)['vendors'])
-        self.assertEqual(db.lookup(999999)['reason'], 'item not in dataset')
+        self.assertIsNone(db.lookup(999999, db.index())['vendors'])
+        self.assertEqual(db.lookup(999999, db.index())['reason'], 'item not in dataset')
         self.fixture['details']['8681']['data']['sells'].pop()
         self.tomorrow()
         result = db.sync()
         self.assertEqual(result['requests'], 6)
-        self.assertEqual(db.lookup(9001)['vendors'], [])
-        self.assertIsNone(db.lookup(9001)['reason'])
-        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+        self.assertEqual(db.lookup(9001, db.index())['vendors'], [])
+        self.assertIsNone(db.lookup(9001, db.index())['reason'])
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 3)
 
     @patch.object(db, 'DAILY_REQUESTS', 6)
     def test_daily_refresh_refetches_details_without_revision_guarantee(self):
@@ -136,15 +149,69 @@ class ForeverDB(unittest.TestCase):
         self.assertEqual(result['requests'], 6)
         self.assertEqual(len(self.requests), 6)
 
+    def test_sync_result_shape_on_success_failure_deferred_and_unconfigured(self):
+        expected = {'configured', 'complete', 'pending', 'requests', 'total_requests',
+                    'failed', 'deferred', 'status', 'error'}
+        with patch.object(db, 'transport', return_value=None):
+            result = db.sync()
+        self.assertEqual(set(result), expected)
+        self.assertEqual(result['requests'], 0)
+        with patch.object(db, 'request', side_effect=core.Failure('private upstream', 4,
+                {'status': 503, 'response': {'secret': 'private upstream'}})):
+            result = db.sync()
+        self.assertEqual(set(result), expected)
+        self.assertEqual((result['failed'], result['requests'], result['total_requests']), (True, 1, 1))
+        self.assertEqual(result['status'], 503)
+        self.assertNotIn('private upstream', json.dumps(result))
+        with patch.object(db, 'DAILY_REQUESTS', 1):
+            deferred = db.sync()
+        self.assertEqual(set(deferred), expected)
+        self.assertEqual((deferred['requests'], deferred['total_requests']), (0, 1))
+        result = db.sync()
+        self.assertEqual(set(result), expected)
+        self.assertEqual((result['complete'], result['failed'], result['requests'], result['total_requests']),
+                         (True, False, 6, 7))
+
+    def test_refresh_cached_returns_setup_failure_without_raising(self):
+        import everledger_vendors as vendors
+        with patch.dict('os.environ', {'EVERLEDGER_FOREVERDB_API_KEY': '',
+                'EVERLEDGER_FOREVERDB_API_KEY_FILE': str(self.directory)}):
+            used, result = vendors.refresh_cached()
+        self.assertEqual(used, [])
+        self.assertTrue(result['failed'])
+        self.assertEqual((result['requests'], result['total_requests']), (0, 0))
+        self.assertIn('API key file unreadable', result['error'])
+
+    def test_sync_checkpoint_write_failure_preserves_request_count(self):
+        write = db.write
+        for failure, expected in (('pending', 1), ('request reservation', 0)):
+            with self.subTest(failure=failure):
+                for path in self.directory.glob('*.json'):
+                    path.unlink()
+                self.requests.clear()
+                attempts = [0]
+                def fail_write(name, data):
+                    if name == 'attempt.json':
+                        attempts[0] += 1
+                    if (failure == 'pending' and name == 'pending.json' or
+                            failure == 'request reservation' and name == 'attempt.json' and attempts[0] == 2):
+                        raise OSError('disk full')
+                    return write(name, data)
+                with patch.object(db, 'write', side_effect=fail_write):
+                    result = db.sync()
+                self.assertEqual((result['failed'], result['requests'], result['total_requests']),
+                                 (True, expected, expected))
+                self.assertEqual(len(self.requests), expected)
+                self.assertIs(result['pending'], failure == 'request reservation')
+
     def test_interrupted_sync_preserves_previous_index(self):
         db.sync()
         before = (self.directory / 'index.json').read_bytes()
         self.tomorrow()
         with patch.object(db, 'request', side_effect=core.Failure('fixture failure', 4)):
-            with self.assertRaises(core.Failure):
-                db.sync()
+            self.assertTrue(db.sync()['failed'])
         self.assertEqual((self.directory / 'index.json').read_bytes(), before)
-        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 3)
 
     def test_budgeted_bootstrap_resumes_without_activating_partial_index(self):
         template = self.fixture['details']['8681']['data']
@@ -160,7 +227,7 @@ class ForeverDB(unittest.TestCase):
         resumed = db.sync()
         self.assertEqual(resumed['requests'], 5)
         self.assertEqual(resumed['total_requests'], 41)
-        self.assertEqual(len(db.lookup(2604)['vendors']), 40)
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 40)
 
     def test_sync_honors_raised_daily_cap_from_environment(self):
         template = self.fixture['details']['8681']['data']
@@ -192,7 +259,8 @@ class ForeverDB(unittest.TestCase):
         before = len(self.requests)
         deferred = db.sync()
         self.assertEqual(deferred, {'configured': True, 'complete': True,
-            'pending': False, 'requests': 0, 'deferred': 'daily sync limit', 'failed': False})
+            'pending': False, 'requests': 0, 'deferred': 'daily sync limit', 'failed': False,
+            'total_requests': 6, 'status': None, 'error': None})
         self.assertEqual(len(self.requests), before)
 
     def test_raised_cap_resumes_inside_window_with_remaining_budget(self):
@@ -205,9 +273,10 @@ class ForeverDB(unittest.TestCase):
         with patch.object(db, 'DAILY_REQUESTS', 6):
             resumed = db.sync()
         self.assertEqual(resumed, {'configured': True, 'complete': True,
-            'pending': False, 'requests': 4, 'total_requests': 6})
+            'pending': False, 'requests': 4, 'total_requests': 6,
+            'failed': False, 'status': None, 'deferred': None, 'error': None})
         self.assertEqual(len(self.requests), 6)
-        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 3)
 
     def test_window_expiry_restores_only_expired_spend_then_full_budget(self):
         start = self.clock[0]
@@ -234,28 +303,6 @@ class ForeverDB(unittest.TestCase):
             self.assertEqual(checkpoint['spends'], [
                 {'requests': 6, 'finished_at': core.iso(self.clock[0])}])
 
-    def test_legacy_checkpoint_migrates_own_requests_at_finish_or_last_request(self):
-        for timestamp in ('finished_at', 'last_request_at'):
-            with self.subTest(timestamp=timestamp):
-                (self.directory / 'pending.json').unlink(missing_ok=True)
-                (self.directory / 'index.json').unlink(missing_ok=True)
-                self.requests.clear()
-                finished = core.iso(self.clock[0] - dt.timedelta(minutes=34))
-                (self.directory / 'attempt.json').write_text(json.dumps({
-                    'attempted_at': core.iso(self.clock[0] - dt.timedelta(days=2)),
-                    timestamp: finished, 'requests': 2, 'total_requests': 100,
-                    'sync_id': 'legacy', 'failed': False}))
-                with patch.object(db, 'DAILY_REQUESTS', 2):
-                    self.assertEqual(db.sync()['requests'], 0)
-                    self.assertEqual(self.requests, [])
-                with patch.object(db, 'DAILY_REQUESTS', 6):
-                    resumed = db.sync()
-                    self.assertEqual(resumed['requests'], 4)
-                    self.assertFalse(resumed['complete'])
-                    checkpoint = json.loads((self.directory / 'attempt.json').read_text())
-                    self.assertEqual(checkpoint['spends'][0], {'requests': 2, 'finished_at': finished})
-                    self.assertEqual(db.sync()['requests'], 0)
-
     def test_mid_detail_interrupt_resumes_and_old_index_survives(self):
         db.sync()
         before = (self.directory / 'index.json').read_bytes()
@@ -276,18 +323,17 @@ class ForeverDB(unittest.TestCase):
         result = db.sync()
         self.assertTrue(result['complete'])
         self.assertEqual(result['requests'], 4)
-        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 3)
 
     def test_unknown_labels_and_malformed_shapes_do_not_invent_provenance(self):
         del self.fixture['details']['8681']['data']['sells'][0]['seenInForever']
         db.sync()
-        row = next(row for row in db.lookup(2604)['vendors'] if row['npc_id'] == 8681)
+        row = next(row for row in db.lookup(2604, db.index())['vendors'] if row['npc_id'] == 8681)
         self.assertEqual(row['basis'], 'unverified')
         self.tomorrow()
         self.fixture['pages'][0]['data'][0].pop('id')
-        with self.assertRaises(core.Failure):
-            db.sync()
-        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+        self.assertTrue(db.sync()['failed'])
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 3)
 
     @patch.object(db, 'DAILY_REQUESTS', 3)
     def test_abrupt_exit_spend_uses_the_last_request_start(self):
@@ -336,16 +382,14 @@ class ForeverDB(unittest.TestCase):
             self.assertFalse(db.sync()['complete'])
         self.tomorrow()
         self.fixture['pages'][1]['meta']['build'] = 'next-build'
-        with self.assertRaises(core.Failure):
-            db.sync()
+        self.assertTrue(db.sync()['failed'])
         self.assertIsNone(db.index())
         self.assertFalse((self.directory / 'pending.json').exists())
-        with self.assertRaises(core.Failure):
-            db.sync()
+        self.assertTrue(db.sync()['failed'])
         self.tomorrow()
         self.fixture = json.loads(FIXTURE.read_text())
         self.assertTrue(db.sync()['complete'])
-        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+        self.assertEqual(len(db.lookup(2604, db.index())['vendors']), 3)
 
     def test_failed_index_stays_ineligible_through_incomplete_retry(self):
         import everledger_vendors as vendors
@@ -370,9 +414,9 @@ class ForeverDB(unittest.TestCase):
 
     def test_invalid_header_transport_error_cannot_print_key(self):
         with patch.object(db, 'request', side_effect=ValueError('invalid header secret-fixture')):
-            with self.assertRaises(core.Failure) as error:
-                db.sync()
-        self.assertNotIn('secret-fixture', str(error.exception))
+            result = db.sync()
+            self.assertTrue(result['failed'])
+        self.assertNotIn('secret-fixture', json.dumps(result))
         self.assertTrue(json.loads((self.directory / 'attempt.json').read_text())['failed'])
 
     def test_key_files_precedence_and_no_key_dormancy(self):
@@ -411,10 +455,9 @@ class ForeverDB(unittest.TestCase):
         self.tomorrow()
         with patch.object(db, 'request', side_effect=core.Failure('secret-fixture', 4,
                           {'status': 503, 'response': {'echo': 'secret-fixture'}})):
-            with self.assertRaises(core.Failure) as error:
-                db.sync()
-        self.assertNotIn('secret-fixture', str(error.exception))
-        self.assertNotIn('secret-fixture', json.dumps(error.exception.body))
+            result = db.sync()
+            self.assertTrue(result['failed'])
+        self.assertNotIn('secret-fixture', json.dumps(result))
         for path in self.directory.glob('*.json'):
             self.assertNotIn('secret-fixture', path.read_text())
         self.assertTrue(db.sync()['complete'])
@@ -435,20 +478,20 @@ class ForeverDB(unittest.TestCase):
         sale = self.fixture['details']['8681']['data']['sells'][0]
         sale.update(price=10, stack=3, pricePerItem=3.3333333333, limited=True, limitedStockCount=None)
         db.sync()
-        row = next(r for r in db.lookup(2604)['vendors'] if r['npc_id'] == 8681)
+        row = next(r for r in db.lookup(2604, db.index())['vendors'] if r['npc_id'] == 8681)
         self.assertIsNone(row['price_copper'])
         self.assertEqual((row['stack_price_copper'], row['stack']), (10, 3))
         self.assertTrue(row['limited'])
-        human = '\n'.join(vendors.lines(db.lookup(2604)))
+        human = '\n'.join(vendors.lines(db.lookup(2604, db.index())))
         self.assertIn('10c per 3 | limited stock', human)
         self.tomorrow()
         sale.update(price=12)
         db.sync()
-        row = next(r for r in db.lookup(2604)['vendors'] if r['npc_id'] == 8681)
+        row = next(r for r in db.lookup(2604, db.index())['vendors'] if r['npc_id'] == 8681)
         self.assertEqual(row['price_copper'], 4)
         self.assertEqual(row['stack'], 3)
-        self.assertEqual(db.lookup(9001)['vendors'][0]['limitedStockCount'], 2)
-        self.assertIn('limited stock (2)', '\n'.join(vendors.lines(db.lookup(9001))))
+        self.assertEqual(db.lookup(9001, db.index())['vendors'][0]['limitedStockCount'], 2)
+        self.assertIn('limited stock (2)', '\n'.join(vendors.lines(db.lookup(9001, db.index()))))
 
     def test_502_retries_once_after_requested_delay_and_counts_request(self):
         clock = [0.0]
@@ -466,6 +509,57 @@ class ForeverDB(unittest.TestCase):
         self.assertTrue(result['complete'])
         self.assertEqual(result['requests'], 7)
         self.assertGreaterEqual(starts[1]-starts[0], 75)
+
+    def test_502_long_wait_is_pending_and_resumes_after_not_before(self):
+        error = core.Failure('upstream', 4, {'status':502, 'response':{
+            'retryable':True, 'retry_after':301}})
+        with patch.object(db, 'request', side_effect=error):
+            result = db.sync()
+        self.assertEqual((result['requests'], result['failed'], result['pending']), (1, False, True))
+        pending = json.loads((self.directory / 'pending.json').read_text())
+        self.assertEqual(core.instant(pending['retry']['not_before']), self.clock[0] + dt.timedelta(seconds=301))
+        self.sleep_mock.assert_not_called()
+        self.requests.clear()
+        result = db.sync()
+        self.assertEqual(result['requests'], 0)
+        self.assertEqual(self.requests, [])
+        self.clock[0] += dt.timedelta(seconds=302)
+        self.assertTrue(db.sync()['complete'])
+
+    def test_502_numeric_delays_never_overflow_or_sleep_over_300(self):
+        for delay in (0, 60, 299.9, 300, 301, 1e15, 10**1000, float('inf'), float('-inf'), float('nan')):
+            with self.subTest(delay=delay):
+                for path in self.directory.glob('*.json'):
+                    path.unlink()
+                self.sleep_mock.reset_mock()
+                error = core.Failure('upstream', 4, {'status':502, 'response':{
+                    'retryable':True, 'retry_after':delay}})
+                calls = [0]
+                def get(url, headers):
+                    calls[0] += 1
+                    if calls[0] == 1:
+                        raise error
+                    return self.get(url, headers)
+                with patch.object(db, 'request', side_effect=get):
+                    result = db.sync()
+                self.assertIn('failed', result)
+                if delay > 300 and delay != float('inf'):
+                    self.assertTrue(result['pending'])
+                    self.assertFalse(result['failed'])
+                    self.assertEqual(result['requests'], 1)
+                    self.sleep_mock.assert_not_called()
+                else:
+                    self.assertTrue(result['complete'])
+                    self.assertFalse(result['failed'])
+                    self.assertEqual(result['requests'], 7)
+                for call in self.sleep_mock.call_args_list:
+                    self.assertLessEqual(call.args[0], 300)
+                waits = [call.args[0] for call in self.sleep_mock.call_args_list if call.args[0] > db.INTERVAL]
+                if result['complete']:
+                    self.assertEqual(len(waits), 1)
+                    minimum = max(60, delay) if 0 <= delay <= 300 else 60
+                    self.assertGreaterEqual(waits[0], minimum)
+                self.assertTrue(all(60 <= wait <= 300 for wait in waits))
 
     def test_502_retry_at_budget_boundary_resumes_next_day(self):
         error = core.Failure('upstream', 4, {'status': 502, 'response': {'retryable': True, 'retry_after': 60}})
@@ -496,8 +590,7 @@ class ForeverDB(unittest.TestCase):
     def test_502_retry_failure_stops_after_two_requests(self):
         error = core.Failure('upstream', 4, {'status': 502, 'response': {'retryable': True, 'retry_after': 60}})
         with patch.object(db, 'request', side_effect=error):
-            with self.assertRaises(core.Failure):
-                db.sync()
+            self.assertTrue(db.sync()['failed'])
         attempt = json.loads((self.directory / 'attempt.json').read_text())
         self.assertEqual(attempt['requests'], 2)
         self.assertTrue(attempt['failed'])
@@ -533,7 +626,7 @@ def add_surrogate_to_request(request, slug, allowed_hosts):
             with patch.object(db, 'api_key', side_effect=AssertionError('connector must not read key')):
                 result = db.sync()
                 self.assertTrue(result['complete'])
-                self.assertEqual(db.lookup(2488)['vendors'][0]['price_copper'], 536)
+                self.assertEqual(db.lookup(2488, db.index())['vendors'][0]['price_copper'], 536)
                 import everledger_vendors as vendors
                 status, _ = vendors.backend_status()
                 self.assertEqual(status['foreverdb']['transport'], 'connector-surrogate')
@@ -557,8 +650,10 @@ def add_surrogate_to_request(request, slug, allowed_hosts):
     def test_missing_connector_module_is_clear_and_status_still_works(self):
         with patch.dict('os.environ', {'EVERLEDGER_FOREVERDB_VIA_CONNECTOR': 'custom.foreverdb'}), \
                 patch.object(db.importlib, 'import_module', side_effect=ModuleNotFoundError()):
-            with self.assertRaisesRegex(core.Failure, 'dynamic_credentials.*EVERLEDGER_DYNAMIC_CREDENTIALS_DIR'):
-                db.sync()
+            result = db.sync()
+            self.assertTrue(result['failed'])
+            self.assertEqual(result['requests'], 0)
+            self.assertRegex(result['error'], 'dynamic_credentials.*EVERLEDGER_DYNAMIC_CREDENTIALS_DIR')
             import everledger_vendors as vendors
             status, _ = vendors.backend_status()
             self.assertEqual(status['foreverdb']['transport'], 'connector-surrogate')
@@ -619,10 +714,9 @@ def add_surrogate_to_request(request, slug, allowed_hosts):
                         (self.directory / 'dynamic_credentials.py').write_text(code)
                         db.importlib.invalidate_caches()
                         (self.directory / 'attempt.json').unlink(missing_ok=True)
-                        with self.assertRaises(core.Failure) as error:
-                            db.sync()
-                        self.assertNotIn(sentinel, str(error.exception))
-                        self.assertNotIn(sentinel, json.dumps(error.exception.body))
+                        result = db.sync()
+                        self.assertTrue(result['failed'])
+                        self.assertNotIn(sentinel, json.dumps(result))
                         attempt = json.loads((self.directory / 'attempt.json').read_text())
                         self.assertTrue(attempt['failed'])
                         for path in self.directory.glob('*.json'):

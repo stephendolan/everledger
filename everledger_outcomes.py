@@ -3,7 +3,7 @@ import json
 import sys
 
 from everledger_core import (Failure, character_path, item_basis, item_matches, money, human,
-                             roster, recipes, sources, stale_code, time_selector)
+                             roster, recipes, sources, is_stale, time_selector)
 
 
 EVENT_TYPES = ('purchase', 'sale', 'posting', 'expiration', 'cancellation')
@@ -184,8 +184,8 @@ def collect_events(params, discard=False):
                 raise
 
 
-def item_events(args, item, types=None):
-    params = event_params(args)
+def item_events(args, item, types=None, params=None):
+    params = event_params(args) if params is None else dict(params)
     if types:
         params['type'] = types
     params['item'] = item or getattr(args, 'item', None)
@@ -213,7 +213,11 @@ def total(rows, field):
 def listings(params, prices=None):
     data = roster('/listings', params)
     scan_sources = [scan.get('pricing', {}).get('source') for scan in data.get('scans', []) if scan.get('pricing')]
-    data['sources'] = sources(data) + [s for s in scan_sources if s]
+    used_sources = []
+    for entry in sources(data) + [s for s in scan_sources if s]:
+        if entry not in used_sources:
+            used_sources.append(entry)
+    data['sources'] = used_sources
     for row in data.get('listings', []):
         item = row.get('item') or {}
         iid = item.get('id', row.get('item_id'))
@@ -280,6 +284,7 @@ def net(args, item, cat_source, catalogue):
                'materials': materials, 'materials_copper': None, 'realized_profit_copper': None,
                'basis': 'unknown: no supported lot assignments', 'reconciliation': 'unverified: real posting/invoice/expiry cycle required',
                'match_basis': sorted({item_basis(e) for e in rows}),
+               'stale': is_stale(listing_sources(current)),
                'sources': sources(data) + sources(current) + [cat_source]}
     lines = [item.get('name') or str(item['id']),
              'posted unknown' if counts['posting'] is None else f"posted {counts['posting']} (posting attempts)",
@@ -287,8 +292,6 @@ def net(args, item, cat_source, catalogue):
              f'unaccounted {human(unaccounted)} (signed diagnostic: posted - sold - expired - cancelled - listed)',
              f'proceeds {money(proceeds)} | auction cash {money(cash)} before materials',
              'realized profit unknown; holding/materials basis unknown; real posting cycle unverified']
-    if unaccounted == 0:
-        lines.append('deposits lost ' + money(deposits_lost))
     if data.get('available') is False:
         lines.append(f"journal {human(data.get('state'))}: {human(data.get('reason'))}")
     if 'name' in summary['match_basis']:
@@ -299,10 +302,10 @@ def net(args, item, cat_source, catalogue):
 def positions(args, item, prices, market_source):
     chars = roster('/characters')
     entries = chars.get('characters', [])
+    params = event_params(args)
     if args.char:
-        selected = roster(character_path(args.char))
-        entries = [selected.get('character', selected)]
-    journal = item_events(args, item, 'purchase')
+        entries = [{'name': params['char']}]
+    journal = item_events(args, item, 'purchase', params=params)
     current = listings({'char': args.char, 'item': str(item['id']) if item else args.item})
     rows = {}
     used_sources = sources(chars) + sources(journal) + sources(current) + [market_source]
@@ -341,6 +344,6 @@ def positions(args, item, prices, market_source):
     if any(not a['available'] for a in availability):
         lines.append('holdings incomplete: some inventory locations are unavailable')
     return {'positions': list(rows.values()), 'inventory_availability': availability,
-            'complete': all(a['available'] for a in availability), 'stale': stale_code(freshness_sources) == 3,
+            'complete': all(a['available'] for a in availability), 'stale': is_stale(freshness_sources),
             'journal_available': journal.get('available'), 'journal_state': journal.get('state'),
             'sources': used_sources}, lines or ['none recorded']

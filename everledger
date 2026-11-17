@@ -10,7 +10,7 @@ import sys
 
 from everledger_core import (AHL, MARKET, Failure, age, catalogue_source,
     character_path, emit, human, load_catalogue, market_table, money,
-    recipes, request, resolve_item, roster, source, sources, stale_code)
+    recipes, request, resolve_item, roster, source, sources, is_stale)
 import everledger_catalogue as catalogue
 import everledger_outcomes as outcomes
 try:
@@ -31,7 +31,7 @@ Old journal saves show their age without a stale notice or exit-code change.
 JSON matched/returned counts describe the accompanying filtered array;
 aggregates count all pages, events count the current page, bootstrap counts zero.
 Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
-Journal save age is normal: outcomes and net exit 0 even for old saves.
+Journal save age is normal: old saves alone do not change exit codes.
 Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
 Listings use the roster scan limit (15m). Positions apply both market/scan limits.
 Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
@@ -63,17 +63,14 @@ Override with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).
 List pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014
 detail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
 At the default 36/day, bootstrap takes at least 29 daily attempts; retries add requests.
-Retryable HTTP 502 gets one retry after at least retry_after (minimum 60s),
-within the daily cap. Unfinished syncs resume; only complete indexes activate.
+Retryable HTTP 502 gets one retry within the daily cap; in-attempt waits are
+60-300s. Longer waits stay pending until a later attempt. Unfinished syncs resume; only complete indexes activate.
 ForeverDB prices are per item only when stack price divides evenly by stack;
 otherwise show the total and quantity, e.g. 10c per 3. Limited stock is marked.
 With ForeverDB active, vendors adds a plain fallback-coverage count when the
 ninja cache knows additional distinct sellers; --in applies to both sets.
 Status names the transport and vendor/item record counts for each backend.
 Status and vendor lookups never make ForeverDB requests.
-Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
-margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
-char NAME auctions prints listings --char NAME on stderr and exits 2.
 '''
 
 
@@ -85,8 +82,8 @@ def parser():
         ('price', 'AHledger quote plus vendor listed prices', [('item', {'nargs':'+'})]),
         ('recipe', 'Catalogue facts and roster known-by annotation', [('item', {'nargs':'+'}), ('--skill', {'type':int})]),
         ('bridge', 'Catalogue skill-up bands across a range', [('profession', {}), ('start', {'type':int}), ('end', {'type':int})]),
-        ('margins', 'AHledger craft margins; optional roster recipe/level scope', [('profession', {'nargs':'?'}), ('--level', {'type':int}), ('--char', {}), ('--known', {'help':argparse.SUPPRESS})]),
-        ('vendors', 'Vendor listed prices/locations; ForeverDB includes faction', [('item', {'nargs':'+'}), ('--in', {'dest':'zone','help':'zone/city substring; aliases IF, SW, Darn, Org, TB, UC'}), ('--char', {'help':'character scope; faction filtering unavailable'}), ('--all', {'action':'store_true','help':'all zones (also the default; no faction filtering)'})]),
+        ('margins', 'AHledger craft margins; optional roster recipe/level scope', [('profession', {'nargs':'?'}), ('--level', {'type':int}), ('--char', {})]),
+        ('vendors', 'Vendor listed prices/locations; ForeverDB includes faction', [('item', {'nargs':'+'}), ('--in', {'dest':'zone','help':'zone/city substring; aliases IF, SW, Darn, Org, TB, UC'})]),
         ('char', 'Characters, profession ranks and known recipes', [('name', {'nargs':'?'}), ('profession', {'nargs':'?'}), ('--skill', {'type':int})]),
         ('listings', 'Recorded live auction listings and AHledger floor comparison', [('--char', {}), ('--item', {})]),
         ('positions', 'Inventory holdings/listings and AHledger floor; basis unknown without assignments', [('--char', {}), ('--item', {})]),
@@ -96,8 +93,7 @@ def parser():
         ('net', 'Item auction cash/count diagnostic; profit basis stays unknown', [('item', {'nargs':'+'})]),
         ('events', 'Typed journal feed; prints next_cursor, has_more and service checkpoint', []),
         ('status', 'Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors', []),
-        ('refresh', 'Rebuild catalogue and refresh the configured vendor backend', [('target', {'nargs':'?','choices':['catalogue']})]),
-        ('verify', 'Deprecated catalogue anchor check (use status)', []),
+        ('refresh', 'Rebuild catalogue and refresh the configured vendor backend', [('target', {'choices':['catalogue']})]),
     ]
     for name, help_text, arguments in specs:
         c = sub.add_parser(name, help=help_text, description=help_text, allow_abbrev=False)
@@ -170,6 +166,8 @@ def price(args):
     raw, _ = request(f"{AHL}/v1/prices/{MARKET}/{item['id']}")
     data = json.loads(raw)
     latest, sales = data['latest'], data['sales']
+    if latest['quantity'] is not None:
+        latest['quantity'] = int(latest['quantity'])
     stamp = latest['observedAt']
     s = source('AHledger ' + MARKET, stamp, stale=age(stamp) is None or age(stamp) > 900)
     quote = {'item': data['item'], 'latest': {'observed_at': stamp,
@@ -192,8 +190,7 @@ def price(args):
             prices = [r['price_copper'] for r in v['vendors'] if r['price_copper'] is not None]
             lines.append(f"vendor: listed price {money(min(prices) if prices else None)} | 1.12 baseline sale/price; purchase quantity unknown")
     disclose_item_source(quote,item)
-    emit(quote, lines, args.json)
-    return stale_code(quote['sources'])
+    return emit(quote, lines, args.json, stale=is_stale(quote['sources']))
 
 
 def recipe(args):
@@ -222,8 +219,7 @@ def recipe(args):
         for row in rows:
             row['known_by'] = None
         lines.append('known by: not checked (' + str(e) + ')')
-    emit({'recipes': rows, 'sources': used}, lines, args.json)
-    return 0
+    return emit({'recipes': rows, 'sources': used}, lines, args.json, stale=is_stale(used))
 
 
 def bridge(args):
@@ -250,11 +246,6 @@ def bridge(args):
 
 def margins(args):
     cat = load_catalogue()
-    if args.known:
-        print('deprecated --known; use --char',file=sys.stderr)
-        if args.char and args.char != args.known:
-            raise Failure('--known conflicts with --char',2)
-        args.char = args.known
     used = [catalogue_source(cat)]
     ch = None
     if args.char:
@@ -300,13 +291,10 @@ def margins(args):
                 'sales_per_day':rp['sales_per_day'],'reagents':reagents,'source_type':r['source_type']})
     rows.sort(key=lambda r: ({'orange':0,'yellow':1,'green':2,'grey':3}.get(r['color'],4),-(r['margin_copper']*(r['sales_per_day'] or 0) if r['margin_copper']>0 else r['margin_copper'])))
     rows=rows[:15]
-    emit({'margins':rows,'sources':used},[f"{r['name']} [{r['profession']}] {human(r['color'])} | margin {money(r['margin_copper'])} | cost {money(r['cost_copper'])} | sells {money(r['sells_copper'])} | {str(r['sales_per_day']) + '/day' if r['sales_per_day'] is not None else 'sales/day unknown'} | {human(r['source_type'])}" for r in rows] or ['no priced recipes'],args.json)
-    return stale_code(used)
+    return emit({'margins':rows,'sources':used},[f"{r['name']} [{r['profession']}] {human(r['color'])} | margin {money(r['margin_copper'])} | cost {money(r['cost_copper'])} | sells {money(r['sells_copper'])} | {str(r['sales_per_day']) + '/day' if r['sales_per_day'] is not None else 'sales/day unknown'} | {human(r['source_type'])}" for r in rows] or ['no priced recipes'],args.json,stale=is_stale(used))
 
 
 def char(args):
-    if args.profession == 'auctions':
-        raise Failure(f'Use: everledger listings --char "{args.name}"',2)
     data=roster(character_path(args.name) if args.name else '/characters')
     used=sources(data)
     if args.name:
@@ -319,8 +307,7 @@ def char(args):
         _,lines=capture(catalogue.cmd_char,cat,argv,data)
     else:
         lines=[f"{human(c.get('name'))} | level {human(c.get('level'))} {human(c.get('race'))} {human(c.get('class'))} | gold {money(c.get('gold_copper'))}" for c in data.get('characters',[])] or ['no characters recorded']
-    emit({**data,'sources':used},lines,args.json)
-    return 0
+    return emit({**data,'sources':used},lines,args.json,stale=is_stale(used))
 
 
 def outcome(args):
@@ -337,6 +324,7 @@ def outcome(args):
         lines=outcomes.event_lines(outcomes.event_rows(data)) if data.get('available') is not False else [f"journal {human(data.get('state'))}: {human(data.get('reason'))}"]
         emit(data,lines+[f"next_cursor: {human(data.get('next_cursor'))} | has_more: {human(data.get('has_more'))} | after_cursor: {human(data.get('after_cursor'))} | checkpoint: {human(data.get('checkpoint'))}"],args.json)
         return 0
+    stale=False
     types={'sales':'sale','purchases':'purchase','expirations':'expiration'}
     data=outcomes.item_events(args,item,types[args.command])
     rows=data.pop('events',[])
@@ -346,6 +334,7 @@ def outcome(args):
         lines.append('total proceeds ' + money(data['proceeds_copper']))
     if args.command=='expirations' and rows:
         prices,ms=market_table()
+        stale=ms['stale']
         data['sources']=sources(data)+[ms]
         for r in rows:
             iid=(r.get('item') or {}).get('id')
@@ -356,12 +345,11 @@ def outcome(args):
     if data.get('available') is False:
         lines.append(f"journal {human(data.get('state'))}: {human(data.get('reason'))}")
     disclose_item_source(data,item)
-    emit(data,lines,args.json)
-    return 0
+    return emit(data,lines,args.json,stale=stale)
 
 
 def status(args):
-    rows=[]; used=[]; roster_sources=[]; code=0
+    rows=[]; used=[]; roster_sources=[]; code=0; stale=False
     try:
         cat=load_catalogue()
         checked,lines=capture(catalogue.cmd_verify,cat,[])
@@ -372,15 +360,15 @@ def status(args):
         rows.append({'source':'catalogue','state':str(e)}); code=max(code,e.code)
     for label,path in [('roster','/characters'),('outcomes','/events'),('listings','/listings')]:
         try:
-            d=outcomes.fetch_events({'limit':0}) if label=='outcomes' else roster(path)
+            d=outcomes.event_page({'limit':1}) if label=='outcomes' else roster(path)
             used+=sources(d)
             roster_sources+=sources(d)
             rows.append({'source':label,'state':d.get('state','reachable'),'sources':sources(d)})
-            if label=='listings': code=max(code,stale_code(outcomes.listing_sources(d)))
+            if label=='listings': stale=stale or is_stale(outcomes.listing_sources(d))
         except Failure as e:
             rows.append({'source':label,'state':str(e)}); code=max(code,e.code)
     try:
-        _,s=market_table(); used.append(s); rows.append({'source':'AHledger','state':'stale' if s['stale'] else 'reachable',**s}); code=max(code,stale_code([s]))
+        _,s=market_table(); used.append(s); rows.append({'source':'AHledger','state':'stale' if s['stale'] else 'reachable',**s}); stale=stale or s['stale']
     except Failure as e:
         rows.append({'source':'AHledger','state':str(e)}); code=max(code,e.code)
     vendor_status, vendor_sources = vendors.backend_status()
@@ -391,7 +379,7 @@ def status(args):
         except Failure as e:
             vendor_status['state'] = str(e); code=max(code,e.code)
     used += vendor_sources
-    code = max(code, stale_code(vendor_sources))
+    stale = stale or is_stale(vendor_sources)
     rows.append(vendor_status)
     lines=[' | '.join([human(r['source'])] + ([human(r['backend'])] if r.get('backend') else []) + [human(r['state'])]) for r in rows]
     info = vendor_status['foreverdb']
@@ -402,30 +390,27 @@ def status(args):
         lines.append('vendors data: no cache yet')
     else:
         lines.append(f"vendors data {human(vendor_status['published_at'])} | cache {vendor_status['cache_items']} items | {vendor_status['seen']} seen, {vendor_status['baseline']} baseline, {vendor_status['unverified']} unverified")
-    emit({'status':rows,'sources':used},lines,args.json, source_families={'roster service':roster_sources})
-    return code
+    printed=emit({'status':rows,'sources':used},lines,args.json, stale=stale, source_families={'roster service':roster_sources})
+    return printed if stale else code
 
 
 def refresh(args):
-    if args.target is None:
-        print('deprecated bare refresh; use: everledger refresh catalogue',file=sys.stderr)
     result=subprocess.run(['bash',str(Path(__file__).resolve().parent/'refresh.sh')],capture_output=True,text=True)
     if result.returncode:
         print(result.stderr or result.stdout,file=sys.stderr)
         return 4 if 'curl:' in result.stderr else 1
     if result.stderr: print(result.stderr,end='',file=sys.stderr)
     used=[catalogue_source(load_catalogue())]
-    code=0
     vendor_sources, synced = vendors.refresh_cached()
     used += vendor_sources
-    code = max(code, stale_code(vendor_sources))
-    if synced.get('failed') and not vendor_sources:
-        code = max(code, 4)
+    stale = not synced['failed'] and is_stale(vendor_sources)
     lines = ['catalogue refreshed']
     if synced.get('configured'):
-        lines.append(f"ForeverDB sync: {'complete' if synced['complete'] else 'pending'}; {synced.get('requests', 0)} requests this refresh")
-    emit({'refreshed':'catalogue','vendor_sync':synced,'sources':used},lines,args.json)
-    return code
+        state = 'failed' if synced['failed'] else 'complete' if synced['complete'] else 'pending'
+        lines.append(f"ForeverDB sync: {state}; {synced['requests']} requests this refresh"
+                     + (f"; {synced['error']}" if synced['error'] else ''))
+    printed=emit({'refreshed':'catalogue','vendor_sync':synced,'sources':used},lines,args.json,stale=stale)
+    return 4 if synced['failed'] else printed
 
 
 def main(argv=None):
@@ -437,39 +422,30 @@ def main(argv=None):
             if args.limit is not None and args.limit<0: raise Failure('--limit must be nonnegative',2)
         if args.command in ('price','recipe','bridge','margins','char','status','refresh'):
             return globals()[args.command](args)
-        if args.command=='verify':
-            print('deprecated verify; use: everledger status',file=sys.stderr)
-            cat=load_catalogue(); code,lines=capture(catalogue.cmd_verify,cat,[])
-            emit({'ok':code==0,'checks':lines,'sources':[catalogue_source(cat)]},lines,args.json)
-            return code
         if args.command=='vendors':
             item=item_for(' '.join(args.item)); data=vendors.lookup(item['id'])
             disclose_item_source(data,item)
             if args.zone: data=vendors.select_zone(data,args.zone)
-            emit(vendors.public(data),vendors.lines(data),args.json)
-            return stale_code(data['sources'])
+            return emit(vendors.public(data),vendors.lines(data),args.json,stale=is_stale(data['sources']))
         if args.command=='listings':
             item=item_for(args.item) if args.item else None
             prices,ms=market_table()
             data=outcomes.listings({'char':args.char,'item':str(item['id']) if item else None},prices)
             data['sources']=sources(data)+[ms]
             disclose_item_source(data,item)
-            code=stale_code([ms]+outcomes.listing_sources(data))
-            emit(data,outcomes.listing_lines(data),args.json,stale=code==3)
-            return code
+            stale=is_stale([ms]+outcomes.listing_sources(data))
+            return emit(data,outcomes.listing_lines(data),args.json,stale=stale)
         if args.command=='positions':
             args.since=args.until=None
             item=item_for(args.item) if args.item else None
             prices,ms=market_table()
             data,lines=outcomes.positions(args,item,prices,ms)
             disclose_item_source(data,item)
-            emit(data,lines,args.json,stale=data['stale'])
-            return 3 if data['stale'] else 0
+            return emit(data,lines,args.json,stale=data['stale'])
         if args.command=='net':
             cat=load_catalogue(); item=item_for(' '.join(args.item))
             data,lines=outcomes.net(args,item,catalogue_source(cat),cat)
-            emit(data,lines,args.json)
-            return 0
+            return emit(data,lines,args.json,stale=data['stale'])
         return outcome(args)
     except Failure as e:
         print(str(e),file=sys.stderr)

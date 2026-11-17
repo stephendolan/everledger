@@ -21,9 +21,11 @@ establish that every sell was recently revalidated.
 Each sell's `seenInForever: true` maps to seen; otherwise `classicData: true`
 maps to baseline; otherwise it is unverified. Vendor sightings never promote
 sells. Eric's Red Dye has both flags false. `side` supplies ForeverDB faction;
-ninja output keeps its existing faction-unavailable wording. Each vendor has
-one `locations` entry and one complete coordinate pair in `coords`, retaining
-zone and `mapId` (also on the seller row).
+ninja output keeps its existing faction-unavailable wording. Each seller row
+retains `zone`, `zone_slug`, `mapId`, and a complete coordinate pair in `coords`
+when available. `basis`, `sale_basis`, and `stack_price_copper` carry the sell
+claims and price without duplicate `status`, `price_basis`, `price_raw`, or
+`locations` fields.
 
 `stack_price_copper` retains the integer total `price`, and `stack` retains the
 purchase count. `price_copper` is exact per item only when the total divides
@@ -97,15 +99,17 @@ costs the same. A five-vendor fixture needs 1 + 5 = 6 each time; a 40-vendor
 fixture needs 41 total, split as 36 + 5 at the default cap. Empty datasets still
 require one list request.
 
-Each attempt allows at most the configured cap, including failures/retries,
-with the existing 24-hour cooldown after completion/failure and sequential starts at
-least 2.1 seconds apart. A retryable HTTP 502 gets one retry after at least
-`retry_after`, with a minimum 60-second wait. If the cap prevents that retry,
-the checkpoint retains the wait and resumes on a later daily attempt. A second
-failure ends the attempt. All retries add to the total request math.
+The configured cap is a rolling 24-hour request budget shared across attempts,
+including failures and retries. Each attempt can spend only the remaining
+budget; sequential request starts stay at least 2.1 seconds apart. A retryable
+HTTP 502 gets one retry with an in-attempt wait between 60 and 300 seconds.
+If `retry_after` exceeds 300 seconds or the budget prevents that retry, the
+checkpoint retains `not_before` and the sync stays pending until a later
+attempt can resume. A second failure ends the attempt. All retries add to the
+total request math.
 
 A lock serializes syncs; the attempt journal records each request before
-transport, preserving cooldown even on abrupt exit. Checkpoints retain finished
+transport, preserving request spend even on abrupt exit. Checkpoints retain finished
 pages and details. Validated indexes publish with atomic replace only after
 all details finish. Interruptions, errors and budget exhaustion retain the prior
 index. The profession catalogue refresh still makes its existing ninja requests;
@@ -149,11 +153,14 @@ python3 -m unittest discover -s tests
 Before completion, status should name connector-surrogate and ninja active.
 Set `EVERLEDGER_FOREVERDB_DAILY_REQUESTS=5000` to use Stephen's chosen cap;
 otherwise the default is 36. Each refresh reports at most the configured cap.
-If unfinished, repeat the same refresh command after at least 24 hours from
-the previous attempt's end, keeping these environment settings, until
-`vendor_sync.complete` is true (at least 29 attempts at today's count with the
-default cap). An immediate repeat must report zero requests. Preserve the
-cooldown/checkpoint files. No raw key export is needed.
+If unfinished, repeat the same refresh command with these environment settings
+until `vendor_sync.complete` is true (at least 29 daily attempts at today's
+count with the default cap). An immediate repeat can spend any budget still
+available in the rolling window; it reports zero requests when that budget
+is exhausted or a retry wait exceeds the in-attempt limit. Requests become
+available again as recorded spends age out of the 24-hour window. Raising
+`EVERLEDGER_FOREVERDB_DAILY_REQUESTS` makes the added budget available immediately.
+Preserve the attempt and checkpoint files. No raw key export is needed.
 
 After completion:
 
