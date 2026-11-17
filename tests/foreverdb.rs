@@ -118,6 +118,26 @@ fn journal_precedes_transport_and_budgeted_traversal_resumes() -> Result<()> {
     };
     let result = foreverdb::sync(&context)?;
     assert!(!result.view().complete);
+    assert_eq!(
+        match result.document() {
+            Document::Object(fields) => fields,
+            _ => panic!("sync object"),
+        }
+        .iter()
+        .map(|(k, _)| k.as_ref())
+        .collect::<Vec<_>>(),
+        [
+            "configured",
+            "complete",
+            "pending",
+            "requests",
+            "total_requests",
+            "failed",
+            "deferred",
+            "status",
+            "error"
+        ]
+    );
     assert_eq!(result.view().requests, 36);
     assert!(foreverdb::index(&context)?.is_none());
     let requests = http.requests.borrow();
@@ -212,7 +232,17 @@ fn mapping_rejects_wrong_shapes_and_retains_exact_stack_price() -> Result<()> {
         .and_then(|d| d.get("8681"))
         .expect("fixture vendor");
     let mapped = foreverdb::mapping::vendor(vendor.clone(), foreverdb::mapping::Identifier(8681))?;
-    assert!(mapped.get("sells").and_then(Document::as_array).is_some());
+    let sales = mapped
+        .get("sells")
+        .and_then(Document::as_array)
+        .expect("mapped sales");
+    assert!(!sales.is_empty());
+    for sale in sales {
+        let row = sale.get("row").expect("sale row");
+        for removed in ["locations", "price_raw", "status", "price_basis"] {
+            assert!(row.get(removed).is_none(), "{removed}");
+        }
+    }
     for raw in [
         "{}",
         r#"{"data":[],"meta":{}}"#,
@@ -378,7 +408,7 @@ fn configured_caps_bound_requests_without_changing_pacing_or_publication() -> Re
 }
 
 #[test]
-fn index_is_read_with_or_without_details_and_refused_when_counts_disagree() -> Result<()> {
+fn index_omits_checkpoint_payload_and_ignores_legacy_fields() -> Result<()> {
     let dir = Directory::new();
     let config = dir.config();
     let http = Fixture {
@@ -401,11 +431,14 @@ fn index_is_read_with_or_without_details_and_refused_when_counts_disagree() -> R
     let path = config.data_dir.join("vendors/foreverdb.net/index.json");
     let published: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path)?).expect("published index is JSON");
+    assert!(published.get("details").is_none());
+    assert!(published.get("sync_requests").is_none());
     let rewrite = |edit: &dyn Fn(&mut serde_json::Map<String, serde_json::Value>)| {
         let mut index = published.clone();
         edit(index.as_object_mut().expect("index is an object"));
         std::fs::write(&path, index.to_string()).expect("rewrite index");
     };
+    let expected = foreverdb::lookup(2604, &foreverdb::index(&context)?.unwrap(), &context)?;
     let records = |context: &Context<'_>| -> Result<Option<usize>> {
         Ok(foreverdb::index(context)?.map(|index| index.view().record_count))
     };
@@ -420,11 +453,19 @@ fn index_is_read_with_or_without_details_and_refused_when_counts_disagree() -> R
         index.insert("details".into(), serde_json::Value::Null);
     });
     assert_eq!(records(&context)?, Some(3));
-    // A block or a count that disagrees with the rest marks a damaged file.
+
     rewrite(&|index| {
-        index.insert("details".into(), serde_json::json!({}));
+        index.insert("details".into(), serde_json::json!({"obsolete": "ignored"}));
+        index.insert(
+            "sync_requests".into(),
+            serde_json::json!({"obsolete": "ignored"}),
+        );
     });
-    assert_eq!(records(&context)?, None);
+    assert_eq!(records(&context)?, Some(3));
+    assert_eq!(
+        foreverdb::lookup(2604, &foreverdb::index(&context)?.unwrap(), &context)?,
+        expected
+    );
     rewrite(&|index| {
         index.insert("record_count".into(), 2.into());
     });
@@ -433,5 +474,48 @@ fn index_is_read_with_or_without_details_and_refused_when_counts_disagree() -> R
         index.insert("item_count".into(), 7.into());
     });
     assert_eq!(records(&context)?, None);
+    Ok(())
+}
+
+#[test]
+fn rows_use_own_zone_and_coords_even_when_legacy_locations_are_present() -> Result<()> {
+    let dir = Directory::new();
+    let config = dir.config();
+    let http = Fixture {
+        config: &config,
+        total: 1,
+        requests: RefCell::new(vec![]),
+        fail_at: None,
+    };
+    let catalogue = everledger::catalogue::CatalogueStore::default();
+    let diagnostics = WriterDiagnostics::<Vec<u8>>::default();
+    let clock = VirtualClock::new(instant("2026-11-15T12:00:00Z")?);
+    let context = Context {
+        config: &config,
+        http: &http,
+        clock: &clock,
+        catalogue: &catalogue,
+        diagnostics: &diagnostics,
+    };
+    assert!(foreverdb::sync(&context)?.view().complete);
+    let path = config.data_dir.join("vendors/foreverdb.net/index.json");
+    let mut index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path)?).unwrap();
+    index["items"]["2604"]["vendors"][0]["locations"] =
+        serde_json::json!([{"zone":"Stormwind","zone_slug":"stormwind","x":1,"y":2}]);
+    std::fs::write(path, index.to_string())?;
+    let answer = everledger::vendors::lookup(2604, false, &context)?;
+    let lines = everledger::human::vendors::render(&answer).join("\n");
+    assert!(lines.contains("Ironforge: coordinates unknown"));
+    assert!(!lines.contains("Stormwind"));
+    let everledger::vendors::VendorAnswer::Foreverdb(mut answer) = answer else {
+        panic!("ForeverDB index active");
+    };
+    answer.select_zone("SW")?;
+    assert!(answer.rows().is_empty());
+    assert_eq!(
+        answer.payload().view().known_zones.as_deref(),
+        Some(["Ironforge".into()].as_slice())
+    );
     Ok(())
 }

@@ -88,7 +88,7 @@ impl ForeverdbAnswer {
         let zones = self
             .rows()
             .iter()
-            .flat_map(|r| r.locations.iter().map(|p| p.zone.clone()))
+            .map(|r| r.zone.clone())
             .collect::<BTreeSet<_>>();
         let q = crate::primitives::casefold(query);
         let q = super::zone_query(&q);
@@ -102,11 +102,7 @@ impl ForeverdbAnswer {
             let filtered = rows
                 .iter()
                 .zip(docs)
-                .filter(|(r, _)| {
-                    r.locations
-                        .iter()
-                        .any(|p| matches_zone(&p.zone, &p.zone_slug, q))
-                })
+                .filter(|(r, _)| matches_zone(&r.zone, &r.zone_slug, q))
                 .map(|(_, d)| d.clone())
                 .collect();
             self.payload.set("vendors", Document::Array(filtered))?;

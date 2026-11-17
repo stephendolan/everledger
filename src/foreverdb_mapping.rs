@@ -239,21 +239,6 @@ pub fn vendor(doc: Document, expected: Identifier) -> Result<Document> {
         .and_then(Document::as_array)
         .ok_or_else(invalid)?;
     let zone_slug = casefold(&v.zone.0).replace(' ', "-");
-    let location = Document::object([
-        ("zone", v.zone.0.clone().into()),
-        ("zone_slug", zone_slug.clone().into()),
-        (
-            "mapId",
-            payload
-                .document()
-                .get("data")
-                .and_then(|d| d.get("mapId"))
-                .cloned()
-                .unwrap_or(Document::Null),
-        ),
-        ("x", coord(&v.x)),
-        ("y", coord(&v.y)),
-    ]);
     let mut rows = vec![];
     for (s, raw) in v.sells.iter().zip(raw_sales) {
         let claim = s.claims.basis();
@@ -282,7 +267,6 @@ pub fn vendor(doc: Document, expected: Identifier) -> Result<Document> {
                     .unwrap_or(Document::Null),
             ),
             ("side", scalar(v.side.as_ref())),
-            ("locations", Document::Array(vec![location.clone()])),
             (
                 "coords",
                 Document::Array(if v.x.is_some() && v.y.is_some() {
@@ -294,15 +278,12 @@ pub fn vendor(doc: Document, expected: Identifier) -> Result<Document> {
             ("price_copper", per.map(|n| n.0).into()),
             ("stack_price_copper", s.price.map(|n| n.0).into()),
             ("stack", s.stack.0.into()),
-            ("price_raw", s.price.map(|n| n.0).into()),
             ("limited", s.limited.into()),
             ("limitedStockCount", s.stock.into()),
             ("status_raw", s.claims.seen.into()),
-            ("status", claim.name().into()),
             ("basis", claim.name().into()),
             ("vendor_basis", v.claims.basis().name().into()),
             ("sale_basis", claim.label().into()),
-            ("price_basis", claim.label().into()),
             (
                 "raw",
                 Document::object([("vendor_seen", v.claims.seen.into()), ("sell", raw.clone())]),

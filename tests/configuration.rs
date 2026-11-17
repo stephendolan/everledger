@@ -142,3 +142,18 @@ fn daily_cap_rejects_empty_nonpositive_and_noninteger_values() {
         );
     }
 }
+
+#[test]
+fn refresh_requires_a_target_and_vendors_rejects_removed_flags() {
+    for args in [
+        vec!["everledger", "refresh"],
+        vec!["everledger", "refresh", "--json"],
+        vec!["everledger", "vendors", "2604", "--char", "Amy"],
+        vec!["everledger", "vendors", "2604", "--all"],
+    ] {
+        let error = everledger::cli::parse_from(args.clone()).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{args:?}");
+    }
+    assert!(everledger::cli::parse_from(["everledger", "refresh", "catalogue"]).is_ok());
+    assert!(everledger::cli::parse_from(["everledger", "vendors", "2604", "--in", "IF"]).is_ok());
+}

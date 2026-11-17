@@ -9,17 +9,6 @@ pub struct Args {
         help = "zone/city substring; aliases IF, SW, Darn, Org, TB, UC"
     )]
     pub zone: Option<String>,
-    #[arg(
-        long = "char",
-        allow_negative_numbers = true,
-        help = "character scope; faction filtering unavailable"
-    )]
-    pub char: Option<String>,
-    #[arg(
-        long = "all",
-        help = "all zones (also the default; no faction filtering)"
-    )]
-    pub all: bool,
     #[arg(long = "json", help = "one JSON document using API field names")]
     pub json: bool,
 }

@@ -77,6 +77,9 @@ impl Guard {
                     let clock = VirtualClock::new(now);
                     let _ = s.attempt.set("failed", true);
                     let _ = s.attempt.set("status", Document::Null);
+                    let _ = s
+                        .attempt
+                        .set("error", crate::human::refresh::sync_failed(None));
                     let _ = write_at(&dir, "attempt.json", &s.attempt, &clock);
                     let _ = write_at(&dir, "pending.json", &s.pending, &clock);
                 }

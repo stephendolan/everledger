@@ -628,34 +628,19 @@ fn ninja_fallback(answer: &mut NinjaAnswer, context: &Context<'_>) -> Result<()>
 pub fn refresh_cached(
     context: &Context<'_>,
 ) -> Result<(Vec<Source>, crate::foreverdb::SyncResult)> {
-    let (synced, failure) = match crate::foreverdb::sync(context) {
-        Ok(synced) => (synced, None),
-        Err(error) => {
-            context
-                .diagnostics
-                .warn(&crate::human::refresh::retaining(&error))?;
-            (
-                Payload::decode(
-                    Document::object([
-                        ("configured", true.into()),
-                        ("complete", false.into()),
-                        ("failed", true.into()),
-                    ]),
-                    "ForeverDB sync",
-                )?,
-                Some(error),
-            )
-        }
-    };
-    if let Some(index) = crate::foreverdb::active_index(context)? {
-        return Ok((crate::foreverdb::index_sources(&index, context)?, synced));
+    let synced = crate::foreverdb::sync(context)?;
+    let index_sources = (|| {
+        crate::foreverdb::active_index(context)?
+            .map(|index| crate::foreverdb::index_sources(&index, context))
+            .transpose()
+    })();
+    match index_sources {
+        Ok(Some(sources)) => return Ok((sources, synced)),
+        Ok(None) => {}
+        Err(error) if !synced.view().failed => return Err(error),
+        Err(_) => {}
     }
     let paths = cache_paths(context)?;
-    if paths.is_empty()
-        && let Some(error) = failure
-    {
-        return Err(error);
-    }
     let mut used = vec![];
     for path in paths {
         let id = path
@@ -663,11 +648,18 @@ pub fn refresh_cached(
             .and_then(|s| s.to_str())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| Failure::shape("ninja cache path", "invalid item id"))?;
-        let mut answer = ninja_lookup(id, true, context)?;
-        if failure.is_some() || synced.view().failed {
-            ninja_fallback(&mut answer, context)?;
+        let refreshed = (|| {
+            let mut answer = ninja_lookup(id, true, context)?;
+            if synced.view().failed {
+                ninja_fallback(&mut answer, context)?;
+            }
+            sources(&answer)
+        })();
+        match refreshed {
+            Ok(sources) => used.extend(sources),
+            Err(error) if !synced.view().failed => return Err(error),
+            Err(_) => {}
         }
-        used.extend(sources(&answer)?);
     }
     Ok((used, synced))
 }

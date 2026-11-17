@@ -15,7 +15,7 @@ use crate::{
     time::{UtcInstant, age, instant, iso},
 };
 use mapping::{Basis, Identifier, Metadata};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     fs::{File, OpenOptions},
@@ -27,19 +27,19 @@ pub const BACKEND: &str = "foreverdb.net";
 pub const FORMAT: i64 = 2;
 const INTERVAL: f64 = 2.1;
 fn retry_at(value: Option<&Document>, now: UtcInstant) -> Result<UtcInstant> {
-    let invalid = || Failure::error("ForeverDB retry delay outside datetime range");
     let delay = match value {
-        Some(Document::Number(number)) => match number {
-            Number::Small(n) => *n as f64,
-            Number::Integer(text) => text
-                .parse::<f64>()
-                .ok()
-                .filter(|n| n.is_finite())
-                .ok_or_else(invalid)?,
-            Number::Float(n) => *n,
-        },
+        Some(Document::Number(Number::Small(n))) => *n as f64,
+        Some(Document::Number(Number::Integer(text))) => {
+            if text.starts_with('-') {
+                60.0
+            } else {
+                text.parse::<f64>().unwrap_or(f64::INFINITY)
+            }
+        }
+        Some(Document::Number(Number::Float(n))) if n.is_finite() && *n >= 0.0 => *n,
         Some(
-            Document::Null
+            Document::Number(Number::Float(_))
+            | Document::Null
             | Document::Bool(_)
             | Document::String(_)
             | Document::Array(_)
@@ -47,20 +47,23 @@ fn retry_at(value: Option<&Document>, now: UtcInstant) -> Result<UtcInstant> {
         )
         | None => 60.0,
     };
-    let delay = if delay.is_finite() && delay >= 0.0 {
-        delay
-    } else {
-        60.0
-    };
-    let seconds = delay.max(60.0).ceil() + 1.0;
-    if seconds > (i64::MAX / 1_000_000) as f64 {
-        return Err(invalid());
-    }
-    let micros = (seconds as i64)
-        .checked_mul(1_000_000)
-        .ok_or_else(invalid)?;
-    now.add_microseconds(micros).map_err(|_| invalid())
+    let last = instant("9999-12-31T23:59:59.999999Z")?;
+    let maximum = (last.microseconds() - now.microseconds()) as f64 / 1e6 - 1.0;
+    let seconds = delay.max(60.0).min(maximum).ceil() as i64;
+    now.add_microseconds(seconds * 1_000_000)
 }
+fn retry_iso(value: UtcInstant) -> String {
+    let micros = value.microseconds().rem_euclid(1_000_000);
+    if micros == 0 {
+        iso(value)
+    } else {
+        format!("{}.{micros:06}Z", iso(value).trim_end_matches('Z'))
+    }
+}
+fn sync_io(_: std::io::Error) -> Failure {
+    Failure::error("ForeverDB sync failed")
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Item {
     pub id: i64,
@@ -75,7 +78,6 @@ pub struct Seller {
     pub title: Option<crate::primitives::Scalar>,
     pub zone_slug: String,
     pub side: Option<crate::primitives::Scalar>,
-    pub locations: Vec<Location>,
     pub coords: Vec<Vec<crate::primitives::Scalar>>,
     pub price_copper: Option<crate::Copper>,
     pub stack_price_copper: Option<crate::Copper>,
@@ -85,13 +87,6 @@ pub struct Seller {
     pub limited_stock_count: Option<i64>,
     pub sale_basis: String,
     pub vendor_basis: Basis,
-}
-#[derive(Clone, Debug, Deserialize)]
-pub struct Location {
-    pub zone: String,
-    pub zone_slug: String,
-    pub x: Option<crate::primitives::Scalar>,
-    pub y: Option<crate::primitives::Scalar>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct ItemEntry {
@@ -107,25 +102,41 @@ pub struct IndexData {
     pub vendor_total: usize,
     pub item_count: usize,
     pub items: OrderedMap<ItemEntry>,
-    pub details: Option<OrderedMap<Detail>>,
     pub sync_id: Option<String>,
 }
 pub type Index = Payload<IndexData>;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Attempt {
     pub attempted_at: String,
-    #[serde(default)]
     pub requests: u64,
     pub sync_id: Option<String>,
-    #[serde(default)]
     pub spends: Vec<Spend>,
     #[serde(default)]
     pub failed: bool,
     pub status: Option<u16>,
+    pub error: Option<String>,
     pub finished_at: Option<String>,
     pub last_request_at: Option<String>,
     #[serde(default)]
     pub total_requests: u64,
+}
+#[derive(Deserialize)]
+struct PreviousAttempt {
+    sync_id: Option<String>,
+    spends: Vec<Spend>,
+    #[serde(default)]
+    failed: bool,
+    status: Option<u16>,
+    error: Option<String>,
+    finished_at: Option<String>,
+    #[serde(default)]
+    total_requests: u64,
+}
+#[derive(Deserialize)]
+struct UnfinishedAttempt {
+    requests: u64,
+    last_request_at: Option<String>,
+    attempted_at: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Spend {
@@ -168,48 +179,104 @@ struct Pending {
     total_requests: u64,
     retry: Option<Retry>,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum Deferred {
+    #[serde(rename = "daily sync limit")]
+    DailyLimit,
+    #[serde(rename = "retry wait")]
+    RetryWait,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SyncData {
     pub configured: bool,
     pub complete: bool,
+    pub pending: bool,
+    pub requests: u64,
+    pub total_requests: u64,
+    pub failed: bool,
+    pub deferred: Option<Deferred>,
+    pub status: Option<u16>,
+    pub error: Option<String>,
+}
+pub type SyncResult = Payload<SyncData>;
+#[derive(Clone, Debug, Deserialize)]
+pub struct AttemptSummary {
+    pub attempted_at: Option<String>,
     #[serde(default)]
     pub requests: u64,
     #[serde(default)]
     pub failed: bool,
+    pub status: Option<u16>,
 }
-pub type SyncResult = Payload<SyncData>;
 pub fn cache_dir(context: &Context<'_>) -> PathBuf {
     context.config.data_dir.join("vendors").join(BACKEND)
 }
-pub fn read(context: &Context<'_>, name: &str) -> Result<Option<Document>> {
-    read_at(&cache_dir(context), name, context.clock)
+enum ReadFailure {
+    Io(std::io::Error),
+    Invalid(Failure),
 }
-fn read_at(dir: &Path, name: &str, clock: &dyn Clock) -> Result<Option<Document>> {
-    let mut data = match std::fs::read_to_string(dir.join(name)) {
-        Ok(s) => crate::document::parse(&s)?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    if name == "attempt.json" {
-        let attempt: Attempt = data.decode("ForeverDB attempt")?;
-        if data.get("spends").is_none() || attempt.finished_at.as_deref().is_none_or(str::is_empty)
-        {
-            let finished = attempt
-                .finished_at
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .or(attempt.last_request_at.as_deref().filter(|s| !s.is_empty()))
-                .unwrap_or(&attempt.attempted_at);
-            let mut spends = data
-                .get("spends")
-                .and_then(Document::as_array)
-                .unwrap_or_default()
-                .to_vec();
-            spends.push(spend_document(attempt.requests, finished)?);
-            data.set("spends", Document::Array(spends))?;
-        }
-        prune_spends(&mut data, clock)?;
+pub fn read(context: &Context<'_>, name: &str) -> Result<Option<Document>> {
+    read_at(&cache_dir(context), name).map_err(|error| match error {
+        ReadFailure::Io(error) => error.into(),
+        ReadFailure::Invalid(error) => error,
+    })
+}
+fn read_at(dir: &Path, name: &str) -> std::result::Result<Option<Document>, ReadFailure> {
+    match std::fs::read_to_string(dir.join(name)) {
+        Ok(s) => crate::document::parse(&s)
+            .map(Some)
+            .map_err(ReadFailure::Invalid),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ReadFailure::Io(e)),
     }
+}
+fn sync_read(context: &Context<'_>, name: &str) -> SyncRun<Option<Document>> {
+    read_at(&cache_dir(context), name).map_err(|error| match error {
+        ReadFailure::Io(error) => SyncFailure::Failed(sync_io(error)),
+        ReadFailure::Invalid(error) => SyncFailure::InvalidCache(error),
+    })
+}
+enum SyncFailure {
+    InvalidCache(Failure),
+    Failed(Failure),
+}
+impl From<Failure> for SyncFailure {
+    fn from(error: Failure) -> Self {
+        Self::Failed(error)
+    }
+}
+type SyncRun<T> = std::result::Result<T, SyncFailure>;
+fn load_attempt(context: &Context<'_>) -> SyncRun<Option<Document>> {
+    let Some(mut data) = sync_read(context, "attempt.json")? else {
+        return Ok(None);
+    };
+    let attempt: PreviousAttempt = data
+        .decode("ForeverDB attempt")
+        .map_err(SyncFailure::InvalidCache)?;
+    if attempt.finished_at.as_deref().is_none_or(str::is_empty) {
+        let unfinished: UnfinishedAttempt = data
+            .decode("ForeverDB unfinished attempt")
+            .map_err(SyncFailure::InvalidCache)?;
+        let finished = unfinished
+            .last_request_at
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or(unfinished.attempted_at.as_deref())
+            .ok_or_else(|| {
+                SyncFailure::InvalidCache(Failure::shape(
+                    "ForeverDB unfinished attempt",
+                    "missing attempted_at",
+                ))
+            })?;
+        let mut spends = data
+            .get("spends")
+            .and_then(Document::as_array)
+            .ok_or_else(|| Failure::shape("ForeverDB spends", "expected array"))?
+            .to_vec();
+        spends.push(spend_document(unfinished.requests, finished)?);
+        data.set("spends", Document::Array(spends))?;
+    }
+    prune_spends(&mut data, context.clock).map_err(SyncFailure::InvalidCache)?;
     Ok(Some(data))
 }
 fn spend_document(requests: u64, finished_at: &str) -> Result<Document> {
@@ -249,14 +316,17 @@ pub(super) fn finish_attempt(attempt: &mut Document, now: UtcInstant) -> Result<
     attempt.set("finished_at", finished)?;
     attempt.set("spends", Document::Array(spends))
 }
-pub fn attempt(context: &Context<'_>) -> Result<Option<Attempt>> {
+pub fn attempt(context: &Context<'_>) -> Result<Option<AttemptSummary>> {
     read(context, "attempt.json")?
         .map(|d| d.decode("ForeverDB attempt"))
         .transpose()
 }
 fn random_id() -> Result<String> {
     let mut bytes = [0u8; 16];
-    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    File::open("/dev/urandom")
+        .map_err(sync_io)?
+        .read_exact(&mut bytes)
+        .map_err(sync_io)?;
     Ok(bytes.iter().map(|n| format!("{n:02x}")).collect())
 }
 pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock) -> Result<()> {
@@ -277,10 +347,13 @@ pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock
             .create_new(true)
             .write(true)
             .mode(0o600)
-            .open(&path)?;
-        stream.write_all(dumps(&doc, JsonMode::Stdout).as_bytes())?;
-        stream.sync_all()?;
-        std::fs::rename(&path, dir.join(name))?;
+            .open(&path)
+            .map_err(sync_io)?;
+        stream
+            .write_all(dumps(&doc, JsonMode::Stdout).as_bytes())
+            .map_err(sync_io)?;
+        stream.sync_all().map_err(sync_io)?;
+        std::fs::rename(&path, dir.join(name)).map_err(sync_io)?;
         Ok(())
     })();
     let _ = std::fs::remove_file(path);
@@ -290,14 +363,17 @@ fn remove(dir: &Path, name: &str) -> Result<()> {
     match std::fs::remove_file(dir.join(name)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
+        Err(e) => Err(sync_io(e)),
     }
 }
 pub fn index(context: &Context<'_>) -> Result<Option<Index>> {
     if transport::Transport::select(context.config)?.is_none() {
         return Ok(None);
     }
-    let Some(doc) = read(context, "index.json")? else {
+    decode_index(read(context, "index.json")?)
+}
+fn decode_index(doc: Option<Document>) -> Result<Option<Index>> {
+    let Some(doc) = doc else {
         return Ok(None);
     };
     if doc.get("format").and_then(Document::as_i64) != Some(FORMAT) {
@@ -305,19 +381,16 @@ pub fn index(context: &Context<'_>) -> Result<Option<Index>> {
     }
     let index: Index = Payload::decode(doc, "ForeverDB index")?;
     let v = index.view();
-    // Nothing reads the index's copy of the checkpoint, so an index without it
-    // is whole. One that carries it must carry all of it.
-    if v.details
-        .as_ref()
-        .is_some_and(|details| v.record_count != details.0.len())
-        || v.record_count != v.vendor_total
-        || v.item_count != v.items.0.len()
-    {
+    if v.record_count != v.vendor_total || v.item_count != v.items.0.len() {
         return Ok(None);
     }
     Ok(Some(index))
 }
-pub fn usable_index(index: &Index, attempt: Option<&Attempt>, context: &Context<'_>) -> bool {
+pub fn usable_index(
+    index: &Index,
+    attempt: Option<&AttemptSummary>,
+    context: &Context<'_>,
+) -> bool {
     !attempt.is_some_and(|a| {
         a.failed
             && (age(Some(&index.view().fetched_at), context.clock).is_some_and(|a| a > 7 * 86400)
@@ -334,57 +407,75 @@ pub fn active_index(context: &Context<'_>) -> Result<Option<Index>> {
     Ok(idx.filter(|i| usable_index(i, a.as_ref(), context)))
 }
 pub fn sync(context: &Context<'_>) -> Result<SyncResult> {
-    let Some(transport) = transport::Transport::select(context.config)? else {
-        return Payload::decode(
-            Document::object([
-                ("configured", false.into()),
-                ("complete", false.into()),
-                ("requests", 0i64.into()),
-            ]),
-            "ForeverDB sync",
-        );
-    };
-    let dir = cache_dir(context);
-    std::fs::create_dir_all(&dir)?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("sync.lock"))?;
-    lock.lock()?;
-    sync_locked(context, &transport, &dir)
+    let mut result = SyncData::default();
+    let run = (|| {
+        let Some(transport) = transport::Transport::select(context.config)? else {
+            return Ok(());
+        };
+        result.configured = true;
+        let dir = cache_dir(context);
+        std::fs::create_dir_all(&dir).map_err(sync_io)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("sync.lock"))
+            .map_err(sync_io)?;
+        lock.lock().map_err(sync_io)?;
+        sync_locked(context, &transport, &dir, &mut result)
+    })();
+    match run {
+        Ok(()) => {}
+        Err(SyncFailure::InvalidCache(error)) => return Err(error),
+        Err(SyncFailure::Failed(error)) => {
+            result.configured = true;
+            result.failed = true;
+            result.pending = cache_dir(context).join("pending.json").exists();
+            result.error = Some(error.message);
+        }
+    }
+    Payload::decode(Document::from_typed(&result)?, "ForeverDB sync")
 }
 fn sync_locked(
     context: &Context<'_>,
     transport: &transport::Transport,
     dir: &Path,
-) -> Result<SyncResult> {
-    let previous = index(context)?;
-    let old_record = read(context, "attempt.json")?;
-    let old_attempt: Option<Attempt> = old_record
+    result: &mut SyncData,
+) -> SyncRun<()> {
+    let previous =
+        decode_index(sync_read(context, "index.json")?).map_err(SyncFailure::InvalidCache)?;
+    let old_record = load_attempt(context)?;
+    let old_attempt: Option<PreviousAttempt> = old_record
         .as_ref()
         .map(|d| d.decode("ForeverDB attempt"))
         .transpose()?;
-    let mut pending = read(context, "pending.json")?;
+    let mut pending = sync_read(context, "pending.json")?;
     let budget = RequestBudget::remaining(
         context.config.foreverdb_daily_requests,
         old_attempt.as_ref().map_or(&[], |attempt| &attempt.spends),
     );
     if budget.0 == 0 {
-        return Payload::decode(
-            Document::object([
-                ("configured", true.into()),
-                ("complete", (previous.is_some() && pending.is_none()).into()),
-                ("pending", pending.is_some().into()),
-                ("requests", 0i64.into()),
-                ("deferred", "daily sync limit".into()),
-                (
-                    "failed",
-                    old_attempt.as_ref().is_some_and(|a| a.failed).into(),
-                ),
-            ]),
-            "ForeverDB sync",
-        );
+        result.configured = true;
+        result.complete = previous.is_some() && pending.is_none();
+        result.pending = pending.is_some();
+        result.total_requests = match &pending {
+            Some(doc) => {
+                #[derive(Deserialize)]
+                struct Total {
+                    #[serde(default)]
+                    total_requests: u64,
+                }
+                doc.decode::<Total>("ForeverDB checkpoint total")?
+                    .total_requests
+            }
+            None => old_attempt.as_ref().map_or(0, |a| a.total_requests),
+        };
+        result.deferred = Some(Deferred::DailyLimit);
+        result.failed = old_attempt.as_ref().is_some_and(|a| a.failed);
+        result.status = old_attempt.as_ref().and_then(|a| a.status);
+        result.error = old_attempt.as_ref().and_then(|a| a.error.clone());
+        return Ok(());
     }
+
     if pending
         .as_ref()
         .is_some_and(|d| d.get("format").and_then(Document::as_i64) != Some(FORMAT))
@@ -410,7 +501,8 @@ fn sync_locked(
             ("total_requests", 0i64.into()),
         ]),
     };
-    let mut pending: Payload<Pending> = Payload::decode(pending, "ForeverDB checkpoint")?;
+    let mut pending: Payload<Pending> =
+        Payload::decode(pending, "ForeverDB checkpoint").map_err(SyncFailure::InvalidCache)?;
     if let Some(a) = &old_attempt
         && a.sync_id.as_deref() == Some(&pending.view().sync_id)
     {
@@ -444,6 +536,7 @@ fn sync_locked(
         ]),
         "ForeverDB attempt",
     )?;
+    result.total_requests = pending.view().total_requests;
     write_at(dir, "attempt.json", attempt.document(), context.clock)?;
     let interrupt = interrupt::Guard::new(dir)?;
     let mut engine = Engine {
@@ -454,10 +547,12 @@ fn sync_locked(
         budget,
         last_start: None,
         interrupt: &interrupt,
+        result,
+        deferred: None,
     };
     engine.checkpoint_interrupt()?;
     let mut obsolete = false;
-    let result = (|| {
+    let outcome = (|| {
         transport.validate(context)?;
         while let Some(offset) = engine.pending.view().next_offset {
             if engine.attempt.view().requests >= engine.budget.0 {
@@ -528,29 +623,18 @@ fn sync_locked(
             interrupt.remove("pending.json")?;
             engine.attempt.set("failed", false)?;
             engine.attempt.set("status", Document::Null)?;
+            engine.attempt.set("error", Document::Null)?;
         } else {
             interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
         engine.finish()?;
         interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
-        Payload::decode(
-            Document::object([
-                ("configured", true.into()),
-                ("complete", complete.into()),
-                ("pending", (!complete).into()),
-                (
-                    "requests",
-                    Document::from_typed(&engine.attempt.view().requests)?,
-                ),
-                (
-                    "total_requests",
-                    Document::from_typed(&engine.pending.view().total_requests)?,
-                ),
-            ]),
-            "ForeverDB sync",
-        )
+        engine.result.complete = complete;
+        engine.result.pending = !complete;
+        engine.result.deferred = engine.deferred;
+        Ok(())
     })();
-    if let Err(e) = &result {
+    if let Err(e) = &outcome {
         engine.finish()?;
         engine.attempt.set("failed", true)?;
         engine.attempt.set(
@@ -561,15 +645,20 @@ fn sync_locked(
                 .cloned()
                 .unwrap_or(Document::Null),
         )?;
+        engine.attempt.set("error", e.message.clone())?;
         interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
         if obsolete {
             interrupt.remove("pending.json")?;
         } else {
             interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
+        engine.result.failed = true;
+        engine.result.pending = !obsolete;
+        engine.result.status = engine.attempt.view().status;
+        engine.result.error = engine.attempt.view().error.clone();
     }
     interrupt.clear();
-    result
+    Ok(())
 }
 struct Engine<'a, 'b> {
     context: &'a Context<'b>,
@@ -579,6 +668,8 @@ struct Engine<'a, 'b> {
     budget: RequestBudget,
     last_start: Option<f64>,
     interrupt: &'a interrupt::Guard,
+    result: &'a mut SyncData,
+    deferred: Option<Deferred>,
 }
 impl Engine<'_, '_> {
     fn finish(&mut self) -> Result<()> {
@@ -598,6 +689,7 @@ impl Engine<'_, '_> {
     fn get(&mut self, path: &str) -> Result<Option<Document>> {
         loop {
             if self.attempt.view().requests >= self.budget.0 {
+                self.deferred = Some(Deferred::DailyLimit);
                 return Ok(None);
             }
             let retry = self.pending.view().retry.clone();
@@ -606,31 +698,42 @@ impl Engine<'_, '_> {
                 let delay = (instant(&retry.not_before)?.microseconds()
                     - self.context.clock.now().microseconds()) as f64
                     / 1e6;
-                self.context.clock.sleep(delay.max(0.0))?;
+                if delay > 300.0 {
+                    self.deferred = Some(Deferred::RetryWait);
+                    return Ok(None);
+                }
+                if delay > 0.0 {
+                    self.context.clock.sleep(delay.clamp(60.0, 300.0))?;
+                }
             }
             if let Some(last) = self.last_start {
                 self.context
                     .clock
                     .sleep((INTERVAL - (self.context.clock.monotonic() - last)).max(0.0))?;
             }
-            self.attempt.set(
-                "requests",
-                Document::from_typed(&(self.attempt.view().requests + 1))?,
-            )?;
+            let mut reservation = self.attempt.clone();
+            let requests = self
+                .attempt
+                .view()
+                .requests
+                .checked_add(1)
+                .ok_or_else(mapping::invalid)?;
             let total = self
                 .pending
                 .view()
                 .total_requests
                 .checked_add(1)
                 .ok_or_else(mapping::invalid)?;
+            reservation.set("requests", Document::from_typed(&requests)?)?;
+            reservation.set("total_requests", Document::from_typed(&total)?)?;
+            reservation.set("last_request_at", iso(self.context.clock.now()))?;
+            self.interrupt
+                .write("attempt.json", reservation.document(), self.context.clock)?;
+            *self.attempt = reservation;
             self.pending
                 .set("total_requests", Document::from_typed(&total)?)?;
-            self.attempt
-                .set("total_requests", Document::from_typed(&total)?)?;
-            self.attempt
-                .set("last_request_at", iso(self.context.clock.now()))?;
-            self.interrupt
-                .write("attempt.json", self.attempt.document(), self.context.clock)?;
+            self.result.requests = requests;
+            self.result.total_requests = total;
             self.last_start = Some(self.context.clock.monotonic());
             self.checkpoint_interrupt()?;
             match self.transport.request(path, self.context) {
@@ -650,19 +753,22 @@ impl Engine<'_, '_> {
                         && retry.is_none()
                         && response.and_then(|d| d.get("retryable")) == Some(&Document::Bool(true))
                     {
-                        let not_before = iso(retry_at(
-                            response.and_then(|d| d.get("retry_after")),
-                            self.context.clock.now(),
-                        )?);
+                        let timestamp = self.context.clock.now();
+                        let not_before =
+                            retry_at(response.and_then(|d| d.get("retry_after")), timestamp)?;
                         self.pending.set(
                             "retry",
-                            Document::object([("not_before", not_before.into())]),
+                            Document::object([("not_before", retry_iso(not_before).into())]),
                         )?;
                         self.interrupt.write(
                             "pending.json",
                             self.pending.document(),
                             self.context.clock,
                         )?;
+                        if not_before.microseconds() - timestamp.microseconds() > 300_000_000 {
+                            self.deferred = Some(Deferred::RetryWait);
+                            return Ok(None);
+                        }
                         continue;
                     }
                     self.pending.remove("retry")?;
@@ -761,11 +867,6 @@ fn snapshot(
         ("record_count", pending.view().details.0.len().into()),
         ("item_count", count.into()),
         ("items", items),
-        ("details", detail_docs.clone()),
-        (
-            "sync_requests",
-            Document::from_typed(&pending.view().total_requests)?,
-        ),
     ]))
 }
 pub fn provenance(
