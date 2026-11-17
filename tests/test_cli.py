@@ -264,7 +264,8 @@ class CLI(unittest.TestCase):
                 self.assertIn('age', lines[-1])
         data = json.loads(self.run_cli('listings','--json').stdout)
         self.assertEqual(len(data['scans']), 10)
-        self.assertGreaterEqual(len(data['sources']), 20)
+        self.assertEqual(len(data['sources']), 2)
+        self.assertEqual(len(data['scans']), 10)
 
     def test_json_counts_match_filtered_arrays_and_aggregate_pages(self):
         rows = [self.event(t, 1, -10, id=str(i)) for i, t in enumerate(
@@ -288,26 +289,50 @@ class CLI(unittest.TestCase):
         data = json.loads(self.run_cli('events','--limit','0','--json').stdout)
         self.assertEqual(data['counts'], {'matched':0, 'returned':0})
 
-    def test_stale_notice_follows_data_once_and_preserves_exit_codes(self):
+    def test_stale_notice_and_exit_code_follow_the_same_freshness_decision(self):
         commands = self.output_fixture()
         self.market(stale=True)
         Handler.routes['/listings'][1]['scans'][0]['pricing']['source']['stale'] = True
         for args in commands:
             with self.subTest(command=args):
-                code = 3 if args[0] in ('price','margins','listings','positions') else 0
+                code = 3 if args[0] in ('price','margins','listings','positions','expirations','net') else 0
                 result = self.run_cli(*args, code=code)
                 lines = result.stdout.splitlines()
                 notices = [i for i, line in enumerate(lines) if line.startswith('stale:')]
-                if args[0] in ('vendors','sales','purchases','events'):
+                if code == 0:
                     self.assertEqual(notices, [])
                 else:
                     self.assertEqual(notices, [len(lines)-2])
+                self.run_cli(*args, '--json', code=code)
                 self.assertTrue(lines[-1].startswith('source:'))
                 self.assertNotIn('stale', lines[-1])
                 self.assertNotIn('stale', result.stderr)
                 if args[0] in ('sales','purchases','expirations','events','net','positions'):
                     self.assertIn('Journalator.lua', lines[-1])
                     self.assertIn('2020-01-01', lines[-1])
+
+    def test_roster_derived_results_share_stale_notice_and_exit_code(self):
+        self.market()
+        ch = {'name':'Slade', 'professions':[{'name':'Tailoring', 'skill':5,
+              'max_skill':75, 'skill_available':True,
+              'recipes':{'available':True, 'known':[{'spell_id':1}]}}]}
+        stale_source = {'file':'Journalator-looking-name.lua', 'mtime':NOW, 'stale':True}
+        Handler.routes['/characters'] = (200, {'characters':[ch], 'sources':[stale_source]})
+        Handler.routes['/characters/Slade'] = (200, {'character':ch, 'sources':[stale_source]})
+        for args in [('recipe', 'Red Shirt'), ('char', 'Slade'),
+                     ('margins', 'tailoring', '--char', 'Slade')]:
+            with self.subTest(command=args):
+                result = self.run_cli(*args, code=3)
+                self.assertEqual(result.stdout.count('stale: data exceeds'), 1)
+                self.run_cli(*args, '--json', code=3)
+
+    def test_status_probes_one_event_page(self):
+        self.live_contract()
+        self.market()
+        Handler.routes['/'] = (200, '')
+        self.run_cli('status', '--json', code=1)
+        self.assertEqual([p for p in Handler.requests if p.startswith('/events')],
+                         ['/events?limit=1'])
 
     def test_status_without_vendor_cache_has_no_nulls(self):
         self.market()
@@ -330,7 +355,7 @@ class CLI(unittest.TestCase):
         for pending, word in ((False, 'no'), (True, 'yes')):
             with self.subTest(pending=pending):
                 if pending:
-                    pending_path.write_text('{}')
+                    pending_path.write_text('checkpoint contents need not be parsed')
                 human = self.run_cli('status', code=1).stdout
                 self.assertIn(f'pending {word}', human)
                 self.assertIn('last sync never', human)
@@ -339,6 +364,17 @@ class CLI(unittest.TestCase):
                 vendor = next(row for row in data['status'] if row['source'] == 'vendors')
                 self.assertIs(vendor['foreverdb']['pending'], pending)
                 self.assertIsNone(vendor['foreverdb']['last_sync_at'])
+
+    def test_ninja_status_without_published_times_is_null(self):
+        self.run_cli('vendors', '2604')
+        path = Path(self.tmp.name, 'vendors/wowforever.ninja/2604.json')
+        data = json.loads(path.read_text())
+        data['published_at'] = None
+        path.write_text(json.dumps(data))
+        self.market()
+        Handler.routes['/'] = (200, '')
+        data = json.loads(self.run_cli('status', '--json', code=1).stdout)
+        self.assertIsNone(next(r for r in data['status'] if r['source'] == 'vendors')['published_at'])
 
     def test_character_timestamps_use_unknown_and_preserve_known_values(self):
         for generated, updated in ((None, None), (NOW, None), (None, NOW),
@@ -421,9 +457,9 @@ class CLI(unittest.TestCase):
             **recipe, 'name':'Cloudy Gustwoven Boots', 'bands':{**recipe['bands'], 'learn':55}}]}
         path.write_text(json.dumps(cat))
         for args in [('char',), ('char','Slade'), ('char','Slade','tailoring'),
-                     ('bridge','tailoring','1','20'), ('recipe','Red Shirt'), ('verify',)]:
+                     ('bridge','tailoring','1','20'), ('recipe','Red Shirt')]:
             with self.subTest(command=args):
-                result = self.run_cli(*args, code=1 if args[0] == 'verify' else 0)
+                result = self.run_cli(*args, code=0)
                 self.assertNotRegex(result.stdout, r'\b(?:None|null)\b')
         data = json.loads(self.run_cli('char','--json').stdout)
         self.assertIsNone(data['characters'][0]['level'])
@@ -443,7 +479,7 @@ class CLI(unittest.TestCase):
         readme = (ROOT / 'README.md').read_text()
         for command in ('', 'price','recipe','bridge','margins','vendors','char','listings',
                         'positions','sales','purchases','expirations','net','events','status',
-                        'refresh','verify'):
+                        'refresh'):
             with self.subTest(command=command):
                 args = [command] if command else []
                 help_text = self.run_cli(*args, '--help').stdout
@@ -512,7 +548,7 @@ class CLI(unittest.TestCase):
         self.assertTrue(query['since'][0].isdigit())
         self.assertEqual(query['until'],['4070908800'])
         for bad in [('events','--limit','-1'),('sales','--since','2026-11-15','--until','2026-11-14'),
-                    ('purchases','--venue','both'),('char','Slade','auctions')]:
+                    ('purchases','--venue','both')]:
             self.run_cli(*bad,code=2)
 
     def test_sales_proceeds_and_linkless_basis(self):
@@ -552,6 +588,12 @@ class CLI(unittest.TestCase):
         self.assertEqual(d['latest']['median_copper'],88)
         self.assertEqual(d['vendors'][0]['price_copper'],50)
         self.assertIn('vendor: listed price 50c',self.run_cli('price','Red Dye').stdout)
+        Handler.routes['/v1/prices/forever.pvp.alliance.us/2604'][1]['latest']['quantity'] = 709.0
+        self.assertIn('listed 709 in', self.run_cli('price','2604').stdout)
+        self.assertIs(type(json.loads(self.run_cli('price','2604','--json').stdout)['latest']['quantity']), int)
+        Handler.routes['/events'][1]['events'] = [self.event('expiration', 1, 0)]
+        self.assertIn('listed 709 |', self.run_cli('expirations').stdout)
+        self.assertIs(type(json.loads(self.run_cli('expirations','--json').stdout)['expirations'][0]['market']['quantity']), int)
         d=json.loads(self.run_cli('margins','tailoring','--level','5','--json').stdout)
         self.assertEqual(d['margins'][0]['cost_copper'],88)
         self.assertEqual(d['margins'][0]['margin_copper'],102)
@@ -588,7 +630,7 @@ class CLI(unittest.TestCase):
         path.write_text(json.dumps(cached))
         self.run_cli('vendors','2604','--json',code=3)
         # Test the same public refresh operation without downloading twelve profession pages.
-        script = "import everledger_vendors as v; from everledger_core import Failure; import sys;\ntry:\n d=v.lookup(2604,refresh=True); print(d['stale']); sys.exit(3 if d['stale'] else 0)\nexcept Failure as e: sys.exit(e.code)"
+        script = "import everledger_vendors as v; from everledger_core import Failure; import sys;\ntry:\n used,_=v.refresh_cached(); d={'stale':any(s.get('stale') for s in used)}; print(d['stale']); sys.exit(3 if d['stale'] else 0)\nexcept Failure as e: sys.exit(e.code)"
         Handler.routes['/items/2604.json']=(503,{})
         r=subprocess.run(['python3','-c',script],cwd=ROOT,env=self.env,capture_output=True,text=True)
         self.assertEqual(r.returncode,3,r.stderr)
@@ -598,7 +640,7 @@ class CLI(unittest.TestCase):
         self.assertEqual(r.returncode,4,r.stderr)
         self.assertEqual(r.stdout,'')
 
-    def test_recipe_bridge_char_and_alias_regressions(self):
+    def test_recipe_bridge_char_and_margins_regressions(self):
         d=json.loads(self.run_cli('recipe','Red Shirt','--skill','15','--json').stdout)
         self.assertEqual(d['recipes'][0]['bands']['learn'],1)
         self.assertIn('yellow',self.run_cli('recipe','Red Shirt','--skill','15').stdout)
@@ -612,8 +654,7 @@ class CLI(unittest.TestCase):
         self.assertIn('Tailoring: 5/75',self.run_cli('char','Slade').stdout)
         self.assertIn('Red Shirt',self.run_cli('char','Slade','tailoring').stdout)
         self.market()
-        r=self.run_cli('margins','tailoring','--known','Slade','--json')
-        self.assertIn('deprecated',r.stderr)
+        r=self.run_cli('margins','tailoring','--char','Slade','--json')
         self.assertEqual(len(json.loads(r.stdout)['margins']),1)
 
     def test_net_signed_counts_and_unknown_profit(self):
@@ -623,6 +664,7 @@ class CLI(unittest.TestCase):
         self.assertEqual((d['unaccounted'],d['cash_copper'],d['proceeds_copper']),(0,37800,38000))
         self.assertIsNone(d['realized_profit_copper'])
         self.assertIsNone(d['deposits_lost_copper'])
+        self.assertNotIn('deposits lost', self.run_cli('net','Red Dye').stdout)
         Handler.routes['/events']=(200,{'events':rows[1:],'sources':[]})
         r=self.run_cli('net','Red Dye')
         self.assertIn('posted unknown',r.stdout)
@@ -637,7 +679,11 @@ class CLI(unittest.TestCase):
         listing={'item_id':2604,'name':'Red Dye','count':2,'character':'Slade Undertow',
                  'price':{'available':True,'recorded':{'buyout_copper':200,'expires_at':NOW},'source':{'stale':False}}}
         Handler.routes['/listings']=(200,{'listings':[listing],'scans':[{'available':True,'pricing':{'available':True,'source':{'file':'DataStore_Auctions.lua','scanned_at':NOW,'stale':False}}}],'sources':[]})
+        scan_source = Handler.routes['/listings'][1]['scans'][0]['pricing']['source']
+        Handler.routes['/listings'][1]['sources'] = [scan_source, dict(scan_source)]
+        Handler.routes['/listings'][1]['scans'] *= 2
         d=json.loads(self.run_cli('listings','--json').stdout)
+        self.assertEqual(d['sources'].count(scan_source), 1)
         self.assertEqual(d['listings'][0]['buyout_copper'],200)
         self.assertTrue(d['listings'][0]['undercut'])
         self.assertIn('undercut yes', self.run_cli('listings').stdout)
@@ -649,6 +695,11 @@ class CLI(unittest.TestCase):
         self.assertEqual((d['positions'][0]['held'],d['positions'][0]['listed']),(4,2))
         self.assertIsNone(d['positions'][0]['basis_copper'])
         self.assertEqual(d['positions'][0]['value_copper'],348)
+        Handler.requests = []
+        selected = json.loads(self.run_cli('positions','--char','Slade','--item','2604','--json').stdout)
+        self.assertEqual(selected['positions'], d['positions'])
+        self.assertEqual([p for p in Handler.requests if p in ('/characters/Slade', '/characters/Slade%20Undertow')],
+                         ['/characters/Slade'])
         Handler.routes['/listings'][1]['scans'][0]['pricing']['source']['stale']=True
         self.run_cli('listings','--json',code=3)
 
@@ -665,7 +716,15 @@ class CLI(unittest.TestCase):
                 html+=f'<tr role="row"><td role="cell"><span class="o">{level}</span></td><td role="cell"><a href="/professions/{prof}/{index}-recipe/">{name}</a></td><td role="cell"><a href="/items/{index}-item/">{name}</a></td><td role="cell"></td><td role="cell">{source}</td></tr>'
             Handler.routes[f'/professions/{prof}/']=(200,html)
 
-    def test_refresh_verify_aliases_and_status(self):
+    def test_removed_flags_and_aliases_are_rejected(self):
+        for args in [('verify',), ('refresh',), ('margins', '--known', 'Slade'),
+                     ('vendors', '2604', '--char', 'Slade'), ('vendors', '2604', '--all')]:
+            with self.subTest(args=args):
+                self.run_cli(*args, code=2)
+        result = self.run_cli('char', 'Slade', 'auctions')
+        self.assertNotIn('listings --char', result.stderr)
+
+    def test_refresh_and_status(self):
         self.refresh_routes()
         self.run_cli('vendors','2604','--json')
         Handler.requests=[]
@@ -673,12 +732,6 @@ class CLI(unittest.TestCase):
         self.assertEqual(d['refreshed'],'catalogue')
         self.assertEqual([r for r in Handler.requests if '.pins.json' in r],['/items/2604.pins.json'])
         self.assertNotIn('/items/6532.json',Handler.requests)
-        r=self.run_cli('verify','--json')
-        self.assertTrue(json.loads(r.stdout)['ok'])
-        self.assertIn('deprecated verify',r.stderr)
-        r=self.run_cli('refresh','--json')
-        self.assertEqual(json.loads(r.stdout)['refreshed'],'catalogue')
-        self.assertIn('deprecated bare refresh',r.stderr)
         self.market()
         Handler.routes['/']=(200,{})
         d=json.loads(self.run_cli('status','--json').stdout)
@@ -714,6 +767,48 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         return json.loads(result.stdout)
 
+    def test_refresh_sync_failure_reports_catalogue_and_spend_with_or_without_cache(self):
+        self.refresh_routes()
+        self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+        script = """
+import runpy
+from unittest.mock import patch
+import everledger_foreverdb as db
+from everledger_core import Failure
+with patch.object(db, 'request', side_effect=Failure('secret-fixture', 4, {'status':503})):
+    runpy.run_path('everledger', run_name='__main__')
+"""
+        for cached in (False, True):
+            if cached:
+                self.run_cli('vendors', '2604', code=3)
+            for as_json in (False, True):
+                result = subprocess.run(['python3', '-c', script, 'refresh', 'catalogue',
+                                         *(['--json'] if as_json else [])],
+                                        cwd=ROOT, env=self.env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 4, result.stderr + result.stdout)
+                self.assertNotIn('secret-fixture', result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+                if as_json:
+                    data = json.loads(result.stdout)
+                    self.assertEqual(data['refreshed'], 'catalogue')
+                    self.assertEqual((data['vendor_sync']['failed'], data['vendor_sync']['requests']), (True, 1))
+                else:
+                    self.assertIn('catalogue refreshed', result.stdout)
+                    self.assertIn('ForeverDB sync: failed; 1 requests this refresh', result.stdout)
+                    self.assertEqual(result.stdout.count('ForeverDB sync failed'), 1)
+                    if not cached:
+                        self.assertNotIn('retaining', result.stdout)
+
+    def test_refresh_setup_failure_preserves_catalogue_result(self):
+        self.refresh_routes()
+        self.env['EVERLEDGER_FOREVERDB_API_KEY_FILE'] = self.tmp.name
+        result = self.run_cli('refresh', 'catalogue', '--json', code=4)
+        data = json.loads(result.stdout)
+        self.assertEqual(data['refreshed'], 'catalogue')
+        self.assertEqual((data['vendor_sync']['failed'], data['vendor_sync']['requests']), (True, 0))
+        self.assertIn('API key file unreadable', data['vendor_sync']['error'])
+        self.assertEqual(result.stderr, '')
+
     def test_foreverdb_refresh_selection_credit_and_locations(self):
         self.run_cli('vendors', '2604', '--json')
         ninja = Path(self.tmp.name, 'vendors/wowforever.ninja/2604.json')
@@ -736,6 +831,8 @@ with patch.object(db, 'request', side_effect=get), patch.object(db.time, 'sleep'
         self.assertIn('Fallback dataset knows 1 more seller for this item.', filtered)
         self.assertEqual(sum(line.startswith('source:') for line in filtered.splitlines()), 1)
         self.assertIn('source: foreverdb.net', human)
+        self.assertNotIn('saved/data unknown', human)
+        self.assertNotIn('age unknown', human)
         self.assertIn('Data from ForeverDB.net (https://foreverdb.net)', human)
         self.assertNotIn('each', human)
         unknown = json.loads(self.run_cli('vendors', '999999', '--json').stdout)

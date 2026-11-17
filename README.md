@@ -7,12 +7,12 @@ local filter views, and the live-service regression evidence.
 
 ```text
 usage: everledger [-h]
-                  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify} ...
+                  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh} ...
 
 everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.
 
 positional arguments:
-  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh,verify}
+  {price,recipe,bridge,margins,vendors,char,listings,positions,sales,purchases,expirations,net,events,status,refresh}
     price               AHledger quote plus vendor listed prices
     recipe              Catalogue facts and roster known-by annotation
     bridge              Catalogue skill-up bands across a range
@@ -36,7 +36,6 @@ positional arguments:
                         catalogue and vendors
     refresh             Rebuild catalogue and refresh the configured vendor
                         backend
-    verify              Deprecated catalogue anchor check (use status)
 
 options:
   -h, --help            show this help message and exit
@@ -53,7 +52,7 @@ Old journal saves show their age without a stale notice or exit-code change.
 JSON matched/returned counts describe the accompanying filtered array;
 aggregates count all pages, events count the current page, bootstrap counts zero.
 Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
-Journal save age is normal: outcomes and net exit 0 even for old saves.
+Journal save age is normal: old saves alone do not change exit codes.
 Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
 Listings use the roster scan limit (15m). Positions apply both market/scan limits.
 Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
@@ -85,17 +84,14 @@ Override with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).
 List pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014
 detail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
 At the default 36/day, bootstrap takes at least 29 daily attempts; retries add requests.
-Retryable HTTP 502 gets one retry after at least retry_after (minimum 60s),
-within the daily cap. Unfinished syncs resume; only complete indexes activate.
+Retryable HTTP 502 gets one retry within the daily cap; in-attempt waits are
+60-300s. Longer waits stay pending until a later attempt. Unfinished syncs resume; only complete indexes activate.
 ForeverDB prices are per item only when stack price divides evenly by stack;
 otherwise show the total and quantity, e.g. 10c per 3. Limited stock is marked.
 With ForeverDB active, vendors adds a plain fallback-coverage count when the
 ninja cache knows additional distinct sellers; --in applies to both sets.
 Status names the transport and vendor/item record counts for each backend.
 Status and vendor lookups never make ForeverDB requests.
-Deprecated for one release: verify (use status), bare refresh (use refresh catalogue),
-margins --known NAME (use --char NAME). Warnings go to stderr; JSON stays stable.
-char NAME auctions prints listings --char NAME on stderr and exits 2.
 ```
 
 ## price
@@ -167,8 +163,7 @@ options:
 ## vendors
 
 ```text
-usage: everledger vendors [-h] [--in ZONE] [--char CHAR] [--all] [--json]
-                          item [item ...]
+usage: everledger vendors [-h] [--in ZONE] [--json] item [item ...]
 
 Vendor listed prices/locations; ForeverDB includes faction
 
@@ -176,11 +171,9 @@ positional arguments:
   item
 
 options:
-  -h, --help   show this help message and exit
-  --in ZONE    zone/city substring; aliases IF, SW, Darn, Org, TB, UC
-  --char CHAR  character scope; faction filtering unavailable
-  --all        all zones (also the default; no faction filtering)
-  --json       one JSON document using API field names
+  -h, --help  show this help message and exit
+  --in ZONE   zone/city substring; aliases IF, SW, Darn, Org, TB, UC
+  --json      one JSON document using API field names
 ```
 
 ## char
@@ -357,7 +350,7 @@ options:
 ## refresh
 
 ```text
-usage: everledger refresh [-h] [--json] [{catalogue}]
+usage: everledger refresh [-h] [--json] {catalogue}
 
 Rebuild catalogue and refresh the configured vendor backend
 
@@ -367,18 +360,6 @@ positional arguments:
 options:
   -h, --help   show this help message and exit
   --json       one JSON document using API field names
-```
-
-## verify
-
-```text
-usage: everledger verify [-h] [--json]
-
-Deprecated catalogue anchor check (use status)
-
-options:
-  -h, --help  show this help message and exit
-  --json      one JSON document using API field names
 ```
 
 ## ForeverDB backend
