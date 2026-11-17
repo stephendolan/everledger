@@ -45,10 +45,11 @@ missing required field.
 ## Inputs the port does not accept
 
 - **Non-ASCII digits.** Python reads any Unicode decimal digit as a number, in
-  integer arguments, numeric item IDs, relative time selectors (`٣d`), epoch
-  strings, and vendor price text. Rust reads ASCII digits.
-- **Integers beyond 64 bits** in integer arguments. Python integers are
-  unbounded.
+  integer arguments, the daily request cap, numeric item IDs, relative time
+  selectors (`٣d`), epoch strings, and vendor price text. Rust reads ASCII
+  digits.
+- **Integers beyond 64 bits** in integer arguments and the daily request cap.
+  Python integers are unbounded.
 - **Unpaired UTF-16 surrogates** in JSON strings. They cannot be Rust strings.
 - **UTF-16 and UTF-32 JSON bodies.** Rust accepts UTF-8, with or without a
   byte-order mark.
@@ -68,6 +69,10 @@ ninja cache.
 - CPython fails to convert a naive date within a day of its minimum or maximum
   (`0001-01-01`, `9999-12-31`). Rust applies one rule: an instant is valid from
   `0001-01-01T00:00:00Z` through `9999-12-31T23:59:59.999999Z`.
+- CPython refuses to convert a decimal string of more than 4,300 digits, a guard
+  on its unbounded integers that each interpreter can reconfigure. Rust reads
+  the number when it fits 64 bits, so an integer argument or a daily request cap
+  padded with thousands of leading zeros is accepted.
 - A negative amount that rounds to zero copper prints `0c`; Python prints `-0c`.
 - Python finds a vendor page's `Last-Modified` header only in that exact letter
   case and otherwise reports no publication time. Rust finds it in any case.
