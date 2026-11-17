@@ -1169,3 +1169,167 @@ fn truthy_journal_sequences_are_not_decoded_as_structs() -> Result<()> {
     assert_eq!(world.http.requests.borrow().len(), 6);
     Ok(())
 }
+
+#[test]
+fn checkpoint_requires_next_offset_before_sending_a_request() -> Result<()> {
+    let mut world = World::new("2");
+    assert_eq!(world.sync()?.view().requests, 2);
+    let mut checkpoint = world.disk("pending.json");
+    checkpoint.remove("next_offset");
+    world.write("pending.json", &checkpoint);
+    world.cap("36");
+    world.http.requests.borrow_mut().clear();
+    assert_eq!(world.sync().unwrap_err().code, everledger::ExitCode::Error);
+    assert!(world.http.requests.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn completed_pages_require_metadata_before_fetching_details() -> Result<()> {
+    for missing in [true, false] {
+        let mut world = World::new("2");
+        assert_eq!(world.sync()?.view().requests, 2);
+        let mut checkpoint = world.disk("pending.json");
+        assert_eq!(checkpoint.get("next_offset"), Some(&Document::Null));
+        if missing {
+            checkpoint.remove("metadata");
+        } else {
+            checkpoint.set("metadata", Document::Null)?;
+        }
+        world.write("pending.json", &checkpoint);
+        world.cap("36");
+        world.http.requests.borrow_mut().clear();
+        assert_eq!(
+            world.sync().unwrap_err().code,
+            everledger::ExitCode::Error,
+            "missing: {missing}"
+        );
+        assert!(world.http.requests.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn checkpoint_metadata_requires_a_nullable_publication_time() -> Result<()> {
+    for missing in [true, false] {
+        let mut world = World::new("2");
+        assert_eq!(world.sync()?.view().requests, 2);
+        let mut checkpoint = world.disk("pending.json");
+        let mut metadata = checkpoint.get("metadata").unwrap().clone();
+        if missing {
+            metadata.remove("published_at");
+        } else {
+            metadata.set("published_at", Document::Null)?;
+        }
+        checkpoint.set("metadata", metadata)?;
+        world.write("pending.json", &checkpoint);
+        world.cap("36");
+        world.http.requests.borrow_mut().clear();
+        if missing {
+            assert_eq!(world.sync().unwrap_err().code, everledger::ExitCode::Error);
+            assert!(world.http.requests.borrow().is_empty());
+        } else {
+            assert!(world.sync()?.view().complete);
+            assert_eq!(world.http.requests.borrow().len(), 4);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn vendor_indexes_require_nullable_output_keys() -> Result<()> {
+    for (path, key) in [
+        ("", "published_at"),
+        ("/items/2604/item", "name"),
+        ("/items/2604/vendors/0", "title"),
+        ("/items/2604/vendors/0", "side"),
+        ("/items/2604/vendors/0", "price_copper"),
+    ] {
+        let world = World::new("36");
+        assert!(world.sync()?.view().complete);
+        let index_path = world.path("index.json");
+        let original: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&index_path)?).unwrap();
+        world.http.requests.borrow_mut().clear();
+        for missing in [true, false] {
+            let mut index = original.clone();
+            let fields = index.pointer_mut(path).unwrap().as_object_mut().unwrap();
+            if missing {
+                fields.remove(key);
+            } else {
+                fields.insert(key.into(), serde_json::Value::Null);
+            }
+            std::fs::write(&index_path, index.to_string())?;
+            let answer = everledger::vendors::lookup(2604, &world.context());
+            if missing {
+                assert_eq!(
+                    answer.unwrap_err().code,
+                    everledger::ExitCode::Error,
+                    "{path}/{key}"
+                );
+                if key == "published_at" {
+                    assert_eq!(
+                        everledger::vendors::status::backend_status(&world.context())
+                            .unwrap_err()
+                            .code,
+                        everledger::ExitCode::Error
+                    );
+                }
+            } else {
+                let answer = answer?;
+                assert!(!everledger::human::vendors::render(&answer).is_empty());
+            }
+        }
+        assert!(world.http.requests.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn ninja_cache_items_require_a_nullable_name() -> Result<()> {
+    struct NinjaFixture(RefCell<Vec<String>>);
+    impl Http for NinjaFixture {
+        fn request(&self, request: &Request) -> Result<Response> {
+            self.0.borrow_mut().push(request.url.clone());
+            let body = if request.url.ends_with(".pins.json") {
+                include_bytes!("fixtures/2604.pins.json").as_slice()
+            } else {
+                include_bytes!("fixtures/2604.json").as_slice()
+            };
+            Ok(Response {
+                body: body.to_vec(),
+                headers: vec![],
+            })
+        }
+    }
+    let mut world = World::new("36");
+    world.config.foreverdb_api_key = "".into();
+    let http = NinjaFixture(RefCell::new(vec![]));
+    let context = Context {
+        http: &http,
+        ..world.context()
+    };
+    assert!(everledger::vendors::lookup(2604, &context).is_ok());
+    let path = world.directory.join("vendors/wowforever.ninja/2604.json");
+    let original: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path)?).unwrap();
+    http.0.borrow_mut().clear();
+    for missing in [true, false] {
+        let mut cached = original.clone();
+        let item = cached["item"].as_object_mut().unwrap();
+        if missing {
+            item.remove("name");
+        } else {
+            item.insert("name".into(), serde_json::Value::Null);
+        }
+        std::fs::write(&path, cached.to_string())?;
+        let answer = everledger::vendors::lookup(2604, &context);
+        if missing {
+            assert_eq!(answer.unwrap_err().code, everledger::ExitCode::Error);
+        } else {
+            assert!(!everledger::human::vendors::render(&answer?).is_empty());
+        }
+    }
+    assert!(http.0.borrow().is_empty());
+    Ok(())
+}

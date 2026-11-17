@@ -1,7 +1,7 @@
-use crate::foreverdb::{CacheError, CacheResult};
+use crate::foreverdb::{CacheError, CacheResult, Item};
 use crate::{
     Context, Copper, Failure, Result,
-    catalogue::{Item, OrderedMap, nullable},
+    catalogue::{OrderedMap, nullable},
     document::{Document, JsonMode},
     http::{Payload, Request},
     primitives::Scalar,
