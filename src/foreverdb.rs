@@ -48,7 +48,11 @@ fn retry_at(value: Option<&Document>, now: UtcInstant) -> Result<UtcInstant> {
         | None => 60.0,
     };
     let last = instant("9999-12-31T23:59:59.999999Z")?;
-    let maximum = (last.microseconds() - now.microseconds()) as f64 / 1e6 - 1.0;
+    // Python divides the microseconds left by a million in one correctly rounded
+    // step. Whole seconds plus the remainder's quotient is that same double;
+    // converting the count first rounds twice and can land a second short.
+    let left = last.microseconds() - now.microseconds();
+    let maximum = (left / 1_000_000) as f64 + (left % 1_000_000) as f64 / 1e6 - 1.0;
     let seconds = delay.max(60.0).min(maximum).ceil() as i64;
     now.add_microseconds(seconds * 1_000_000)
 }

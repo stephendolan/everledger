@@ -17,6 +17,7 @@ This holds a process at chosen points and checks both implementations:
 
 CANDIDATE needs the `parity-seams` feature.
 """
+import datetime
 import json
 import os
 import signal
@@ -36,6 +37,9 @@ REFRESH = ['refresh', 'catalogue', '--json']
 # From an ordinary delay, across the 300 seconds an attempt will wait, to integers and floats no date can hold.
 DELAYS = ['75', '90.5', '-5', '"soon"', 'true', 'null', '299.9', '300', '301', '1e11', '3e11', '1e15', '1e20',
           '100000000000000000000', '1e300', '1e999', '-1e999', '1' + '0' * 309, '-1' + '0' * 309]
+# At this instant the microseconds left before the last date a clock can hold divide to a double
+# that sits one step from a whole number, so a clamp computed with one rounding too many is a second short.
+ROUNDING_INSTANT = datetime.datetime(2026, 11, 15, 12, 0, 0, 999983, datetime.timezone.utc)
 WAIT = 10
 failures = []
 
@@ -128,8 +132,11 @@ def retry_delays(engine, module, candidate):
     scenario = DBScenario(engine, module, 'interrupts-retry-delays')
     try:
         state = snapshot(scenario.root)
-        for value in DELAYS:
+        for value, instant in [(value, None) for value in DELAYS] + [('1e15', ROUNDING_INSTANT), ('1' + '0' * 309, ROUNDING_INSTANT)]:
             shown = value if len(value) < 24 else f'{value[:6]}... ({len(value)} characters)'
+            if instant:
+                shown += ' at ' + instant.isoformat().replace('+00:00', 'Z')
+            engine.clock = instant
             scenario.fixture.scripts = {1: {'status': 502, 'body': '{"retryable": true, "retry_after": %s}' % value}}
             runs = []
             for command in (ORACLE, candidate):
@@ -145,6 +152,7 @@ def retry_delays(engine, module, candidate):
             check(Normalizer().transcript(reference)['files'] == Normalizer().transcript(port)['files'],
                   f'retry_after {shown}: the same journal and files')
     finally:
+        engine.clock = None
         scenario.close()
 
 

@@ -272,7 +272,9 @@ signal arrives after the sync, during the ninja refresh that follows an
 incomplete one. The script also runs a retryable 502 through `retry_after`
 values from seconds, across the 300 an attempt will wait, to numbers no date
 can hold. Both sides must send the same requests, sleep the same, exit with the
-same code, and leave the same files.
+same code, and leave the same files. Two of the largest delays run again at an
+instant where a clamp computed with one float rounding too many lands a second
+short of the reference's.
 
 ```sh
 python3 parity/interrupts.py target/seams/debug/everledger
