@@ -120,6 +120,24 @@ pub struct Attempt {
     #[serde(default)]
     pub total_requests: u64,
 }
+#[derive(Deserialize)]
+struct PreviousAttempt {
+    sync_id: Option<String>,
+    spends: Vec<Spend>,
+    #[serde(default)]
+    failed: bool,
+    status: Option<u16>,
+    error: Option<String>,
+    finished_at: Option<String>,
+    #[serde(default)]
+    total_requests: u64,
+}
+#[derive(Deserialize)]
+struct UnfinishedAttempt {
+    requests: u64,
+    last_request_at: Option<String>,
+    attempted_at: Option<String>,
+}
 #[derive(Clone, Debug, Deserialize)]
 pub struct Spend {
     pub requests: u64,
@@ -232,21 +250,30 @@ fn load_attempt(context: &Context<'_>) -> SyncRun<Option<Document>> {
     let Some(mut data) = sync_read(context, "attempt.json")? else {
         return Ok(None);
     };
-    let attempt: Attempt = data
+    let attempt: PreviousAttempt = data
         .decode("ForeverDB attempt")
         .map_err(SyncFailure::InvalidCache)?;
     if attempt.finished_at.as_deref().is_none_or(str::is_empty) {
-        let finished = attempt
+        let unfinished: UnfinishedAttempt = data
+            .decode("ForeverDB unfinished attempt")
+            .map_err(SyncFailure::InvalidCache)?;
+        let finished = unfinished
             .last_request_at
             .as_deref()
             .filter(|s| !s.is_empty())
-            .unwrap_or(&attempt.attempted_at);
+            .or(unfinished.attempted_at.as_deref())
+            .ok_or_else(|| {
+                SyncFailure::InvalidCache(Failure::shape(
+                    "ForeverDB unfinished attempt",
+                    "missing attempted_at",
+                ))
+            })?;
         let mut spends = data
             .get("spends")
             .and_then(Document::as_array)
             .ok_or_else(|| Failure::shape("ForeverDB spends", "expected array"))?
             .to_vec();
-        spends.push(spend_document(attempt.requests, finished)?);
+        spends.push(spend_document(unfinished.requests, finished)?);
         data.set("spends", Document::Array(spends))?;
     }
     prune_spends(&mut data, context.clock).map_err(SyncFailure::InvalidCache)?;
@@ -417,7 +444,7 @@ fn sync_locked(
     let previous =
         decode_index(sync_read(context, "index.json")?).map_err(SyncFailure::InvalidCache)?;
     let old_record = load_attempt(context)?;
-    let old_attempt: Option<Attempt> = old_record
+    let old_attempt: Option<PreviousAttempt> = old_record
         .as_ref()
         .map(|d| d.decode("ForeverDB attempt"))
         .transpose()?;

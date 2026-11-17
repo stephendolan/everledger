@@ -923,3 +923,23 @@ fn refresh_stale_decision_uses_vendor_sources_after_successful_partial_sync() ->
     );
     Ok(())
 }
+
+#[test]
+fn sync_reads_request_fields_only_for_an_unfinished_attempt() -> Result<()> {
+    for raw in [
+        r#"{"finished_at":"2026-11-15T12:00:00Z","spends":[{"requests":1,"finished_at":"2026-11-15T12:00:00Z"}],"requests":"unused"}"#,
+        r#"{"last_request_at":"2026-11-15T12:00:00Z","requests":1,"spends":[]}"#,
+    ] {
+        let world = World::new("1");
+        world.write("attempt.json", &parse(raw)?);
+        let result = world.sync()?;
+        assert!(!result.view().failed);
+        assert_eq!(
+            result.view().deferred,
+            Some(foreverdb::Deferred::DailyLimit)
+        );
+        assert_eq!(result.view().requests, 0);
+        assert!(world.http.requests.borrow().is_empty());
+    }
+    Ok(())
+}
