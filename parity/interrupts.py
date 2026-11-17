@@ -12,10 +12,8 @@ This holds a process at chosen points and checks both implementations:
 - **After the sync.** SIGINT while the ninja refresh that follows an incomplete
   sync waits on a response. Each side must end by SIGINT.
 - **Retry delays.** A retryable 502 whose `retry_after` runs from seconds to
-  numbers no date can hold. Both sides must send the same requests and exit
-  with the same code. Where the reference dies of an overflow its journal
-  stays open, and the candidate's is closed and marked failed: the one
-  sanctioned difference here.
+  numbers no date can hold. Both sides must send the same requests, sleep the
+  same, exit the same, and leave the same files.
 
 CANDIDATE needs the `parity-seams` feature.
 """
@@ -35,12 +33,11 @@ from parity.engine import Engine, Normalizer, ROOT, restore, snapshot
 ORACLE = [sys.executable, str(ROOT / 'parity/oracle.py')]
 JOURNAL = 'vendors/foreverdb.net/attempt.json'
 REFRESH = ['refresh', 'catalogue', '--json']
-# From an ordinary delay, through the last a date can hold, to integers and floats beyond one.
-DELAYS = ['75', '90.5', '-5', '"soon"', 'true', 'null', '1e11', '3e11', '1e13', '1e14', '1e20',
+# From an ordinary delay, across the 300 seconds an attempt will wait, to integers and floats no date can hold.
+DELAYS = ['75', '90.5', '-5', '"soon"', 'true', 'null', '299.9', '300', '301', '1e11', '3e11', '1e15', '1e20',
           '100000000000000000000', '1e300', '1e999', '-1e999', '1' + '0' * 309, '-1' + '0' * 309]
 WAIT = 10
 failures = []
-sanctioned = []
 
 
 def check(condition, message):
@@ -145,17 +142,8 @@ def retry_delays(engine, module, candidate):
                   f'({len(foreverdb(reference["requests"]))} and {len(foreverdb(port["requests"]))})')
             check(reference['exit_code'] == port['exit_code'] and reference['stdout'] == port['stdout'],
                   f'retry_after {shown}: the same exit code and stdout ({reference["exit_code"]} and {port["exit_code"]})')
-            if Normalizer().transcript(reference)['files'] == Normalizer().transcript(port)['files']:
-                check(True, f'retry_after {shown}: the same journal and files')
-            elif b'OverflowError' in reference['stderr']:
-                # The reference died mid-attempt with its journal still open. The port's must be closed.
-                journals = [json.loads(run['files'][JOURNAL]) for run in runs]
-                closed = bool(journals[1].get('finished_at')) and journals[1].get('failed') is True
-                check('finished_at' not in journals[0] and closed and journals[0]['requests'] == journals[1]['requests'],
-                      f'retry_after {shown}: the reference dies with its journal open; the port closes its own as failed')
-                sanctioned.append(shown)
-            else:
-                check(False, f'retry_after {shown}: the same journal and files')
+            check(Normalizer().transcript(reference)['files'] == Normalizer().transcript(port)['files'],
+                  f'retry_after {shown}: the same journal and files')
     finally:
         scenario.close()
 
@@ -173,7 +161,6 @@ def main():
         retry_delays(engine, module, candidate)
     finally:
         engine.close()
-    print(f'sanctioned {len(sanctioned)}: the reference dies of an overflow on retry_after ' + ', '.join(sanctioned))
     print(f'{len(failures)} failures')
     return 1 if failures else 0
 

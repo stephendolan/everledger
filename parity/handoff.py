@@ -16,9 +16,10 @@ runs both at once. This does:
   wrappers with different environments would: the second attempt then spends
   what the first left of its own cap. The implementation that did not publish
   the index then answers a vendor lookup from it.
-- **An index without the blocks nothing reads.** The reference never reads the
-  index's `details` or `sync_requests`. Both implementations must answer from
-  an index that lacks them, and sync again over it.
+- **An index from before the blocks were dropped.** An index written by an
+  older build carries `details` and `sync_requests`, which nothing reads. Both
+  implementations must answer from such an index whatever those hold, and sync
+  again over it.
 - **Lock.** One implementation holds the sync lock mid-request while the other
   starts a refresh on the same directory, both at a cap of 6. The second must
   wait, send no ForeverDB request, and then find the window spent, in both
@@ -93,8 +94,8 @@ def takeover(engine, first, second, caps, gap):
         server.close()
 
 
-def unread_blocks(engine, candidate):
-    """Both sides read an index that lacks `details` and `sync_requests`, then sync again over it."""
+def legacy_blocks(engine, candidate):
+    """Both sides read an index that still carries `details` and `sync_requests`, then sync again over it."""
     server = fixture()
     try:
         with tempfile.TemporaryDirectory(prefix='everledger-handoff-') as directory, \
@@ -104,15 +105,14 @@ def unread_blocks(engine, candidate):
             engine.advance(seconds=elapsed(synced))
             path = Path(directory, SYNC_FILES[0])
             index = json.loads(path.read_text())
-            path.write_text(json.dumps({key: value for key, value in index.items() if key not in ('details', 'sync_requests')},
-                                       ensure_ascii=False))
+            path.write_text(json.dumps({**index, 'details': {'obsolete': 'ignored'}, 'sync_requests': -1}, ensure_ascii=False))
             trimmed = snapshot(directory)
             for argv in (*LOOKUPS, REFRESH):
                 reference, port = (engine.capture(side, argv, environment(), server, directory, trimmed, Path(controls))
                                    for side in (ORACLE, candidate))
                 same = all(reference[field] == port[field] for field in ('exit_code', 'stdout', 'requests', 'sleep_log'))
                 check(same and reference['exit_code'] == 0,
-                      f'an index without details or sync_requests: {" ".join(argv)} gives the same answer '
+                      f'an index still carrying details and sync_requests: {" ".join(argv)} gives the same answer '
                       f'(exit {reference["exit_code"]} and {port["exit_code"]})')
     finally:
         server.close()
@@ -185,7 +185,7 @@ def main():
                 reader = 'Python' if first is ORACLE else 'Rust'
                 check(answers == reference_answers and all(code == 0 for code, _ in answers),
                       f'{label}: {reader} then answers a vendor lookup from the index the other published')
-        unread_blocks(engine, candidate)
+        legacy_blocks(engine, candidate)
         lock(engine, ORACLE, candidate, 'Python', 'Rust')
         lock(engine, candidate, ORACLE, 'Rust', 'Python')
     finally:

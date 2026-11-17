@@ -19,10 +19,10 @@ empty help output, credential leak, or empty scenario selection. It exits 0
 only when every selected step passes. A full run takes roughly two minutes
 on this host; the self-suite runs the full corpus twice.
 
-Each source test maps to a named scenario. `--list` prints all 82 mappings;
+Each source test maps to a named scenario. `--list` prints all 93 mappings;
 the report includes the same accounting, selection, and CLI translation notes.
-An inventory check fails if the reference test set changes. All 82 methods
-have CLI equivalents, including the 33 ForeverDB methods that use internals.
+An inventory check fails if the reference test set changes. All 93 methods
+have CLI equivalents, including the 38 ForeverDB methods that use internals.
 
 ## Scoreboard and report
 
@@ -35,7 +35,7 @@ have CLI equivalents, including the 33 ForeverDB methods that use internals.
 
 Each sanctioned step prints its exemption class beside each affected field.
 The JSON report includes the table, every step, both complete transcripts, all
-differences, byte ranges with offsets, assertion errors, and the 82-test
+differences, byte ranges with offsets, assertion errors, and the 93-test
 accounting. Bytes use `{"base64": "...", "length": N}` so invalid UTF-8 and
 trailing whitespace survive. Decode with `base64.b64decode(value['base64'])`.
 Request lists retain their order and exact path/query strings. The four logged
@@ -52,7 +52,7 @@ at the default `parity/report.json` location.
 ## Replay and isolation
 
 `corpus.py` loads `tests/test_cli.py` as a fixture vocabulary and executes its
-49 test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
+55 test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
 subprocess runs. Original assertions still run against the oracle result;
 assertion failures fail the harness independently of parity. This preserves
 loops, cursor chaining, route changes, file edits, environment edits, and
@@ -70,9 +70,12 @@ pre-step state and discards its result after comparison; the replay rendering
 alone determines subsequent state. The human and JSON defaults for `events`
 remain the CLI's own defaults.
 
-The two subprocess calls to `lookup(refresh=True)` in `test_cache_failure_window`
-become public `refresh catalogue` calls with the same two-day/eight-day cache
-states and 503 response. The refresh fixture also supplies the twelve profession
+The two subprocess calls in `test_cache_failure_window` become public
+`refresh catalogue` calls with the same two-day/eight-day cache states and 503
+response. The subprocess with a patched transport in
+`test_refresh_sync_failure_reports_catalogue_and_spend_with_or_without_cache`
+becomes `refresh catalogue` against a scripted 503, under the test's own
+assertions. The refresh fixture also supplies the twelve profession
 pages. Other in-process ForeverDB behavior uses `refresh catalogue`, `vendors`,
 `status`, and the resulting cache files. Where the reference patches its cap,
 the scenario sets `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` for both sides. The
@@ -89,6 +92,11 @@ reference's tests hold their clock still during an attempt, so a spend there
 ends the instant it began. Here it ends seconds later, so the window scenarios
 take their boundaries from the recorded `finished_at`: one second before a
 spend is 24 hours old, and that second.
+
+A step can also change the data directory while a response is held. The
+write-failure scenario uses it: a directory takes the place of `pending.json`,
+or of `attempt.json`, while the first request waits, so the rename that
+publishes the next write fails where the reference's test patches its writer.
 
 SIGINT and SIGKILL cases hold the third ForeverDB response after logging its
 request, signal the running process group, wait for process exit, and release
@@ -220,7 +228,8 @@ plain 502, 503, 401, 302, bodies that are not JSON or not the mapped shape),
 and time passing between attempts: none, part of a 24-hour window, more than
 one, or to within a second of the instant a recorded spend expires. Each
 attempt runs under its own daily cap: unset, a value from 1 to 5000 in several
-spellings, or now and then one the CLI refuses. Scripted failures are aimed at the cap's last request and
+spellings, or now and then one the CLI refuses. Scripted retry delays run below,
+at, and above the 300 seconds an attempt will wait. Scripted failures are aimed at the cap's last request and
 the one before it. Every step also asserts the fixture key is absent from
 stdout, stderr, and every file.
 
@@ -261,10 +270,9 @@ request and signals it. Each implementation must end by SIGINT, with its
 journal closed, when the reader of its stderr has gone, and again when the
 signal arrives after the sync, during the ninja refresh that follows an
 incomplete one. The script also runs a retryable 502 through `retry_after`
-values from seconds to numbers no date can hold. Both sides must send the same
-requests and exit with the same code. Where the reference dies of an overflow
-its journal stays open and the candidate's is closed and marked failed, which
-the script reports as sanctioned.
+values from seconds, across the 300 an attempt will wait, to numbers no date
+can hold. Both sides must send the same requests, sleep the same, exit with the
+same code, and leave the same files.
 
 ```sh
 python3 parity/interrupts.py target/seams/debug/everledger
@@ -276,9 +284,9 @@ During cutover both implementations read and write the same data directory.
 The runner gives each side its own copy of the state, so `handoff.py` covers
 what it cannot: one implementation finishing a sync the other started, in both
 orders, a day apart and back to back under different caps; the one that did not
-publish the index then answering a lookup from it; both reading an index
-without the `details` and `sync_requests` blocks, which nothing reads; and one
-waiting on the sync lock the other holds.
+publish the index then answering a lookup from it; both reading an index from
+an older build, which still carries the `details` and `sync_requests` blocks
+nothing reads; and one waiting on the sync lock the other holds.
 
 ```sh
 python3 parity/handoff.py target/seams/debug/everledger

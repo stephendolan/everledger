@@ -24,8 +24,8 @@ COMMANDS = {
     'price': (['2604'], ['--json']),
     'recipe': (['Red', 'Shirt'], ['--json', '--skill 15']),
     'bridge': (['tailoring', '1', '20'], ['--json']),
-    'margins': ([], ['--json', '--level 5', '--char Slade', '--known Slade']),
-    'vendors': (['2604'], ['--json', '--in IF', '--char Slade', '--all']),
+    'margins': ([], ['--json', '--level 5', '--char Slade']),
+    'vendors': (['2604'], ['--json', '--in IF']),
     'char': ([], ['--json', '--skill 5']),
     'listings': ([], ['--json', '--char Slade', '--item 2604']),
     'positions': ([], ['--json', '--char Slade', '--item 2604']),
@@ -36,12 +36,15 @@ COMMANDS = {
     'events': ([], ['--json', '--item 2604', '--char Slade', '--since 7d', '--until 1d', '--venue auction',
                     '--type sale', '--cursor abc', '--after abc', '--limit 5']),
     'status': ([], ['--json']),
-    'refresh': ([], ['--json']),
-    'verify': ([], ['--json']),
+    'refresh': (['catalogue'], ['--json']),
 }
 cases = [[], ['-h'], ['--help'], ['--json'], ['--json', 'price', '2604'], ['bogus'], ['--version'], ['-V'],
          ['price'], ['Price', '2604'], ['pri', '2604'], ['--', 'price', '2604'], ['price', '--', '2604'],
-         ['price', '--', '--json'], ['help'], ['help', 'price'], ['price', '2604', '--json=true'], ['price', '-j', '2604']]
+         ['price', '--', '--json'], ['help'], ['help', 'price'], ['price', '2604', '--json=true'], ['price', '-j', '2604'],
+         # Surface the reference has removed: every form is a usage error or an ordinary argument now.
+         ['verify'], ['verify', '--json'], ['refresh'], ['refresh', '--json'], ['margins', '--known', 'Slade'],
+         ['margins', 'tailoring', '--known', 'Slade', '--char', 'Slade'], ['vendors', '2604', '--all'],
+         ['vendors', '2604', '--char', 'Slade'], ['vendors', '--all', '2604', '--json']]
 for name, (positionals, flags) in COMMANDS.items():
     base = [name] + positionals
     cases += [base, base + ['-h'], base + ['--help'], [name, '--help'], base + ['--bogus'], base + ['extra'],

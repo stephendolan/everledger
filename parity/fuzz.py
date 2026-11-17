@@ -412,11 +412,11 @@ def invocation(rng, items, names, cat, cursors):
     pick = lambda *flags: [part for flag in flags if rng.random() < 0.35 for part in flag]
     command = rng.choice(['price', 'price', 'vendors', 'vendors', 'recipe', 'bridge', 'margins', 'margins', 'char', 'char',
                           'listings', 'listings', 'positions', 'positions', 'sales', 'purchases', 'expirations',
-                          'net', 'net', 'events', 'events', 'events', 'events', 'verify', 'status'])
+                          'net', 'net', 'events', 'events', 'events', 'events', 'status', 'status'])
     if command == 'price':
         return ['price', *wanted.split(' ')] if rng.random() < 0.5 else ['price', wanted]
     if command == 'vendors':
-        return ['vendors', wanted, *pick(('--in', rng.choice(['IF', 'SW', 'org', 'iron', 'Nowhere', 'thunder', 'barrens', 'TB'])), ('--all',))]
+        return ['vendors', wanted, *pick(('--in', rng.choice(['IF', 'SW', 'org', 'iron', 'Nowhere', 'thunder', 'barrens', 'TB'])))]
     if command == 'recipe':
         return ['recipe', rng.choice([named, named[:4], named.upper(), 'Craft', 'zzz', 'II']), *pick(('--skill', str(rng.randrange(1, 300))))]
     if command == 'bridge':
@@ -424,7 +424,7 @@ def invocation(rng, items, names, cat, cursors):
         return ['bridge', prof, str(start), str(start + rng.choice([-5, 0, 10, 60, 150]))]
     if command == 'margins':
         return ['margins', *([prof] if rng.random() < 0.6 else []),
-                *pick(('--level', str(rng.randrange(1, 300))), ('--char', who), ('--known', who))]
+                *pick(('--level', str(rng.randrange(1, 300))), ('--char', who))]
     if command == 'char':
         if rng.random() < 0.25:
             return ['char']
@@ -437,7 +437,7 @@ def invocation(rng, items, names, cat, cursors):
         return [command, *pick(('--item', wanted), ('--char', who)), *window(), *venue]
     if command == 'net':
         return ['net', wanted, *pick(('--char', who)), *window()]
-    if command in ('verify', 'status'):
+    if command == 'status':
         return [command]
     types_ = ','.join(rng.sample(EVENT_TYPES, rng.randrange(1, 4)))
     mode = rng.choice(['window', 'window', 'bootstrap', 'after', 'cursor', 'cursor'])
@@ -560,7 +560,9 @@ def sync_script(rng, cap):
     script = {}
     for _ in range(rng.choice([0, 0, 0, 1, 1, 2])):
         script[rng.choice([1, 1, 2, 3, 5, 9, 20, cap, cap, max(cap - 1, 1)])] = rng.choice([
-            {'status': 502, 'body': {'retryable': True, 'retry_after': rng.choice([0, 30, 60, 75, 90.5, -5, 'soon'])}},
+            # Delays below, at, and above the 300 seconds an attempt will wait, and ones no date can hold.
+            {'status': 502, 'body': {'retryable': True, 'retry_after': rng.choice(
+                [0, 30, 60, 75, 90.5, -5, 'soon', None, True, 299.9, 300, 301, 4000, 1e15, 10 ** 400])}},
             {'status': 502, 'body': {'retryable': True}},
             {'status': 502, 'body': {'retryable': False}},
             {'status': 502, 'body': 'upstream unavailable'},

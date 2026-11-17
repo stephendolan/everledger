@@ -90,7 +90,8 @@ def oracle_state(forever, ids):
     complete = {
         'vendors/foreverdb.net/index.json': dump(index),
         'vendors/foreverdb.net/attempt.json': dump({
-            'attempted_at': stamp(hours=1, minutes=2), 'requests': 17, 'sync_id': 'a' * 32, 'failed': False,
+            'attempted_at': stamp(hours=1, minutes=2), 'requests': 17, 'sync_id': 'a' * 32,
+            'spends': [{'requests': 17, 'finished_at': stamp(hours=1)}], 'failed': False,
             'status': None, 'total_requests': 1025, 'last_request_at': stamp(hours=1, minutes=1),
             'finished_at': stamp(hours=1)}),
     }
@@ -100,7 +101,8 @@ def oracle_state(forever, ids):
     final_attempt = {
         'vendors/foreverdb.net/pending.json': dump(pending),
         'vendors/foreverdb.net/attempt.json': dump({
-            'attempted_at': stamp(days=1, hours=2), 'requests': 36, 'sync_id': 'b' * 32, 'failed': False,
+            'attempted_at': stamp(days=1, hours=2), 'requests': 36, 'sync_id': 'b' * 32,
+            'spends': [{'requests': 36, 'finished_at': stamp(days=1, hours=1, minutes=58)}], 'failed': False,
             'status': None, 'total_requests': 1025 - REMAINING, 'last_request_at': stamp(days=1, hours=1, minutes=59),
             'finished_at': stamp(days=1, hours=1, minutes=58)}),
     }

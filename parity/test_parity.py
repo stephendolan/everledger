@@ -62,7 +62,7 @@ class Harness(unittest.TestCase):
     def test_wrapper_equals_plain_oracle_without_time_output(self):
         fixture = self.scenario.fixture
         fixture.vocabulary.routes['/events'] = (200, {'events': [], 'sources': []})
-        for args in [('events', '--limit', '5', '--since', '2026-11-01', '--json'), ('events', '--type', 'invalid'), ('char', 'Slade', 'auctions')]:
+        for args in [('events', '--limit', '5', '--since', '2026-11-01', '--json'), ('events', '--type', 'invalid'), ('refresh',)]:
             with self.subTest(argv=args), tempfile.TemporaryDirectory() as temp:
                 initial = snapshot(self.scenario.root)
                 a = self.engine.capture([sys.executable, str(ROOT / 'parity/oracle.py')], args,
@@ -108,7 +108,9 @@ class Harness(unittest.TestCase):
         record = self.engine.records[-1]
         self.assertEqual(record['oracle']['exit_code'], 4)
         self.assertEqual([r['path'] for r in record['oracle']['requests'] if '/api/' in r['path']], ['/api/v1/vendors?limit=100&offset=0'])
-        self.assertIn(b'HTTP 302', record['oracle']['stderr'])
+        # A failed sync is reported in the result, not on stderr.
+        self.assertIn(b'HTTP 302', record['oracle']['stdout'])
+        self.assertEqual(record['oracle']['stderr'], b'')
 
     def test_allowlist_never_swallows_contract_text_or_other_observables(self):
         self.scenario.step('events', '--after', '')
@@ -186,7 +188,7 @@ class FullCorpus(unittest.TestCase):
                 report = run([str(ROOT / 'parity/oracle-candidate')], progress=False)
                 self.assertEqual(report['errors'], [])
                 self.assertTrue(report['success'])
-                self.assertEqual(len(report['selected']), 82)
+                self.assertEqual(len(report['selected']), 93)
                 self.assertTrue(all(row['state'] == 'identical' for row in report['steps']))
                 totals.append(len(report['steps']))
                 print(f'\noracle/oracle run {iteration + 1}: {len(report["steps"])} identical; 0 sanctioned; 0 unexplained', flush=True)
