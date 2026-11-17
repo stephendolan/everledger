@@ -6,8 +6,9 @@ corpus. This file lists every place where it deliberately does not, and why.
 Anything that differs and is absent from this list is a defect.
 
 The checks that enforce the list are the differential runner
-(`parity/run.py`), the argument-surface check (`parity/argv_surface.py`), and
-the oracle probe (`rust-tests/oracle_probe.rs`).
+(`parity/run.py`), the argument-surface check (`parity/argv_surface.py`), the
+interrupt check (`parity/interrupts.py`), and the oracle probe
+(`rust-tests/oracle_probe.rs`).
 
 ## Text on stderr
 
@@ -69,6 +70,22 @@ implementation publishes passes; the difference shows only for a file edited or
 damaged after publication, which Rust treats as absent and answers from the
 ninja cache.
 
+## Interrupts
+
+Python takes Ctrl-C as an exception in the thread that is syncing. Rust takes
+it on a second thread, which closes the journal and then ends the process as
+SIGINT ends one. Both record what the attempt spent. They differ at the edges:
+
+- **Between a change and its write.** An interrupt can land after the
+  checkpoint changed in memory and before the write that follows. Python
+  writes what it holds in memory; Rust writes the state it last wrote. The
+  next attempt fetches that one page or detail again, inside its budget.
+- **Before the signal thread exists.** An interrupt during the first journal
+  write of an attempt ends the Rust process at once and can leave that write's
+  temporary file behind. Python removes its temporary file as it unwinds.
+- **SIGINT ignored at startup**, as for a background job of a non-interactive
+  shell. Python stays deaf to the signal. Rust closes its journal and ends.
+
 ## CPython artifacts left behind
 
 - `datetime.fromisoformat` accepts one stray character between the time and a
@@ -80,6 +97,11 @@ ninja cache.
   on its unbounded integers that each interpreter can reconfigure. Rust reads
   the number when it fits 64 bits, so an integer argument or a daily request cap
   padded with thousands of leading zeros is accepted.
+- A `retry_after` that no date can hold, which is anything past the year 9999,
+  kills the reference with an uncaught overflow: exit code 1, no retry, and a
+  journal left open, which the next reader counts from the last request start.
+  Rust ends the attempt with exit code 1 and no retry as well, and closes the
+  journal as failed.
 - A negative amount that rounds to zero copper prints `0c`; Python prints `-0c`.
 - Python finds a vendor page's `Last-Modified` header only in that exact letter
   case and otherwise reports no publication time. Rust finds it in any case.
