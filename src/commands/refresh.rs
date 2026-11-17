@@ -2,7 +2,7 @@
 #[command(args_override_self = true)]
 pub struct Args {
     #[arg(allow_negative_numbers = true, value_enum)]
-    pub target: Option<Target>,
+    pub target: Target,
     #[arg(long = "json", help = "one JSON document using API field names")]
     pub json: bool,
 }
@@ -12,25 +12,24 @@ pub enum Target {
 }
 use crate::{Context, Result, commands::CommandOutput, document::Document, http::Payload};
 
-pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
-    if args.target.is_none() {
-        context
-            .diagnostics
-            .warn("deprecated bare refresh; use: everledger refresh catalogue")?;
-    }
+pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let catalogue = crate::catalogue_build::build(context)?;
     let mut used = vec![crate::catalogue::catalogue_source(
         &catalogue,
         context.clock,
     )?];
     let (vendor_sources, synced) = crate::vendors::refresh_cached(context)?;
-    let has_vendor_sources = !vendor_sources.is_empty();
+    let stale =
+        !synced.view().failed && vendor_sources.iter().any(|s| s.view().stale == Some(true));
     used.extend(vendor_sources);
     let lines = crate::human::refresh::lines(synced.view());
-    let mut code = crate::provenance::stale_code(&used);
-    if synced.view().failed && !has_vendor_sources {
-        code = crate::ExitCode::Unreachable;
-    }
+    let code = if synced.view().failed {
+        crate::ExitCode::Unreachable
+    } else if stale {
+        crate::ExitCode::Stale
+    } else {
+        crate::ExitCode::Answer
+    };
     let data = Document::object([
         ("refreshed", "catalogue".into()),
         ("vendor_sync", synced.into_document()),
@@ -41,5 +40,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     ]);
     let mut output = CommandOutput::new(data, lines);
     output.code = code;
+    output.stale = Some(stale);
     Ok(output)
 }

@@ -153,7 +153,7 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
         ),
         (
             "last_attempt_at",
-            attempt.as_ref().map(|a| a.attempted_at.clone()).into(),
+            attempt.as_ref().and_then(|a| a.attempted_at.clone()).into(),
         ),
         (
             "last_attempt_requests",
@@ -161,7 +161,11 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
         ),
         (
             "pending",
-            (configured && crate::foreverdb::read(context, "pending.json")?.is_some()).into(),
+            (configured
+                && crate::foreverdb::cache_dir(context)
+                    .join("pending.json")
+                    .exists())
+            .into(),
         ),
     ]);
     let mut cached = vec![];
@@ -228,7 +232,7 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
             }
             let published = cached
                 .iter()
-                .map(|c| c.published_at.as_deref().unwrap_or(""))
+                .filter_map(|c| c.published_at.as_deref().filter(|s| !s.is_empty()))
                 .max();
             let summary = Document::object([
                 ("source", "vendors".into()),

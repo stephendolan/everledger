@@ -2,9 +2,18 @@ pub fn lines(sync: &crate::foreverdb::SyncData) -> Vec<String> {
     let mut lines = vec!["catalogue refreshed".into()];
     if sync.configured {
         lines.push(format!(
-            "ForeverDB sync: {}; {} requests this refresh",
-            if sync.complete { "complete" } else { "pending" },
-            sync.requests
+            "ForeverDB sync: {}; {} requests this refresh{}",
+            if sync.failed {
+                "failed"
+            } else if sync.complete {
+                "complete"
+            } else {
+                "pending"
+            },
+            sync.requests,
+            sync.error
+                .as_ref()
+                .map_or_else(String::new, |e| format!("; {e}"))
         ));
     }
     lines
@@ -14,9 +23,6 @@ pub fn sync_failed(status: Option<i64>) -> String {
         || "ForeverDB sync failed".into(),
         |s| format!("ForeverDB sync failed (HTTP {s})"),
     )
-}
-pub fn retaining(error: &crate::Failure) -> String {
-    format!("{error}; retaining previous vendor caches")
 }
 pub fn credit([seen, baseline, unverified]: [usize; 3]) -> String {
     format!(

@@ -19,6 +19,7 @@ struct TestClock {
     wall: Cell<UtcInstant>,
     elapsed: Cell<f64>,
     sleeps: RefCell<Vec<f64>>,
+    block_on_sleep: RefCell<Option<PathBuf>>,
 }
 impl Clock for TestClock {
     fn now(&self) -> UtcInstant {
@@ -28,6 +29,10 @@ impl Clock for TestClock {
         self.elapsed.get()
     }
     fn sleep(&self, seconds: f64) -> Result<()> {
+        if let Some(path) = self.block_on_sleep.borrow_mut().take() {
+            std::fs::remove_file(&path)?;
+            std::fs::create_dir(&path)?;
+        }
         self.sleeps.borrow_mut().push(seconds);
         self.elapsed.set(self.elapsed.get() + seconds);
         Ok(())
@@ -45,6 +50,7 @@ struct Fixture {
     requests: RefCell<Vec<(String, f64)>>,
     scripts: RefCell<HashMap<usize, Injected>>,
     advance_after_request: Cell<i64>,
+    block_checkpoint: RefCell<Option<PathBuf>>,
 }
 impl Http for Fixture {
     fn request(&self, request: &Request) -> Result<Response> {
@@ -91,6 +97,9 @@ impl Http for Fixture {
                     });
                 }
             }
+        }
+        if let Some(path) = self.block_checkpoint.borrow_mut().take() {
+            std::fs::create_dir(path)?;
         }
         let data = self.data.borrow();
         let body = if let Some((_, offset)) = request.url.split_once("offset=") {
@@ -153,6 +162,7 @@ impl World {
             wall: Cell::new(instant("2026-11-15T12:00:00Z").unwrap()),
             elapsed: Cell::new(0.0),
             sleeps: RefCell::new(vec![]),
+            block_on_sleep: RefCell::new(None),
         });
         let http = Fixture {
             clock: Rc::clone(&clock),
@@ -160,6 +170,7 @@ impl World {
             requests: RefCell::new(vec![]),
             scripts: RefCell::new(HashMap::new()),
             advance_after_request: Cell::new(0),
+            block_checkpoint: RefCell::new(None),
         };
         Self {
             directory,
@@ -255,7 +266,7 @@ fn window_spend_across_two_attempts_defers_at_cap() -> Result<()> {
     assert_eq!(
         deferred.document(),
         &parse(
-            r#"{"configured":true,"complete":true,"pending":false,"requests":0,"deferred":"daily sync limit","failed":false}"#
+            r#"{"configured":true,"complete":true,"pending":false,"requests":0,"total_requests":6,"failed":false,"deferred":"daily sync limit","status":null,"error":null}"#
         )?
     );
     assert_eq!(world.http.requests.borrow().len(), 12);
@@ -274,7 +285,7 @@ fn raised_cap_resumes_inside_window_with_remaining_budget() -> Result<()> {
     assert_eq!(
         resumed.document(),
         &parse(
-            r#"{"configured":true,"complete":true,"pending":false,"requests":4,"total_requests":6}"#
+            r#"{"configured":true,"complete":true,"pending":false,"requests":4,"total_requests":6,"failed":false,"deferred":null,"status":null,"error":null}"#
         )?
     );
     assert_eq!(world.http.requests.borrow().len(), 6);
@@ -320,32 +331,6 @@ fn window_expiry_restores_only_expired_spend_then_full_budget() -> Result<()> {
         world.spends(),
         Document::Array(vec![spend(6, "2026-11-17T13:00:00Z")])
     );
-    Ok(())
-}
-
-#[test]
-fn legacy_checkpoint_migrates_own_requests_at_finish_or_last_request() -> Result<()> {
-    for timestamp in ["finished_at", "last_request_at"] {
-        let mut world = World::new("2");
-        let mut legacy = parse(
-            r#"{"attempted_at":"2026-11-13T12:00:00Z","requests":2,"total_requests":100,"sync_id":"legacy","failed":false}"#,
-        )?;
-        legacy.set(timestamp, "2026-11-15T11:26:00Z")?;
-        world.write("attempt.json", &legacy);
-        let before = std::fs::read(world.path("attempt.json"))?;
-        assert_eq!(world.sync()?.view().requests, 0);
-        assert!(world.http.requests.borrow().is_empty());
-        assert_eq!(std::fs::read(world.path("attempt.json"))?, before);
-        world.cap("6");
-        let resumed = world.sync()?;
-        assert_eq!(resumed.view().requests, 4);
-        assert!(!resumed.view().complete);
-        assert_eq!(
-            world.spends().as_array().unwrap()[0],
-            spend(2, "2026-11-15T11:26:00Z")
-        );
-        assert_eq!(world.sync()?.view().requests, 0);
-    }
     Ok(())
 }
 
@@ -447,10 +432,10 @@ fn changed_extraction_discards_checkpoint_and_recovers_next_day() -> Result<()> 
     assert!(!world.sync()?.view().complete);
     world.advance(86400);
     world.cap("36");
-    assert!(world.sync().is_err());
+    assert!(world.sync()?.view().failed);
     assert!(foreverdb::index(&world.context())?.is_none());
     assert!(!world.path("pending.json").exists());
-    assert!(world.sync().is_err());
+    assert!(world.sync()?.view().failed);
     world.advance(86400);
     *world.http.data.borrow_mut() = parse(include_str!("fixtures/foreverdb.json"))?;
     assert!(world.sync()?.view().complete);
@@ -471,7 +456,9 @@ fn pacing_and_failures_do_not_expose_credentials() -> Result<()> {
     );
     world.advance(86400);
     world.http.scripts.borrow_mut().insert(7, Injected::Failure);
-    let failure = world.sync().unwrap_err();
+    let failure = world.sync()?;
+    assert!(failure.view().failed);
+    assert_eq!(failure.view().status, Some(503));
     assert!(!format!("{failure:?}").contains("secret-fixture"));
     for entry in std::fs::read_dir(world.path("attempt.json").parent().unwrap())? {
         let path = entry?.path();
@@ -484,77 +471,26 @@ fn pacing_and_failures_do_not_expose_credentials() -> Result<()> {
 }
 
 #[test]
-fn attempt_reader_migrates_and_prunes_without_writing() -> Result<()> {
-    for finished in [None, Some(""), Some("2026-11-15T11:00:00Z")] {
-        let world = World::new("36");
-        let mut legacy = parse(
-            r#"{"attempted_at":"2026-11-15T10:00:00Z","last_request_at":"2026-11-15T11:30:00Z"}"#,
-        )?;
-        if let Some(finished) = finished {
-            legacy.set("finished_at", finished)?;
-        }
-        world.write("attempt.json", &legacy);
-        let before = std::fs::read(world.path("attempt.json"))?;
-        let read = foreverdb::read(&world.context(), "attempt.json")?.unwrap();
-        let expected = finished
-            .filter(|s| !s.is_empty())
-            .unwrap_or("2026-11-15T11:30:00Z");
-        assert_eq!(
-            read.get("spends"),
-            Some(&Document::Array(vec![spend(0, expected)]))
-        );
-        assert_eq!(foreverdb::attempt(&world.context())?.unwrap().requests, 0);
-        assert_eq!(std::fs::read(world.path("attempt.json"))?, before);
-    }
+fn plain_attempt_readers_ignore_spends_and_sync_requires_them() -> Result<()> {
     let world = World::new("36");
-    let legacy = parse(r#"{"attempted_at":"2026-11-15T11:00:00Z"}"#)?;
-    world.write("attempt.json", &legacy);
-    let migrated = foreverdb::read(&world.context(), "attempt.json")?.unwrap();
-    assert_eq!(
-        migrated.get("spends"),
-        Some(&Document::Array(vec![spend(0, "2026-11-15T11:00:00Z")]))
-    );
-    let mut record = parse(
-        r#"{"attempted_at":"2026-11-15T10:00:00Z","finished_at":"2026-11-15T11:00:00Z","spends":[]}"#,
-    )?;
-    let mut extra = spend(1, "2026-11-15T12:00:01Z");
-    extra.set("unknown", "retained")?;
-    record.set(
-        "spends",
-        Document::Array(vec![
-            spend(1, "2026-11-14T12:00:00Z"),
-            spend(1, "2026-11-14T12:00:00.000001Z"),
-            extra.clone(),
-        ]),
-    )?;
-    world.write("attempt.json", &record);
-    let before = std::fs::read(world.path("attempt.json"))?;
-    let read = foreverdb::read(&world.context(), "attempt.json")?.unwrap();
-    assert_eq!(
-        read.get("spends"),
-        Some(&Document::Array(vec![
-            spend(1, "2026-11-14T12:00:00.000001Z"),
-            extra
-        ]))
-    );
-    assert_eq!(std::fs::read(world.path("attempt.json"))?, before);
-    Ok(())
-}
-
-#[test]
-fn spend_fields_are_required_at_the_journal_boundary() -> Result<()> {
-    let world = World::new("36");
-    for bad in [
-        r#"{"finished_at":"2026-11-15T12:00:00Z"}"#,
-        r#"{"requests":1}"#,
+    for raw in [
+        r#"{"attempted_at":"2026-11-15T12:00:00Z","requests":2,"failed":false}"#,
+        r#"{"attempted_at":"2026-11-15T12:00:00Z","requests":2,"spends":[{"finished_at":"2026-11-15T12:00:00Z"}]}"#,
+        r#"{"attempted_at":"2026-11-15T12:00:00Z","requests":2,"spends":[{"requests":1}]}"#,
+        r#"{"attempted_at":"2026-11-15T12:00:00Z","spends":[]}"#,
     ] {
-        let mut record = parse(
-            r#"{"attempted_at":"2026-11-15T12:00:00Z","finished_at":"2026-11-15T12:00:00Z","spends":[]}"#,
-        )?;
-        record.set("spends", Document::Array(vec![parse(bad)?]))?;
+        let record = parse(raw)?;
         world.write("attempt.json", &record);
-        assert!(foreverdb::read(&world.context(), "attempt.json").is_err());
-        assert!(world.sync().is_err());
+        let before = std::fs::read(world.path("attempt.json"))?;
+        assert_eq!(
+            foreverdb::read(&world.context(), "attempt.json")?,
+            Some(record)
+        );
+        assert!(!foreverdb::attempt(&world.context())?.unwrap().failed);
+        let (status, _) = everledger::vendors::status::backend_status(&world.context())?;
+        assert!(!status.view().foreverdb.pending);
+        assert_eq!(world.sync().unwrap_err().code, everledger::ExitCode::Error);
+        assert_eq!(std::fs::read(world.path("attempt.json"))?, before);
         assert!(world.http.requests.borrow().is_empty());
     }
     Ok(())
@@ -582,30 +518,29 @@ fn attempt_writes_prune_expired_spends_without_replenishing_the_fixed_budget() -
 }
 
 #[test]
-fn retry_delay_values_match_python_or_close_the_attempt_with_one_request() -> Result<()> {
-    enum Expected {
-        Retry(f64),
-        Undatable,
-    }
-    let huge = format!("1{}", "0".repeat(309));
-    for (raw, expected) in [
-        ("75", Expected::Retry(76.0)),
-        ("90.5", Expected::Retry(92.0)),
-        ("-5", Expected::Retry(61.0)),
-        (r#""soon""#, Expected::Retry(61.0)),
-        ("true", Expected::Retry(61.0)),
-        ("null", Expected::Retry(61.0)),
-        ("1e11", Expected::Retry(100_000_000_001.0)),
-        ("3e11", Expected::Undatable),
-        ("1e13", Expected::Undatable),
-        ("1e14", Expected::Undatable),
-        ("1e20", Expected::Undatable),
-        ("100000000000000000000", Expected::Undatable),
-        ("1e300", Expected::Undatable),
-        ("1e999", Expected::Retry(61.0)),
-        ("-1e999", Expected::Retry(61.0)),
-        (huge.as_str(), Expected::Undatable),
-        (format!("-{huge}").as_str(), Expected::Undatable),
+fn numeric_delays_never_overflow_or_sleep_over_300() -> Result<()> {
+    let huge = format!("1{}", "0".repeat(1000));
+    for (raw, expected_wait) in [
+        ("0", Some(60.0)),
+        ("60", Some(60.0)),
+        ("75", Some(75.0)),
+        ("90.5", Some(91.0)),
+        ("299.9", Some(300.0)),
+        ("300", Some(300.0)),
+        ("301", None),
+        ("1e15", None),
+        (huge.as_str(), None),
+        ("Infinity", Some(60.0)),
+        ("-Infinity", Some(60.0)),
+        ("NaN", Some(60.0)),
+        ("-5", Some(60.0)),
+        (r#""soon""#, Some(60.0)),
+        ("true", Some(60.0)),
+        ("null", Some(60.0)),
+        ("1e11", None),
+        ("3e11", None),
+        ("1e300", None),
+        (format!("-{huge}").as_str(), Some(60.0)),
     ] {
         let world = World::new("36");
         world
@@ -613,10 +548,12 @@ fn retry_delay_values_match_python_or_close_the_attempt_with_one_request() -> Re
             .scripts
             .borrow_mut()
             .insert(1, Injected::RetryAfter(parse(raw)?));
-        match expected {
-            Expected::Retry(seconds) => {
-                assert!(world.sync()?.view().complete, "{raw}");
-                assert_eq!(world.http.requests.borrow().len(), 7, "{raw}");
+        let result = world.sync()?;
+        assert!(!result.view().failed, "{raw}");
+        match expected_wait {
+            Some(wait) => {
+                assert!(result.view().complete, "{raw}");
+                assert_eq!(result.view().requests, 7, "{raw}");
                 assert_eq!(
                     world
                         .clock
@@ -624,32 +561,365 @@ fn retry_delay_values_match_python_or_close_the_attempt_with_one_request() -> Re
                         .borrow()
                         .iter()
                         .copied()
-                        .find(|n| *n > 0.0),
-                    Some(seconds),
-                    "{raw}"
-                );
-            }
-            Expected::Undatable => {
-                let failure = world.sync().unwrap_err();
-                assert_eq!(failure.code, everledger::ExitCode::Error, "{raw}");
-                assert_eq!(world.http.requests.borrow().len(), 1, "{raw}");
-                assert!(world.clock.sleeps.borrow().is_empty(), "{raw}");
-                let journal = world.disk("attempt.json");
-                assert_eq!(journal.get("failed"), Some(&Document::Bool(true)), "{raw}");
-                assert!(
-                    journal
-                        .get("finished_at")
-                        .and_then(Document::as_str)
-                        .is_some_and(|s| !s.is_empty()),
+                        .find(|n| *n > 2.1),
+                    Some(wait),
                     "{raw}"
                 );
                 assert_eq!(
-                    world.spends(),
-                    Document::Array(vec![spend(1, "2026-11-15T12:00:00Z")])
+                    world.disk("attempt.json").get("error"),
+                    Some(&Document::Null)
                 );
-                assert!(world.disk("pending.json").get("retry").is_none(), "{raw}");
+            }
+            None => {
+                assert!(result.view().pending, "{raw}");
+                assert_eq!(result.view().requests, 1, "{raw}");
+                assert_eq!(result.view().deferred, Some(foreverdb::Deferred::RetryWait));
+                assert!(world.clock.sleeps.borrow().is_empty(), "{raw}");
+                let pending = world.disk("pending.json");
+                let stamp = pending
+                    .get("retry")
+                    .unwrap()
+                    .get("not_before")
+                    .unwrap()
+                    .as_str()
+                    .unwrap();
+                assert!(instant(stamp)? > world.clock.now());
+                if matches!(raw, "1e15" | "3e11" | "1e300") || raw == huge {
+                    assert_eq!(stamp, "9999-12-31T23:59:59Z");
+                }
+                assert!(world.disk("attempt.json").get("error").is_none());
+            }
+        }
+        assert!(
+            world.clock.sleeps.borrow().iter().all(|n| *n <= 300.0),
+            "{raw}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn long_wait_is_pending_and_resumes_after_not_before() -> Result<()> {
+    for (advance, requests, wait) in [
+        (0, 0, None),
+        (1, 6, Some(300.0)),
+        (300, 6, Some(60.0)),
+        (301, 6, None),
+        (302, 6, None),
+    ] {
+        let world = World::new("36");
+        world
+            .clock
+            .wall
+            .set(instant("2026-11-15T12:00:00.789012Z")?);
+        world
+            .http
+            .scripts
+            .borrow_mut()
+            .insert(1, Injected::RetryAfter(301i64.into()));
+        let first = world.sync()?;
+        assert_eq!(first.view().requests, 1);
+        assert_eq!(first.view().deferred, Some(foreverdb::Deferred::RetryWait));
+        assert!(world.clock.sleeps.borrow().is_empty());
+        assert_eq!(
+            world
+                .disk("pending.json")
+                .get("retry")
+                .unwrap()
+                .get("not_before"),
+            Some(&"2026-11-15T12:05:01.789012Z".into())
+        );
+        world.advance(advance);
+        let resumed = world.sync()?;
+        assert_eq!(resumed.view().requests, requests);
+        assert_eq!(resumed.view().complete, requests > 0);
+        assert_eq!(
+            world
+                .clock
+                .sleeps
+                .borrow()
+                .iter()
+                .copied()
+                .find(|n| *n > 2.1),
+            wait
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn sync_result_shape_on_success_failure_deferred_and_unconfigured() -> Result<()> {
+    fn shape(result: &foreverdb::SyncResult) {
+        let Document::Object(fields) = result.document() else {
+            panic!("sync object");
+        };
+        assert_eq!(
+            fields.iter().map(|(k, _)| k.as_ref()).collect::<Vec<_>>(),
+            [
+                "configured",
+                "complete",
+                "pending",
+                "requests",
+                "total_requests",
+                "failed",
+                "deferred",
+                "status",
+                "error"
+            ]
+        );
+    }
+    let mut world = World::new("36");
+    world.config.foreverdb_api_key = "".into();
+    let unconfigured = world.sync()?;
+    shape(&unconfigured);
+    assert_eq!(
+        unconfigured.document(),
+        &parse(
+            r#"{"configured":false,"complete":false,"pending":false,"requests":0,"total_requests":0,"failed":false,"deferred":null,"status":null,"error":null}"#
+        )?
+    );
+    world.config.foreverdb_api_key = "secret-fixture".into();
+    world.http.scripts.borrow_mut().insert(1, Injected::Failure);
+    let failed = world.sync()?;
+    shape(&failed);
+    assert_eq!(
+        failed.document(),
+        &parse(
+            r#"{"configured":true,"complete":false,"pending":true,"requests":1,"total_requests":1,"failed":true,"deferred":null,"status":503,"error":"ForeverDB sync failed (HTTP 503)"}"#
+        )?
+    );
+    let journal = world.disk("attempt.json");
+    assert_eq!(journal.get("error"), failed.document().get("error"));
+    let serialized = dumps(&journal, JsonMode::Stdout);
+    assert!(serialized.rfind("\"finished_at\":").unwrap() < serialized.find("\"error\":").unwrap());
+    world.cap("1");
+    let deferred = world.sync()?;
+    shape(&deferred);
+    assert_eq!(deferred.view().requests, 0);
+    assert_eq!(deferred.view().total_requests, 1);
+    assert_eq!(deferred.view().status, Some(503));
+    assert_eq!(deferred.view().error, failed.view().error);
+    assert!(deferred.view().failed);
+    world.cap("36");
+    let complete = world.sync()?;
+    shape(&complete);
+    assert!(complete.view().complete);
+    assert!(!complete.view().failed);
+    assert_eq!(
+        (complete.view().requests, complete.view().total_requests),
+        (6, 7)
+    );
+    let serialized = dumps(&world.disk("attempt.json"), JsonMode::Stdout);
+    assert!(serialized.find("\"error\":").unwrap() < serialized.rfind("\"finished_at\":").unwrap());
+    Ok(())
+}
+
+#[test]
+fn refresh_cached_returns_setup_failure_without_raising() -> Result<()> {
+    let mut world = World::new("36");
+    std::fs::create_dir_all(&world.directory)?;
+    world.config.foreverdb_api_key = "".into();
+    world.config.foreverdb_api_key_file = world.directory.clone();
+    let (sources, result) = everledger::vendors::refresh_cached(&world.context())?;
+    assert!(sources.is_empty());
+    assert!(result.view().configured && result.view().failed);
+    assert_eq!(
+        (result.view().requests, result.view().total_requests),
+        (0, 0)
+    );
+    assert_eq!(
+        result.view().error.as_deref(),
+        Some("ForeverDB API key file unreadable")
+    );
+    assert_eq!(
+        everledger::human::refresh::lines(result.view()),
+        [
+            "catalogue refreshed",
+            "ForeverDB sync: failed; 0 requests this refresh; ForeverDB API key file unreadable"
+        ]
+    );
+    assert!(world.diagnostics.contents().is_empty());
+    Ok(())
+}
+
+#[test]
+fn status_uses_pending_existence_and_null_without_ninja_publication_times() -> Result<()> {
+    let world = World::new("36");
+    world.write("pending.json", &Document::Null);
+    std::fs::write(world.path("pending.json"), "not JSON")?;
+    let ninja_dir = world.directory.join("vendors/wowforever.ninja");
+    std::fs::create_dir_all(&ninja_dir)?;
+    for (id, published) in [(1, Document::Null), (2, "".into())] {
+        let doc = Document::object([
+            ("backend_url", world.config.vendor_url.clone().into()),
+            ("vendors", Document::Array(vec![])),
+            ("published_at", published),
+        ]);
+        std::fs::write(
+            ninja_dir.join(format!("{id}.json")),
+            dumps(&doc, JsonMode::Stdout),
+        )?;
+    }
+    let (status, sources) = everledger::vendors::status::backend_status(&world.context())?;
+    assert!(status.view().foreverdb.pending);
+    assert_eq!(status.view().published_at, None);
+    assert_eq!(sources[0].view().updated_at, None);
+    Ok(())
+}
+
+#[test]
+fn sync_checkpoint_write_failure_preserves_request_count() -> Result<()> {
+    let world = World::new("36");
+    *world.http.block_checkpoint.borrow_mut() = Some(world.path("pending.json"));
+    let failed = world.sync()?;
+    assert!(failed.view().failed);
+    assert_eq!(
+        (failed.view().requests, failed.view().total_requests),
+        (1, 1)
+    );
+    assert_eq!(world.http.requests.borrow().len(), 1);
+    assert_eq!(
+        failed.view().error.as_deref(),
+        Some("ForeverDB sync failed")
+    );
+    assert_eq!(
+        world.disk("attempt.json").get("requests"),
+        Some(&1i64.into())
+    );
+
+    let world = World::new("36");
+    *world.clock.block_on_sleep.borrow_mut() = Some(world.path("attempt.json"));
+    let failed = world.sync()?;
+    assert!(failed.view().failed);
+    assert_eq!(
+        (failed.view().requests, failed.view().total_requests),
+        (1, 1)
+    );
+    assert_eq!(
+        world.http.requests.borrow().len(),
+        1,
+        "an unreserved second request must not be sent"
+    );
+    assert_eq!(
+        failed.view().error.as_deref(),
+        Some("ForeverDB sync failed")
+    );
+
+    let world = World::new("36");
+    std::fs::create_dir_all(world.path("attempt.json"))?;
+    let failed = world.sync()?;
+    assert!(failed.view().failed);
+    assert_eq!(
+        (failed.view().requests, failed.view().total_requests),
+        (0, 0)
+    );
+    assert!(world.http.requests.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn failed_sync_skips_unreadable_indexes_and_unrefreshable_ninja_items() -> Result<()> {
+    let mut world = World::new("36");
+    std::fs::create_dir_all(world.path("index.json"))?;
+    let ninja_dir = world.directory.join("vendors/wowforever.ninja");
+    std::fs::create_dir_all(&ninja_dir)?;
+    std::fs::write(ninja_dir.join("2604.json"), "invalid JSON")?;
+    let (sources, synced) = everledger::vendors::refresh_cached(&world.context())?;
+    assert!(synced.view().failed);
+    assert!(sources.is_empty());
+    assert!(world.http.requests.borrow().is_empty());
+    assert!(world.diagnostics.contents().is_empty());
+    world.config.foreverdb_api_key = "".into();
+    assert!(everledger::vendors::refresh_cached(&world.context()).is_err());
+    Ok(())
+}
+
+struct RefreshHttp<'a>(&'a Fixture);
+impl Http for RefreshHttp<'_> {
+    fn request(&self, request: &Request) -> Result<Response> {
+        if request.url.contains("/professions/") {
+            return Ok(Response {
+                body: br#"Recipes (2)<tr role="row"><td role="cell"><a href="/professions/alchemy/1-recipe/">Recipe</a></td><td role="cell"><span class="o">1</span></td><td role="cell">First</td><td role="cell"></td></tr><tr role="row"><td role="cell"><a href="/professions/alchemy/2-recipe/">Recipe</a></td><td role="cell"><span class="o">1</span></td><td role="cell">Second</td><td role="cell"></td></tr>"#.to_vec(),
+                headers: vec![],
+            });
+        }
+        self.0.request(request)
+    }
+}
+
+#[test]
+fn refresh_reports_sync_failure_without_stale_notice_or_stderr() -> Result<()> {
+    for cached in [false, true] {
+        for json in [false, true] {
+            let world = World::new("36");
+            if cached {
+                assert!(world.sync()?.view().complete);
+                world.advance(86401);
+            }
+            let next = world.http.requests.borrow().len() + 1;
+            world
+                .http
+                .scripts
+                .borrow_mut()
+                .insert(next, Injected::Failure);
+            let http = RefreshHttp(&world.http);
+            let context = Context {
+                http: &http,
+                ..world.context()
+            };
+            let command = everledger::cli::Command::Refresh(everledger::commands::refresh::Args {
+                target: everledger::commands::refresh::Target::Catalogue,
+                json,
+            });
+            let mut stdout = Vec::new();
+            assert_eq!(
+                everledger::cli::execute(&command, &context, &mut stdout),
+                everledger::ExitCode::Unreachable
+            );
+            assert!(world.diagnostics.contents().is_empty());
+            let output = String::from_utf8(stdout).unwrap();
+            if json {
+                let doc = parse(&output)?;
+                assert_eq!(doc.get("refreshed"), Some(&"catalogue".into()));
+                let synced = doc.get("vendor_sync").unwrap();
+                assert_eq!(synced.get("requests"), Some(&1i64.into()));
+                assert_eq!(synced.get("failed"), Some(&true.into()));
+                assert_eq!(
+                    doc.get("sources").unwrap().as_array().unwrap().len(),
+                    if cached { 2 } else { 1 }
+                );
+            } else {
+                assert!(output.starts_with("catalogue refreshed\nForeverDB sync: failed; 1 requests this refresh; ForeverDB sync failed (HTTP 503)\n"));
+                assert!(!output.contains("stale:"));
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn refresh_stale_decision_uses_vendor_sources_after_successful_partial_sync() -> Result<()> {
+    let mut world = World::new("36");
+    assert!(world.sync()?.view().complete);
+    world.advance(86401);
+    world.cap("1");
+    let http = RefreshHttp(&world.http);
+    let context = Context {
+        http: &http,
+        ..world.context()
+    };
+    let args = everledger::commands::refresh::Args {
+        target: everledger::commands::refresh::Target::Catalogue,
+        json: false,
+    };
+    let output = everledger::commands::refresh::run(&args, &context)?;
+    assert_eq!(output.code, everledger::ExitCode::Stale);
+    assert_eq!(
+        output.lines,
+        [
+            "catalogue refreshed",
+            "ForeverDB sync: pending; 1 requests this refresh"
+        ]
+    );
     Ok(())
 }

@@ -124,24 +124,17 @@ fn foreverdb(answer: &crate::vendors::ForeverdbAnswer) -> Vec<String> {
             "{name} — vendor listed prices (sale/price from ForeverDB sell-row labels)"
         ));
         for row in rows {
-            let locations = row
-                .locations
-                .iter()
-                .map(|p| {
-                    format!(
-                        "{}: {}, {}",
-                        text(Some(&p.zone)),
-                        value(p.x.as_ref()),
-                        value(p.y.as_ref())
-                    )
+            let coords = row
+                .coords
+                .first()
+                .map(|c| {
+                    c.iter()
+                        .map(|n| value(Some(n)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 })
-                .collect::<Vec<_>>()
-                .join("; ");
-            let locations = if locations.is_empty() {
-                "location unknown"
-            } else {
-                &locations
-            };
+                .unwrap_or_else(|| "coordinates unknown".into());
+            let locations = format!("{}: {coords}", text(Some(&row.zone)));
             lines.push(format!(
                 "  {} ({}) | {locations} | {} | listed price {}{} | sale/price {}; vendor {}",
                 text(Some(&row.name)),
