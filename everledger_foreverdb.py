@@ -20,7 +20,12 @@ import everledger_foreverdb_mapping as mapping
 BACKEND = 'foreverdb.net'
 BASE = 'https://foreverdb.net'
 CACHE = DATA_DIR / 'vendors' / BACKEND
-DAILY_REQUESTS = 36
+try:
+    DAILY_REQUESTS = int(os.environ.get('EVERLEDGER_FOREVERDB_DAILY_REQUESTS', '36'))
+    if DAILY_REQUESTS <= 0:
+        raise ValueError
+except ValueError:
+    raise Failure('EVERLEDGER_FOREVERDB_DAILY_REQUESTS must be a positive integer', 2) from None
 INTERVAL = 2.1  # At most 29 request starts in any 60-second window.
 FORMAT = 2
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'

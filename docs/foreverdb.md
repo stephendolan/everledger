@@ -89,12 +89,16 @@ No per-vendor revision exists in the observed API. Reusing details based on
 list metadata or build would miss changed sells, so every completed sync
 fetches every detail. For N vendors, bootstrap AND steady state need
 `ceil(N / 100) + N` requests: **11 + 1,014 = 1,025** today, requiring at least
-**29 daily attempts** at 36 requests each (28 × 36 + 17). Unchanged data costs
-the same. A five-vendor fixture needs 1 + 5 = 6 each time; a 40-vendor fixture
-needs 41 total, split as 36 + 5. Empty datasets still require one list request.
+**29 daily attempts** at the default cap of 36 requests each (28 × 36 + 17).
+Set `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` to a positive integer to override the
+cap; unset defaults to 36, and invalid values are usage errors. Stephen's
+November 16, 2026 decision selects `5000` for his environment. Unchanged data
+costs the same. A five-vendor fixture needs 1 + 5 = 6 each time; a 40-vendor
+fixture needs 41 total, split as 36 + 5 at the default cap. Empty datasets still
+require one list request.
 
-Each attempt allows at most 36 requests, including failures/retries, with the
-existing 24-hour cooldown after completion/failure and sequential starts at
+Each attempt allows at most the configured cap, including failures/retries,
+with the existing 24-hour cooldown after completion/failure and sequential starts at
 least 2.1 seconds apart. A retryable HTTP 502 gets one retry after at least
 `retry_after`, with a minimum 60-second wait. If the cap prevents that retry,
 the checkpoint retains the wait and resumes on a later daily attempt. A second
@@ -143,11 +147,13 @@ python3 -m unittest discover -s tests
 ```
 
 Before completion, status should name connector-surrogate and ninja active.
-Each refresh reports at most 36 ForeverDB requests. Repeat the same refresh
-command after at least 24 hours from the previous attempt's end, keeping these
-environment settings, until `vendor_sync.complete` is true (at least 29 attempts
-at today's count). An immediate repeat must report zero requests. Do not raise
-the cap or delete cooldown/checkpoint files. No raw key export is needed.
+Set `EVERLEDGER_FOREVERDB_DAILY_REQUESTS=5000` to use Stephen's chosen cap;
+otherwise the default is 36. Each refresh reports at most the configured cap.
+If unfinished, repeat the same refresh command after at least 24 hours from
+the previous attempt's end, keeping these environment settings, until
+`vendor_sync.complete` is true (at least 29 attempts at today's count with the
+default cap). An immediate repeat must report zero requests. Preserve the
+cooldown/checkpoint files. No raw key export is needed.
 
 After completion:
 

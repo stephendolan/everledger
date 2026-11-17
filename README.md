@@ -72,10 +72,11 @@ Ninja stays active until a key or connector is configured and a sync completes.
 Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
 retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
 Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
-ForeverDB vendors only: at most 36 requests per 24h, paced below 30/minute.
-List pages use limit 100 and offset; 1,014 vendors need 11 list + 1,014 detail
-requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
-At 36/day this takes at least 29 daily attempts; retries add requests.
+ForeverDB vendors only: default cap 36 requests per 24h, paced below 30/minute.
+Override with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).
+List pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014
+detail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
+At the default 36/day, bootstrap takes at least 29 daily attempts; retries add requests.
 Retryable HTTP 502 gets one retry after at least retry_after (minimum 60s),
 within the daily cap. Unfinished syncs resume; only complete indexes activate.
 ForeverDB prices are per item only when stack price divides evenly by stack;
@@ -363,7 +364,12 @@ Ninja is the default until a key or connector is configured and a full ForeverDB
 sync completes. Run `everledger refresh catalogue`; unfinished work resumes on
 later daily refreshes. The mapping follows the API shapes probed November 15,
 2026. Both bootstrap and steady state require 1,025 requests at today's 1,014
-vendors, at least 29 daily attempts. No per-vendor sell revision is available.
+vendors. At the default cap of 36 requests per 24 hours, bootstrap takes at least
+29 daily attempts. Set `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` to a positive integer
+to override the cap, for example `5000` for Stephen's chosen free-tier limit.
+Invalid values are usage errors. Pacing stays at 2.1 seconds between requests,
+and retries count against the configured cap. No per-vendor sell revision is
+available.
 See the [backend report and exact connector setup commands](docs/foreverdb.md)
 for mapping, price/stack rules, request counts, coverage comparison and fixtures.
 
