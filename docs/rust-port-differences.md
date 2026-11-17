@@ -35,15 +35,18 @@ before the parentheses, the exit code, and everything else match. This is the
 one difference that can reach stdout: `status` reports the message as the
 unreachable source's `state`.
 
-A response that breaks HTTP itself is a second case. A status line that is not
-HTTP, or a body shorter than its declared length, raises an `http.client`
-exception that the reference's handlers do not name: it exits 1 with a
-traceback and, in the middle of a sync, leaves its journal open. Rust treats
-such a response as both implementations treat a connection that closes without
-a response: the source is unreachable. What follows is what follows any
-unreachable source. A command that needs the source exits 4, a sync records
-the failed attempt, a lookup or refresh that holds a cached copy serves it as
-stale, and a refresh after a failed sync goes on to the next item.
+A response that ends inside its headers is a second case. Python's HTTP
+library takes what arrived as a complete response with no body, so the command
+fails on the empty body: exit code 1 from most sources, and from ForeverDB a
+failed sync that reports an API shape mismatch. Rust's HTTP library takes it as
+a connection that broke: the source is unreachable, with all that follows. A
+command that needs the source exits 4, a sync records a failed attempt, and a
+lookup or refresh that holds a cached copy serves it as stale. A sync through
+the connector is the same on both sides, because Python makes its request.
+
+Both implementations report every other malformed response as an unreachable
+source: a status line that is not HTTP, a body or an error body shorter than
+its declared length, a broken chunk.
 
 ## Shape drift fails at the boundary
 

@@ -19,9 +19,9 @@ empty help output, credential leak, or empty scenario selection. It exits 0
 only when every selected step passes. A full run takes roughly two minutes
 on this host; the self-suite runs the full corpus twice.
 
-Each source test maps to a named scenario. `--list` prints all 93 mappings;
+Each source test maps to a named scenario. `--list` prints all 96 mappings;
 the report includes the same accounting, selection, and CLI translation notes.
-An inventory check fails if the reference test set changes. All 93 methods
+An inventory check fails if the reference test set changes. All 96 methods
 have CLI equivalents, including the 38 ForeverDB methods that use internals.
 
 ## Scoreboard and report
@@ -35,7 +35,7 @@ have CLI equivalents, including the 38 ForeverDB methods that use internals.
 
 Each sanctioned step prints its exemption class beside each affected field.
 The JSON report includes the table, every step, both complete transcripts, all
-differences, byte ranges with offsets, assertion errors, and the 93-test
+differences, byte ranges with offsets, assertion errors, and the 96-test
 accounting. Bytes use `{"base64": "...", "length": N}` so invalid UTF-8 and
 trailing whitespace survive. Decode with `base64.b64decode(value['base64'])`.
 Request lists retain their order and exact path/query strings. The four logged
@@ -302,10 +302,15 @@ left the damaged file as it was. A candidate that carries on where the
 reference fails, or sends a request the reference does not, fails the check.
 The summary line counts the refusals and the output lists them.
 
-**Responses that break HTTP.** A status line that is not HTTP, and a body
-shorter than its declared length, from each source. The reference dies of an
-`http.client` exception its handlers do not name. The candidate must do what
-both sides do when the connection closes without a response.
+**Responses that break HTTP.** A status line that is not HTTP, a body or an
+error body shorter than its declared length, a broken chunk, and a valid
+response cut off after each byte of its head, from each source. Both sides must
+exit the same, send the same requests, and print the same stdout. One
+difference is accepted: where a response ends inside its headers, the
+reference's HTTP library reads a complete response with no body and the
+candidate's reads a broken connection. Such a case passes only if the reference
+does exactly what it does for an empty response and the candidate does exactly
+what both do when the connection closes without a response.
 
 ```sh
 python3 parity/damage.py target/seams/debug/everledger

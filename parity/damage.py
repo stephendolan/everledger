@@ -24,11 +24,16 @@ reference did not send and left the damaged file as it was. A candidate that
 carries on where the reference fails, or sends a request the reference does
 not, fails the check.
 
-**Responses that break HTTP.** A status line that is not HTTP and a body
-shorter than its declared length raise an `http.client` exception that the
-reference's handlers do not name, so it dies with exit code 1. A connection
-closed without a word is a failure both handle. The candidate must treat the
-first two as both treat the third: the same exit code, requests, and stdout.
+**Responses that break HTTP.** A status line that is not HTTP, a body or an
+error body shorter than its declared length, a broken chunk, and a valid
+response cut off after each byte of its head, from each source. Both sides
+must exit the same, send the same requests, and print the same stdout.
+
+One difference is accepted. Where a response ends inside its headers, the
+reference's HTTP library reads a complete response with no body, and the
+candidate's reads a broken connection. The case passes only if the reference
+does exactly what it does for an empty response and the candidate does exactly
+what both do when the connection closes without a word.
 
 CANDIDATE needs the `parity-seams` feature.
 """
@@ -42,7 +47,6 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from parity.corpus import CAP, DBScenario, load_cli
 from parity.engine import Engine, ROOT, elapsed, snapshot
-from parity.fixture import Raw
 
 ORACLE = [sys.executable, str(ROOT / 'parity/oracle.py')]
 CACHE = 'vendors/foreverdb.net/'
@@ -76,12 +80,21 @@ SANCTIONED = {
     # The reference spends its requests and fails when it builds the next index from the old one.
     ('index: items is a list', 'refresh'): "the index's items are not an object",
 }
-CLOSED = 'a connection closed without a response'
-BROKEN = {'a status line that is not HTTP': b'HTTP/1.1 abc\r\n\r\n',
-          'a body shorter than its Content-Length':
-              b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{"data": [',
-          CLOSED: b''}
-UNNAMED = 'the reference dies of an exception its handlers do not name; the port does what both do when the connection closes'
+JSON = b'Content-Type: application/json\r\n'
+MALFORMED = {
+    'a status line that is not HTTP': b'HTTP/1.1 abc\r\n\r\n',
+    'a body shorter than its Content-Length': b'HTTP/1.1 200 OK\r\n' + JSON + b'Content-Length: 500\r\n\r\n{"data": [',
+    'an error body shorter than its Content-Length': b'HTTP/1.1 404 Not Found\r\n' + JSON + b'Content-Length: 500\r\n\r\n{"error":',
+    'a retryable error body cut short':
+        b'HTTP/1.1 502 Bad Gateway\r\n' + JSON + b'Content-Length: 500\r\n\r\n{"retryable": true, "retry_after": 60',
+    'a chunk cut short': b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nab',
+    'a chunk size that is not a number': b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nab\r\n0\r\n\r\n',
+    'headers cut short': b'HTTP/1.1 200 OK\r\nContent-Len',
+}
+CLOSED = b''
+EMPTY = b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n'
+LENIENT = ("the reference's HTTP library reads a response that ends inside its headers as complete and empty; "
+           'the port reads a closed connection')
 MISSING = object()
 counts = {'identical': 0, 'sanctioned': 0, 'refused': 0}
 failures = []
@@ -156,62 +169,95 @@ def damaged(document, path):
             yield f'{key} {name}', changed
 
 
-def broken_responses(engine, scenario, module, candidate, fresh, cached):
-    """Each response that breaks HTTP, from each source, against what both sides do when the connection closes."""
+def cuts(payload):
+    """A valid response to `payload`, cut off after each byte of its head and at three points in its body."""
+    body = json.dumps(payload).encode()
+    head = b'HTTP/1.1 200 OK\r\n' + JSON + b'Content-Length: %d\r\n\r\n' % len(body)
+    whole = head + body
+    for size in range(1, len(head)):
+        yield f'a response cut after {size} of the {len(head)} bytes of its head', whole[:size]
+    for name, size in (('before its body', len(head)), ('halfway through its body', len(head) + len(body) // 2),
+                       ('one byte short', len(whole) - 1)):
+        yield f'a response cut {name}', whole[:size]
+
+
+def malformed_responses(engine, scenario, module, candidate, fresh, cached):
+    """Responses that break HTTP, from each source. One accepted difference: see LENIENT."""
     routes = module.Handler.routes
     key = scenario.env[KEY]
 
-    def place(name, argv, state, route=None, script=None, cap=None, configured=True):
-        return name, argv, state, route, script or {}, cap, configured
+    def place(name, argv, state, route=None, script=None, cap=None, configured=True, grid=False):
+        return name, argv, state, route, script or {}, cap, configured, grid
 
     failed = {1: {'status': 503, 'body': {}}}
     item, pins = '/items/2604.json', '/items/2604.pins.json'
     places = (
-        place('ForeverDB, first request of a sync', REFRESH, fresh),
+        place('ForeverDB, first request of a sync by key', REFRESH, fresh, grid=True),
+        place('ForeverDB, first request of a sync by connector', REFRESH, fresh, configured='connector'),
         place('the AHledger price quote', ['price', '2604', '--json'], fresh, '/v1/prices/forever.pvp.alliance.us/2604'),
         place('the roster', ['char', '--json'], fresh, '/characters'),
         place('a catalogue page', REFRESH, fresh, '/professions/alchemy/'),
-        place('the ninja item, nothing cached', LOOKUP, fresh, item, configured=False),
+        place('the ninja item, nothing cached', LOOKUP, fresh, item, configured=False, grid=True),
         place('the ninja pins, nothing cached', LOOKUP, fresh, pins, configured=False),
         place('the ninja item, refreshed with ForeverDB not configured', REFRESH, cached, item, configured=False),
         place('the ninja pins, refreshed with ForeverDB not configured', REFRESH, cached, pins, configured=False),
         place('the ninja item, refreshed after an incomplete sync', REFRESH, cached, item, cap='2'),
         place('the ninja item, refreshed after a failed sync', REFRESH, cached, item, script=failed),
     )
-    for name, argv, state, route, script, cap, configured in places:
-        outcomes = {}
-        for label, data in BROKEN.items():
+    seen = lambda side: (side['exit_code'], [row['path'] for row in side['requests']], side['stdout'], side['sleep_log'])
+    for name, argv, state, route, script, cap, configured, grid in places:
+        def both(data):
             saved = dict(routes)
             if route:
-                routes[route] = (200, Raw(data))
+                routes[route] = (200, data)
                 scenario.fixture.scripts = dict(script)
             else:
-                scenario.fixture.scripts = {1: {'body': Raw(data)}}
+                scenario.fixture.scripts = {1: {'body': data}}
             if cap:
                 scenario.env[CAP] = cap
-            if not configured:
+            if configured is False:
                 del scenario.env[KEY]
+            elif configured == 'connector':
+                scenario.connector()
             try:
-                outcomes[label] = [run(engine, scenario, side, argv, state) for side in (ORACLE, candidate)]
+                return [seen(run(engine, scenario, side, argv, state)) for side in (ORACLE, candidate)]
             finally:
                 routes.clear()
                 routes.update(saved)
                 scenario.fixture.scripts = {}
                 scenario.env.pop(CAP, None)
                 scenario.env[KEY] = key
-        seen = lambda side: (side['exit_code'], [row['path'] for row in side['requests']], side['stdout'])
-        closed = seen(outcomes[CLOSED][0])
-        for label, (reference, port) in outcomes.items():
-            summary = f'{label}, from {name}: exit {reference["exit_code"]} and {port["exit_code"]}'
-            if seen(reference) == seen(port):
+                scenario.env['EVERLEDGER_FOREVERDB_VIA_CONNECTOR'] = ''
+
+        closed, empty = both(CLOSED), both(EMPTY)
+        for label, pair in (('a connection closed without a response', closed), ('an empty response', empty)):
+            if pair[0] == pair[1]:
                 counts['identical'] += 1
-            elif (label != CLOSED and reference['exit_code'] == 1 and b'http.client.' in reference['stderr']
-                  and seen(port) == closed):
-                counts['sanctioned'] += 1
-                print(f'sanctioned  {summary} ({UNNAMED})')
             else:
-                failures.append(summary)
-                print(f'FAIL        {summary}')
+                failures.append(f'{label}, from {name}')
+                print(f'FAIL        {label}, from {name}: exit {pair[0][0]} and {pair[1][0]}')
+        def judge(cases):
+            """The labels of the cases that pass by the accepted difference alone."""
+            lenient = []
+            for label, data in cases:
+                reference, port = both(data)
+                if reference == port:
+                    counts['identical'] += 1
+                elif reference == empty[0] and port == closed[0]:
+                    counts['sanctioned'] += 1
+                    lenient.append(label)
+                else:
+                    failures.append(f'{label}, from {name}')
+                    print(f'FAIL        {label}, from {name}: exit {reference[0]} and {port[0]}, '
+                          f'requests {len(reference[1])} and {len(port[1])}')
+            return lenient
+
+        for label in judge(MALFORMED.items()):
+            print(f'sanctioned  {label}, from {name} ({LENIENT})')
+        if grid:
+            lenient = judge(cuts(routes[route][1] if route else scenario.fixture.forever['pages'][0]))
+            if lenient:
+                print(f'sanctioned  {len(lenient)} cuts, from "{lenient[0]}" to "{lenient[-1]}", from {name} ({LENIENT})')
 
 
 def with_file(state, name, content):
@@ -409,7 +455,7 @@ def main():
                     refreshed(f'ninja cache: {part}{label}', state, named=False, damaged=NINJA + '2604.json')
 
         engine.start_scenario()
-        broken_responses(engine, scenario, module, candidate, fresh, cached)
+        malformed_responses(engine, scenario, module, candidate, fresh, cached)
     finally:
         scenario.close()
         engine.close()

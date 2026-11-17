@@ -166,7 +166,8 @@ def protected_stderr(raw):
 
 # The text in parentheses after "source unreachable" is the HTTP library's own
 # wording for a failed connection. It reaches stderr, and stdout in a status row.
-UNREACHABLE = re.compile(rb'(source unreachable \().*?(\)(?=\\?"|\r?\n|$))', re.M)
+# For a status line that is not HTTP the reference quotes the line, its line ending included.
+UNREACHABLE = re.compile(rb'(source unreachable \().*?(?:\r?\n)?(\)(?=\\?"|\r?\n|$))', re.M)
 
 
 def mask_transport(raw):

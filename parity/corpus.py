@@ -15,7 +15,7 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
-ORACLE_COMMIT = 'b6c6b1c'
+ORACLE_COMMIT = '6f72b44'
 CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 _reference = None
 
@@ -81,6 +81,7 @@ TRANSLATIONS = {
     'cache_failure_window': 'The two in-process lookup(refresh=True) calls become refresh catalogue, followed by vendors; the same two-day and eight-day cache states and 503 response are retained.',
     'sync_foreverdb': 'The in-process transport patch becomes refresh catalogue against real fixture HTTP with the virtual clock.',
     'refresh_sync_failure_reports_catalogue_and_spend_with_or_without_cache': 'The original runs the CLI in a subprocess with its transport patched to fail. Here refresh catalogue runs against a scripted 503 on the first ForeverDB request, with the original assertions.',
+    'malformed_http_sync_finalizes_attempt_and_spend': 'The original runs the CLI in a subprocess with the ForeverDB address and pacing patched. Here refresh catalogue runs against the fixture, which sends each malformed response as the only request of an attempt or, at a cap of 2, as its second.',
     'abrupt_exit_spend_uses_the_last_request_start': 'SIGKILL at the third held vendor request, at a cap of 3. The next invocation starts one second short of 24 hours after that request began, when attempted_at is already more than 24 hours old, and is deferred; one second later the spend has expired. (The original moves its clock five minutes per request and checks 23h55m.)',
     'changed_extraction_discards_checkpoint_and_recovers_next_day': 'A cap of 1 reads one list page; the next day the second page carries another build, twice. Then, on a cleared cache, 36 list pages spend the default cap before the changed build appears on page 37, and the restarted traversal meets it again a day later.',
     '502_retry_at_budget_boundary_resumes_next_day': 'A cap of 1 whose only request is a retryable 502. Then, on a cleared cache, the same boundary at the default cap: the list request and 35 details, with the 502 as request 36.',
@@ -109,12 +110,12 @@ TRANSLATIONS = {
 def accounting(module):
     names = sorted(name[5:] for name in dir(module.CLI) if name.startswith('test_'))
     rows = [{'test': 'CLI.test_' + name, 'scenarios': ['cli/' + name], 'not_cli_observable': None} for name in names]
-    # Detect both additions and removals, rather than silently printing 93.
+    # Detect both additions and removals, rather than silently printing 96.
     import ast
     tree = ast.parse((ROOT / 'tests/test_foreverdb.py').read_text())
     owners = {node.name[5:]: owner.name for owner in tree.body if isinstance(owner, ast.ClassDef)
               for node in owner.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
-    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 93:
+    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 96:
         raise ValueError('test inventory drift: update the corpus accounting')
     rows += [{'test': owners[name] + '.test_' + name, 'scenarios': ['foreverdb/' + name], 'not_cli_observable': None} for name in INTERNAL]
     return rows
@@ -175,6 +176,50 @@ def replay_cli(engine, module, name):
                         self.assertEqual(result.stdout.count('ForeverDB sync failed'), 1)
                         if not cached:
                             self.assertNotIn('retaining', result.stdout)
+
+        def test_malformed_http_sync_finalizes_attempt_and_spend(self):
+            self.refresh_routes()
+            self.env['EVERLEDGER_FOREVERDB_API_KEY'] = 'secret-fixture'
+            cache = Path(self.tmp.name, 'vendors/foreverdb.net')
+            for label, response in module.MALFORMED_HTTP.items():
+                for midflight in (False, True):
+                    for as_json in (False, True):
+                        with self.subTest(response=label, midflight=midflight, json=as_json):
+                            for path in cache.glob('*.json'):
+                                path.unlink()
+                            count = 2 if midflight else 1
+                            self.env[CAP] = str(count)
+                            fixture.scripts = {count: {'body': response}}
+                            result = self.run_cli('refresh', 'catalogue', *(['--json'] if as_json else []), code=4)
+                            self.assertEqual(result.stderr, '')
+                            self.assertNotIn('Traceback', result.stdout + result.stderr)
+                            self.assertNotIn('secret-fixture', result.stdout + result.stderr)
+                            if as_json:
+                                data = json.loads(result.stdout)
+                                self.assertEqual(data['refreshed'], 'catalogue')
+                                self.assertEqual(data['vendor_sync'], {
+                                    'configured': True, 'complete': False, 'pending': True,
+                                    'requests': count, 'total_requests': count, 'failed': True,
+                                    'deferred': None, 'status': None, 'error': 'ForeverDB sync failed'})
+                            else:
+                                self.assertIn('catalogue refreshed', result.stdout)
+                                self.assertIn(f'ForeverDB sync: failed; {count} requests this refresh; ForeverDB sync failed', result.stdout)
+                            attempt = json.loads((cache / 'attempt.json').read_text())
+                            self.assertTrue(attempt['failed'])
+                            self.assertIsNone(attempt['status'])
+                            self.assertEqual(attempt['error'], 'ForeverDB sync failed')
+                            self.assertEqual(attempt['requests'], count)
+                            self.assertIsNotNone(datetime.datetime.fromisoformat(attempt['finished_at']))
+                            self.assertEqual(attempt['spends'], [{'requests': count, 'finished_at': attempt['finished_at']}])
+                            self.assertTrue((cache / 'pending.json').exists())
+                            self.assertFalse((cache / 'index.json').exists())
+                            fixture.scripts = {}
+                            owner.requests.clear()
+                            deferred = self.run_cli('refresh', 'catalogue', '--json', code=4)
+                            sync = json.loads(deferred.stdout)['vendor_sync']
+                            self.assertEqual((sync['requests'], sync['total_requests'], sync['deferred']),
+                                             (0, count, 'daily sync limit'))
+                            self.assertFalse(any(p.startswith('/api/v1/') for p in owner.requests))
 
     case = Replay('test_' + name)
     case.server = fixture.server
