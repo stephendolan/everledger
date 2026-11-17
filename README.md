@@ -72,7 +72,8 @@ Ninja stays active until a key or connector is configured and a sync completes.
 Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
 retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
 Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
-ForeverDB vendors only: default cap 36 requests per 24h, paced below 30/minute.
+ForeverDB vendors only: rolling 24-hour request budget across attempts.
+Default cap 36 requests; paced below 30/minute.
 Override with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).
 List pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014
 detail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
@@ -364,9 +365,10 @@ Ninja is the default until a key or connector is configured and a full ForeverDB
 sync completes. Run `everledger refresh catalogue`; unfinished work resumes on
 later daily refreshes. The mapping follows the API shapes probed November 15,
 2026. Both bootstrap and steady state require 1,025 requests at today's 1,014
-vendors. At the default cap of 36 requests per 24 hours, bootstrap takes at least
-29 daily attempts. Set `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` to a positive integer
-to override the cap, for example `5000` for Stephen's chosen free-tier limit.
+vendors. The cap is a rolling 24-hour request budget across attempts. At the
+default cap of 36 requests, bootstrap takes at least 29 daily attempts. Set
+`EVERLEDGER_FOREVERDB_DAILY_REQUESTS` to a positive integer to override the cap,
+for example `5000` for Stephen's chosen free-tier limit.
 Invalid values are usage errors. Pacing stays at 2.1 seconds between requests,
 and retries count against the configured cap. No per-vendor sell revision is
 available.

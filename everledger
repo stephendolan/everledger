@@ -57,7 +57,8 @@ Ninja stays active until a key or connector is configured and a sync completes.
 Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
 retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
 Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
-ForeverDB vendors only: default cap 36 requests per 24h, paced below 30/minute.
+ForeverDB vendors only: rolling 24-hour request budget across attempts.
+Default cap 36 requests; paced below 30/minute.
 Override with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).
 List pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014
 detail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).

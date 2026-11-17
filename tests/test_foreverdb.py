@@ -1,4 +1,5 @@
 """No network: observed wire shapes with explicit synthetic regression cases."""
+import datetime as dt
 import importlib.util
 import json
 from pathlib import Path
@@ -48,6 +49,11 @@ class ForeverDB(unittest.TestCase):
         self.directory = Path(self.tmp.name)
         self.fixture = json.loads(FIXTURE.read_text())
         self.requests = []
+        self.clock = [core.now()]
+        for module in (core, db):
+            clock = patch.object(module, 'now', side_effect=lambda: self.clock[0])
+            clock.start()
+            self.addCleanup(clock.stop)
         self.key = patch.dict('os.environ', {'EVERLEDGER_FOREVERDB_API_KEY': 'secret-fixture',
             'EVERLEDGER_FOREVERDB_VIA_CONNECTOR': '', 'EVERLEDGER_DYNAMIC_CREDENTIALS_DIR': str(self.directory)})
         self.key.start()
@@ -82,11 +88,7 @@ class ForeverDB(unittest.TestCase):
         return json.dumps(data).encode(), {}
 
     def tomorrow(self):
-        path = self.directory / 'attempt.json'
-        state = json.loads(path.read_text())
-        state['attempted_at'] = '2020-01-01T00:00:00Z'
-        state['finished_at'] = '2020-01-01T00:00:00Z'
-        path.write_text(json.dumps(state))
+        self.clock[0] += dt.timedelta(days=1)
 
     def test_sync_and_sale_labels_and_locations(self):
         result = db.sync()
@@ -123,6 +125,7 @@ class ForeverDB(unittest.TestCase):
         self.assertIsNone(db.lookup(9001)['reason'])
         self.assertEqual(len(db.lookup(2604)['vendors']), 3)
 
+    @patch.object(db, 'DAILY_REQUESTS', 6)
     def test_daily_refresh_refetches_details_without_revision_guarantee(self):
         db.sync()
         self.requests.clear()
@@ -176,6 +179,83 @@ class ForeverDB(unittest.TestCase):
                     self.assertEqual(result['complete'], complete)
                     self.assertEqual(configured.index() is not None, complete)
 
+    @patch.object(db, 'DAILY_REQUESTS', 12)
+    def test_window_spend_across_two_attempts_defers_at_cap(self):
+        self.assertEqual(db.sync()['requests'], 6)
+        first_finish = core.iso(self.clock[0])
+        self.clock[0] += dt.timedelta(minutes=34)
+        self.assertEqual(db.sync()['requests'], 6)
+        checkpoint = json.loads((self.directory / 'attempt.json').read_text())
+        self.assertEqual(checkpoint['spends'], [
+            {'requests': 6, 'finished_at': first_finish},
+            {'requests': 6, 'finished_at': core.iso(self.clock[0])}])
+        before = len(self.requests)
+        deferred = db.sync()
+        self.assertEqual(deferred, {'configured': True, 'complete': True,
+            'pending': False, 'requests': 0, 'deferred': 'daily sync limit', 'failed': False})
+        self.assertEqual(len(self.requests), before)
+
+    def test_raised_cap_resumes_inside_window_with_remaining_budget(self):
+        with patch.object(db, 'DAILY_REQUESTS', 2):
+            first = db.sync()
+        self.assertEqual(first['requests'], 2)
+        self.assertFalse(first['complete'])
+        self.assertIsNone(db.index())
+        self.clock[0] += dt.timedelta(minutes=34)
+        with patch.object(db, 'DAILY_REQUESTS', 6):
+            resumed = db.sync()
+        self.assertEqual(resumed, {'configured': True, 'complete': True,
+            'pending': False, 'requests': 4, 'total_requests': 6})
+        self.assertEqual(len(self.requests), 6)
+        self.assertEqual(len(db.lookup(2604)['vendors']), 3)
+
+    def test_window_expiry_restores_only_expired_spend_then_full_budget(self):
+        start = self.clock[0]
+        with patch.object(db, 'DAILY_REQUESTS', 4):
+            self.assertEqual(db.sync()['requests'], 4)
+        self.clock[0] += dt.timedelta(hours=1)
+        with patch.object(db, 'DAILY_REQUESTS', 6):
+            self.assertEqual(db.sync()['requests'], 2)
+            self.clock[0] = start + dt.timedelta(days=1, seconds=-1)
+            self.assertEqual(db.sync()['requests'], 0)
+            self.clock[0] += dt.timedelta(seconds=1)
+            partial = db.sync()
+            self.assertEqual(partial['requests'], 4)
+            self.assertFalse(partial['complete'])
+            checkpoint = json.loads((self.directory / 'attempt.json').read_text())
+            self.assertEqual([spend['requests'] for spend in checkpoint['spends']], [2, 4])
+            self.clock[0] += dt.timedelta(hours=1)
+            self.assertEqual(db.sync()['requests'], 2)
+            self.tomorrow()
+            full = db.sync()
+            self.assertTrue(full['complete'])
+            self.assertEqual(full['requests'], 6)
+            checkpoint = json.loads((self.directory / 'attempt.json').read_text())
+            self.assertEqual(checkpoint['spends'], [
+                {'requests': 6, 'finished_at': core.iso(self.clock[0])}])
+
+    def test_legacy_checkpoint_migrates_own_requests_at_finish_or_last_request(self):
+        for timestamp in ('finished_at', 'last_request_at'):
+            with self.subTest(timestamp=timestamp):
+                (self.directory / 'pending.json').unlink(missing_ok=True)
+                (self.directory / 'index.json').unlink(missing_ok=True)
+                self.requests.clear()
+                finished = core.iso(self.clock[0] - dt.timedelta(minutes=34))
+                (self.directory / 'attempt.json').write_text(json.dumps({
+                    'attempted_at': core.iso(self.clock[0] - dt.timedelta(days=2)),
+                    timestamp: finished, 'requests': 2, 'total_requests': 100,
+                    'sync_id': 'legacy', 'failed': False}))
+                with patch.object(db, 'DAILY_REQUESTS', 2):
+                    self.assertEqual(db.sync()['requests'], 0)
+                    self.assertEqual(self.requests, [])
+                with patch.object(db, 'DAILY_REQUESTS', 6):
+                    resumed = db.sync()
+                    self.assertEqual(resumed['requests'], 4)
+                    self.assertFalse(resumed['complete'])
+                    checkpoint = json.loads((self.directory / 'attempt.json').read_text())
+                    self.assertEqual(checkpoint['spends'][0], {'requests': 2, 'finished_at': finished})
+                    self.assertEqual(db.sync()['requests'], 0)
+
     def test_mid_detail_interrupt_resumes_and_old_index_survives(self):
         db.sync()
         before = (self.directory / 'index.json').read_bytes()
@@ -209,7 +289,8 @@ class ForeverDB(unittest.TestCase):
             db.sync()
         self.assertEqual(len(db.lookup(2604)['vendors']), 3)
 
-    def test_abrupt_exit_cooldown_uses_the_last_request_start(self):
+    @patch.object(db, 'DAILY_REQUESTS', 3)
+    def test_abrupt_exit_spend_uses_the_last_request_start(self):
         import datetime
         clock = [core.now()]
         original = self.get
@@ -233,6 +314,19 @@ class ForeverDB(unittest.TestCase):
             self.assertEqual(db.sync()['requests'], 0)
             self.assertEqual(len(self.requests), before)
 
+    @patch.object(db, 'DAILY_REQUESTS', 8)
+    def test_abrupt_exit_preserves_prior_window_spend(self):
+        self.assertEqual(db.sync()['requests'], 6)
+        with patch.object(db, 'request', side_effect=SystemExit('abrupt exit')):
+            with self.assertRaises(SystemExit):
+                db.sync()
+        resumed = db.sync()
+        self.assertEqual(resumed['requests'], 1)
+        self.assertFalse(resumed['complete'])
+        checkpoint = json.loads((self.directory / 'attempt.json').read_text())
+        self.assertEqual([spend['requests'] for spend in checkpoint['spends']], [6, 1, 1])
+        self.assertEqual(db.sync()['requests'], 0)
+
     def test_changed_extraction_discards_checkpoint_and_recovers_next_day(self):
         first = json.loads((FIXTURE.parent / 'foreverdb-list.json').read_text())
         first['meta']['total'] = 101
@@ -246,7 +340,8 @@ class ForeverDB(unittest.TestCase):
             db.sync()
         self.assertIsNone(db.index())
         self.assertFalse((self.directory / 'pending.json').exists())
-        self.assertEqual(db.sync()['requests'], 0)
+        with self.assertRaises(core.Failure):
+            db.sync()
         self.tomorrow()
         self.fixture = json.loads(FIXTURE.read_text())
         self.assertTrue(db.sync()['complete'])
@@ -322,7 +417,7 @@ class ForeverDB(unittest.TestCase):
         self.assertNotIn('secret-fixture', json.dumps(error.exception.body))
         for path in self.directory.glob('*.json'):
             self.assertNotIn('secret-fixture', path.read_text())
-        self.assertEqual(db.sync()['requests'], 0)
+        self.assertTrue(db.sync()['complete'])
 
     def test_observed_list_page_uses_total_and_offset(self):
         import everledger_foreverdb_mapping as mapping
@@ -381,6 +476,22 @@ class ForeverDB(unittest.TestCase):
         self.assertIsNone(db.index())
         self.tomorrow()
         self.assertTrue(db.sync()['complete'])
+
+    def test_502_retry_counts_against_remaining_window_budget(self):
+        with patch.object(db, 'DAILY_REQUESTS', 1):
+            self.assertEqual(db.sync()['requests'], 1)
+        error = core.Failure('upstream', 4, {'status': 502, 'response': {'retryable': True}})
+        with patch.object(db, 'DAILY_REQUESTS', 2):
+            with patch.object(db, 'request', side_effect=error) as request:
+                result = db.sync()
+                self.assertEqual(result['requests'], 1)
+                self.assertFalse(result['complete'])
+                self.assertEqual(request.call_count, 1)
+            deferred = db.sync()
+            self.assertEqual(deferred['requests'], 0)
+            self.assertFalse(deferred['failed'])
+        checkpoint = json.loads((self.directory / 'attempt.json').read_text())
+        self.assertEqual([spend['requests'] for spend in checkpoint['spends']], [1, 1])
 
     def test_502_retry_failure_stops_after_two_requests(self):
         error = core.Failure('upstream', 4, {'status': 502, 'response': {'retryable': True, 'retry_after': 60}})

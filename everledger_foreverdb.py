@@ -98,14 +98,26 @@ class BudgetExhausted(Exception):
     pass
 
 
+def prune_spends(attempt):
+    attempt['spends'] = [spend for spend in attempt['spends'] if age(spend['finished_at']) < 86400]
+
+
 def read(name):
     try:
-        return json.loads((CACHE / name).read_text())
+        data = json.loads((CACHE / name).read_text())
     except FileNotFoundError:
         return None
+    if name == 'attempt.json':
+        if 'spends' not in data or not data.get('finished_at'):
+            finished = data.get('finished_at') or data.get('last_request_at') or data['attempted_at']
+            data.setdefault('spends', []).append({'requests': data.get('requests', 0), 'finished_at': finished})
+        prune_spends(data)
+    return data
 
 
 def write(name, data):
+    if name == 'attempt.json':
+        prune_spends(data)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=CACHE,
@@ -156,7 +168,9 @@ def _sync(key):
     previous = index()
     attempt = read('attempt.json')
     pending = read('pending.json')
-    if attempt and age(attempt.get('finished_at') or attempt.get('last_request_at') or attempt['attempted_at']) < 86400:
+    spends = (attempt or {}).get('spends', [])
+    budget = DAILY_REQUESTS - sum(spend['requests'] for spend in spends)
+    if budget <= 0:
         return {'configured': True, 'complete': previous is not None and pending is None,
                 'pending': pending is not None, 'requests': 0,
                 'deferred': 'daily sync limit', 'failed': attempt.get('failed', False)}
@@ -170,7 +184,7 @@ def _sync(key):
                    'details': {}, 'metadata': None, 'total_requests': 0}
     if pending['sync_id'] == (attempt or {}).get('sync_id'):
         pending['total_requests'] = max(pending['total_requests'], attempt.get('total_requests', 0))
-    attempt = {'attempted_at': iso(now()), 'requests': 0, 'sync_id': pending['sync_id'],
+    attempt = {'attempted_at': iso(now()), 'requests': 0, 'sync_id': pending['sync_id'], 'spends': spends,
                'failed': (attempt or {}).get('failed', False),
                'status': (attempt or {}).get('status')}
     write('attempt.json', attempt)
@@ -180,7 +194,7 @@ def _sync(key):
     def get(path):
         nonlocal last_start
         while True:
-            if attempt['requests'] >= DAILY_REQUESTS:
+            if attempt['requests'] >= budget:
                 raise BudgetExhausted()
             retry = pending.get('retry')
             if retry:
@@ -222,7 +236,7 @@ def _sync(key):
         if key is None:
             connector_helper()
         try:
-            while pending['next_offset'] is not None and attempt['requests'] < DAILY_REQUESTS:
+            while pending['next_offset'] is not None and attempt['requests'] < budget:
                 offset = pending['next_offset']
                 payload = get('/api/v1/vendors?' + urllib.parse.urlencode({'limit': mapping.PAGE_SIZE, 'offset': offset}))
                 vendor_ids, following, metadata = mapping.page(payload, offset)
@@ -239,7 +253,7 @@ def _sync(key):
                 for vendor_id in pending['vendor_ids']:
                     if vendor_id in pending['details']:
                         continue
-                    if attempt['requests'] >= DAILY_REQUESTS:
+                    if attempt['requests'] >= budget:
                         break
                     data = mapping.vendor(get('/api/v1/vendors/' + vendor_id), int(vendor_id))
                     pending['details'][vendor_id] = {'data': data}
@@ -257,11 +271,13 @@ def _sync(key):
         else:
             write('pending.json', pending)
         attempt['finished_at'] = iso(now())
+        attempt['spends'] = spends + [{'requests': attempt['requests'], 'finished_at': attempt['finished_at']}]
         write('attempt.json', attempt)
         return {'configured': True, 'complete': complete, 'pending': not complete,
                 'requests': attempt['requests'], 'total_requests': pending['total_requests']}
     except (Failure, OSError, KeyboardInterrupt) as error:
         attempt['finished_at'] = iso(now())
+        attempt['spends'] = spends + [{'requests': attempt['requests'], 'finished_at': attempt['finished_at']}]
         attempt['failed'] = True
         attempt['status'] = (error.body or {}).get('status') if isinstance(error, Failure) else None
         write('attempt.json', attempt)
