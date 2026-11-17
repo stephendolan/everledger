@@ -282,16 +282,30 @@ python3 parity/interrupts.py target/seams/debug/everledger
 
 ## Cache files no sync writes
 
-`damage.py` puts about two hundred damaged checkpoints, indexes, journals, and
-ninja cache files in front of both implementations: the wrong JSON type, a
-missing key, a number where text belongs, bytes that are not UTF-8. The corpus
-and the fuzz only ever hand an implementation files it wrote itself. For each
-damaged file both sides run the commands that read it and must exit with the
-same code, send the same requests, and print the same stdout. Where the
-reference carries on with a payload it could not have written and the candidate
-refuses it with exit code 1 and no ForeverDB request, the case is named in
-`SANCTIONED` with its reason. A candidate that sends a request the reference
-does not is never sanctioned.
+The corpus and the fuzz only ever hand an implementation files it wrote itself.
+`damage.py` puts other things in front of both: damaged checkpoints, indexes,
+journals, and ninja cache files, and responses that break HTTP. It has three
+parts.
+
+**Chosen cases.** The wrong JSON type for a whole file, empty containers, bytes
+that are not UTF-8, spends that do not add up. For each, both sides run the
+commands that read the file and must exit with the same code, send the same
+requests, and print the same stdout. Where the reference carries on with a
+payload it could not have written and the candidate refuses it, the case is
+named in `SANCTIONED` with its reason.
+
+**Every field.** Each key of each object in the four files is in turn dropped,
+set to null, and given another JSON type: several hundred damaged files. The
+candidate must do what the reference does, or refuse. To refuse is to exit 1
+with nothing on stdout, having sent no request the reference did not send. A
+candidate that carries on where the reference fails, or sends a request the
+reference does not, fails the check. The summary line counts the refusals and
+the output lists them.
+
+**Responses that break HTTP.** A status line that is not HTTP, and a body
+shorter than its declared length, from each source. The reference dies of an
+`http.client` exception its handlers do not name. The candidate must do what
+both sides do when the connection closes without a response.
 
 ```sh
 python3 parity/damage.py target/seams/debug/everledger
@@ -306,6 +320,14 @@ orders, a day apart and back to back under different caps; the one that did not
 publish the index then answering a lookup from it; both reading an index from
 an older build, which still carries the `details` and `sync_requests` blocks
 nothing reads; and one waiting on the sync lock the other holds.
+
+Cutover also hands the port a data directory that earlier builds of the
+reference filled. `handoff.py` takes each commit this port has been pinned to
+out of the clone's history and has it complete a small sync, leave a larger one
+halfway, and cache ninja lookups. The current reference and the candidate then
+read each directory and refresh over it, and must give the same answers and
+leave the same files. `EARLIER` lists the commits; a pin bump adds the commit it
+leaves behind.
 
 ```sh
 python3 parity/handoff.py target/seams/debug/everledger

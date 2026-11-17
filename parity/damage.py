@@ -3,23 +3,31 @@
 
 Usage: python3 parity/damage.py CANDIDATE
 
-A sync writes its checkpoint, journal, and index itself, so the corpus and the
-fuzz only ever hand an implementation files it wrote. This puts other things
-in their place: the wrong JSON type, a missing key, a number where text
-belongs, bytes that are not UTF-8. For each damaged file both implementations
-run the commands that read it, from the same state, and must exit with the
-same code, send the same requests, and print the same stdout.
+A sync writes its checkpoint, journal, and index itself, and a lookup its
+ninja cache file, so the corpus and the fuzz only ever hand an implementation
+files it wrote. This puts other things in their place, in three parts.
 
-Where the reference carries on with a payload it could not have written and
-the candidate refuses it, the case is named in `SANCTIONED` with its reason. A
-candidate may refuse only by exiting 1 without a ForeverDB request. One that
-sends a request the reference does not is never sanctioned.
+**Chosen cases.** The wrong JSON type for a whole file, empty containers,
+bytes that are not UTF-8, spends that do not add up. For each, both
+implementations run the commands that read the file, from the same state, and
+must exit with the same code, send the same requests, and print the same
+stdout. Where the reference carries on with a payload it could not have
+written and the candidate refuses it, the case is named in `SANCTIONED` with
+its reason.
 
-The last part sends responses that break HTTP itself: a status line that is
-not HTTP, a body shorter than its declared length, a connection closed without
-a word. The reference dies of an `http.client` exception on the first two,
-which its handlers do not name. A candidate that reports the source
-unreachable there, after the same requests, is sanctioned.
+**Every field.** Each key of each object in the four files is in turn
+dropped, set to null, and given another JSON type. The candidate must do what
+the reference does, or refuse. No case is named: the rule is the class.
+
+To refuse is to exit 1 with nothing on stdout, having sent no request the
+reference did not send. A candidate that carries on where the reference
+fails, or sends a request the reference does not, fails the check.
+
+**Responses that break HTTP.** A status line that is not HTTP and a body
+shorter than its declared length raise an `http.client` exception that the
+reference's handlers do not name, so it dies with exit code 1. A connection
+closed without a word is a failure both handle. The candidate must treat the
+first two as both treat the third: the same exit code, requests, and stdout.
 
 CANDIDATE needs the `parity-seams` feature.
 """
@@ -37,9 +45,12 @@ from parity.fixture import Raw
 
 ORACLE = [sys.executable, str(ROOT / 'parity/oracle.py')]
 CACHE = 'vendors/foreverdb.net/'
+NINJA = 'vendors/wowforever.ninja/'
+KEY = 'EVERLEDGER_FOREVERDB_API_KEY'
 REFRESH = ['refresh', 'catalogue', '--json']
 STATUS = ['status', '--json']
 LOOKUP = ['vendors', '2604', '--json']
+HUMAN = ['vendors', '2604']
 NOT_JSON = b'{not json'
 NOT_UTF8 = b'\xff'
 # The reference computes with whatever a spend holds, and drops an expired spend without reading it.
@@ -64,12 +75,14 @@ SANCTIONED = {
     # The reference spends its requests and fails when it builds the next index from the old one.
     ('index: items is a list', 'refresh'): "the index's items are not an object",
 }
+CLOSED = 'a connection closed without a response'
 BROKEN = {'a status line that is not HTTP': b'HTTP/1.1 abc\r\n\r\n',
           'a body shorter than its Content-Length':
               b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{"data": [',
-          'a connection closed without a response': b''}
-UNNAMED = 'a response that breaks HTTP: the reference dies of an exception its handlers do not name'
-counts = {'identical': 0, 'sanctioned': 0}
+          CLOSED: b''}
+UNNAMED = 'the reference dies of an exception its handlers do not name; the port does what both do when the connection closes'
+MISSING = object()
+counts = {'identical': 0, 'sanctioned': 0, 'refused': 0}
 failures = []
 
 
@@ -82,7 +95,8 @@ def run(engine, scenario, command, argv, state):
         return engine.capture(command, argv, scenario.env, scenario.fixture, scenario.root, state, Path(controls))
 
 
-def compare(engine, scenario, candidate, label, state, commands):
+def compare(engine, scenario, candidate, label, state, commands, named=True):
+    """Both sides on one damaged state. A refusal passes if `SANCTIONED` names it, or if no name is asked for."""
     for argv in commands:
         reference, port = (run(engine, scenario, side, argv, state) for side in (ORACLE, candidate))
         paths = [[row['path'] for row in side['requests']] for side in (reference, port)]
@@ -93,41 +107,101 @@ def compare(engine, scenario, candidate, label, state, commands):
             continue
         sent = [sum(path.startswith('/api/v1/') for path in side) for side in paths]
         reason = SANCTIONED.get((label, argv[0]))
-        refused = port['exit_code'] == 1 and sent[1] == 0 and not port['stdout']
-        summary = (f'{label}: {argv[0]}: exit {reference["exit_code"]} and {port["exit_code"]}, '
+        refused = port['exit_code'] == 1 and not port['stdout'] and paths[1] == paths[0][:len(paths[1])]
+        summary = (f'{label}: {" ".join(argv)}: exit {reference["exit_code"]} and {port["exit_code"]}, '
                    f'ForeverDB requests {sent[0]} and {sent[1]}, other requests {len(paths[0]) - sent[0]} and {len(paths[1]) - sent[1]}')
-        if reason and refused:
+        if named and reason and refused and sent[1] == 0:
             counts['sanctioned'] += 1
             print(f'sanctioned  {summary} ({reason})')
+        elif not named and refused:
+            counts['refused'] += 1
+            print(f'refused     {summary}')
         else:
             failures.append(summary)
             print(f'FAIL        {summary}')
 
 
-def broken_responses(engine, scenario, module, candidate, state):
+def another(value):
+    """A value of another JSON type than this one, and how to say so."""
+    if isinstance(value, str):
+        return 5, 'as a number'
+    if isinstance(value, list):
+        return {}, 'as an object'
+    if isinstance(value, dict):
+        return [], 'as a list'
+    return '7', 'as text'   # digits, so that an offset the reference passes on is one the fixture can answer
+
+
+def damaged(document, path):
+    """The object at `path` with each key in turn dropped, set to null, and given another JSON type."""
+    target = document
+    for step in path:
+        target = target[step]
+    for key, value in target.items():
+        other, how = another(value)
+        for name, change in [('dropped', MISSING), *([('null', None)] if value is not None else []), (how, other)]:
+            changed = copy.deepcopy(document)
+            inner = changed
+            for step in path:
+                inner = inner[step]
+            if change is MISSING:
+                del inner[key]
+            else:
+                inner[key] = change
+            yield f'{key} {name}', changed
+
+
+def broken_responses(engine, scenario, module, candidate, fresh, cached):
+    """Each response that breaks HTTP, from each source, against what both sides do when the connection closes."""
     routes = module.Handler.routes
-    places = (('ForeverDB, first request of a sync', REFRESH, None),
-              ('the AHledger price quote', ['price', '2604', '--json'], '/v1/prices/forever.pvp.alliance.us/2604'),
-              ('the roster', ['char', '--json'], '/characters'))
-    for label, data in BROKEN.items():
-        for place, argv, route in places:
+    key = scenario.env[KEY]
+
+    def place(name, argv, state, route=None, script=None, cap=None, configured=True):
+        return name, argv, state, route, script or {}, cap, configured
+
+    failed = {1: {'status': 503, 'body': {}}}
+    item, pins = '/items/2604.json', '/items/2604.pins.json'
+    places = (
+        place('ForeverDB, first request of a sync', REFRESH, fresh),
+        place('the AHledger price quote', ['price', '2604', '--json'], fresh, '/v1/prices/forever.pvp.alliance.us/2604'),
+        place('the roster', ['char', '--json'], fresh, '/characters'),
+        place('a catalogue page', REFRESH, fresh, '/professions/alchemy/'),
+        place('the ninja item, nothing cached', LOOKUP, fresh, item, configured=False),
+        place('the ninja pins, nothing cached', LOOKUP, fresh, pins, configured=False),
+        place('the ninja item, refreshed with ForeverDB not configured', REFRESH, cached, item, configured=False),
+        place('the ninja pins, refreshed with ForeverDB not configured', REFRESH, cached, pins, configured=False),
+        place('the ninja item, refreshed after an incomplete sync', REFRESH, cached, item, cap='2'),
+        place('the ninja item, refreshed after a failed sync', REFRESH, cached, item, script=failed),
+    )
+    for name, argv, state, route, script, cap, configured in places:
+        outcomes = {}
+        for label, data in BROKEN.items():
             saved = dict(routes)
             if route:
                 routes[route] = (200, Raw(data))
+                scenario.fixture.scripts = dict(script)
             else:
                 scenario.fixture.scripts = {1: {'body': Raw(data)}}
+            if cap:
+                scenario.env[CAP] = cap
+            if not configured:
+                del scenario.env[KEY]
             try:
-                reference, port = (run(engine, scenario, side, argv, state) for side in (ORACLE, candidate))
+                outcomes[label] = [run(engine, scenario, side, argv, state) for side in (ORACLE, candidate)]
             finally:
                 routes.clear()
                 routes.update(saved)
                 scenario.fixture.scripts = {}
-            paths = [[row['path'] for row in side['requests']] for side in (reference, port)]
-            summary = f'{label}, from {place}: exit {reference["exit_code"]} and {port["exit_code"]}'
-            if reference['exit_code'] == port['exit_code'] and paths[0] == paths[1] and reference['stdout'] == port['stdout']:
+                scenario.env.pop(CAP, None)
+                scenario.env[KEY] = key
+        seen = lambda side: (side['exit_code'], [row['path'] for row in side['requests']], side['stdout'])
+        closed = seen(outcomes[CLOSED][0])
+        for label, (reference, port) in outcomes.items():
+            summary = f'{label}, from {name}: exit {reference["exit_code"]} and {port["exit_code"]}'
+            if seen(reference) == seen(port):
                 counts['identical'] += 1
-            elif (reference['exit_code'] == 1 and b'http.client.' in reference['stderr'] and port['exit_code'] == 4
-                  and paths[0] == paths[1]):
+            elif (label != CLOSED and reference['exit_code'] == 1 and b'http.client.' in reference['stderr']
+                  and seen(port) == closed):
                 counts['sanctioned'] += 1
                 print(f'sanctioned  {summary} ({UNNAMED})')
             else:
@@ -255,22 +329,85 @@ def main():
         scenario.env.pop(CAP)
 
         engine.start_scenario()
-        cached = run(engine, scenario, ORACLE, LOOKUP, fresh)['files']   # a ninja cache file, no ForeverDB state
-        ninja = 'vendors/wowforever.ninja/'
-        spoiled = {**cached, ninja + '100.json': NOT_JSON}
-        scenario.fixture.scripts = {1: {'status': 503, 'body': {}}}
-        compare(engine, scenario, candidate, 'ninja cache: a file that is not JSON, after a failed sync', spoiled, [REFRESH])
-        compare(engine, scenario, candidate, 'ninja cache: a file that is not UTF-8, after a failed sync',
-                {**cached, ninja + '100.json': NOT_UTF8}, [REFRESH])
-        scenario.fixture.scripts = {}
-        compare(engine, scenario, candidate, 'ninja cache: a file that is not JSON, after an incomplete sync', spoiled, [REFRESH])
+        looked_up = run(engine, scenario, ORACLE, LOOKUP, fresh)     # a ninja cache file, no ForeverDB state
+        engine.advance(seconds=elapsed(looked_up))
+        cached = looked_up['files']
+        key = scenario.env[KEY]
+        failed_sync = {1: {'status': 503, 'body': {}}}
+
+        def refreshed(label, state, named=True):
+            """A refresh that reaches the ninja cache: after a failed sync, an incomplete one, and none."""
+            scenario.fixture.scripts = dict(failed_sync)
+            compare(engine, scenario, candidate, label + ', after a failed sync', state, [REFRESH], named)
+            scenario.fixture.scripts = {}
+            scenario.env[CAP] = '2'
+            compare(engine, scenario, candidate, label + ', after an incomplete sync', state, [REFRESH], named)
+            scenario.env.pop(CAP)
+            del scenario.env[KEY]
+            compare(engine, scenario, candidate, label + ', ForeverDB not configured', state, [REFRESH], named)
+            scenario.env[KEY] = key
+
+        for label, content in [('a file that is not JSON', NOT_JSON), ('a file that is not UTF-8', NOT_UTF8),
+                               ('null', b'null'), ('an empty object', {}), ('a list', [1]),
+                               ('another backend_url and nothing else', {'backend_url': 'http://elsewhere.invalid'})]:
+            for name in ('100.json', '2604.json'):
+                state = {**cached, NINJA + name: raw(content)}
+                refreshed(f'ninja cache: {name} is {label}', state)
+                compare(engine, scenario, candidate, f'ninja cache: {name} is {label}', state, [LOOKUP, STATUS])
+
+        # Every field of every file: dropped, null, and another type.
+        engine.start_scenario()
+        synced = reach(None, fresh)
+        index = json.loads(synced[CACHE + 'index.json'])
+        row = ('items', '2604', 'vendors', 0)
+        for part, where, commands in (('', (), [REFRESH, STATUS, LOOKUP, HUMAN]),
+                                      ("an entry's ", row[:2], [REFRESH, STATUS, LOOKUP, HUMAN]),
+                                      ("an item's ", (*row[:2], 'item'), [REFRESH, STATUS, LOOKUP, HUMAN]),
+                                      ("a row's ", row, [STATUS, LOOKUP, HUMAN])):
+            for label, content in damaged(index, where):
+                compare(engine, scenario, candidate, f'index: {part}{label}', with_file(synced, CACHE + 'index.json', content),
+                        commands, named=False)
+        journal = json.loads(synced[CACHE + 'attempt.json'])
+        for part, where in (('', ()), ("a spend's ", ('spends', 0))):
+            for label, content in damaged(journal, where):
+                compare(engine, scenario, candidate, f'journal: {part}{label}', with_file(synced, CACHE + 'attempt.json', content),
+                        [REFRESH, STATUS, LOOKUP], named=False)
 
         engine.start_scenario()
-        broken_responses(engine, scenario, module, candidate, fresh)
+        recent = reach(None, fresh, days=0)
+        live = json.loads(recent[CACHE + 'attempt.json'])
+        for label, content in damaged(live, ('spends', 0)):
+            compare(engine, scenario, candidate, f"journal inside the window: a spend's {label}",
+                    with_file(recent, CACHE + 'attempt.json', content), [REFRESH], named=False)
+
+        engine.start_scenario()
+        midway = reach('2', fresh)
+        checkpoint = json.loads(midway[CACHE + 'pending.json'])
+        sale = ('details', next(iter(checkpoint['details'])), 'data', 'sells', 0)
+        for part, where in (('', ()), ("the metadata's ", ('metadata',)), ("a detail's ", sale[:2]), ("a detail's data's ", sale[:3]),
+                            ("a sale's ", sale), ("a sale's item's ", (*sale, 'item')), ("a sale's row's ", (*sale, 'row'))):
+            for label, content in damaged(checkpoint, where):
+                compare(engine, scenario, candidate, f'checkpoint: {part}{label}', with_file(midway, CACHE + 'pending.json', content),
+                        [REFRESH], named=False)
+
+        engine.start_scenario()
+        engine.advance(seconds=elapsed(looked_up))
+        ninja = json.loads(cached[NINJA + '2604.json'])
+        for part, where, whole in (('', (), True), ("an item's ", ('item',), True), ("a row's ", ('vendors', 0), False)):
+            for label, content in damaged(ninja, where):
+                state = with_file(cached, NINJA + '2604.json', content)
+                del scenario.env[KEY]
+                compare(engine, scenario, candidate, f'ninja cache: {part}{label}', state, [LOOKUP, HUMAN, STATUS], named=False)
+                scenario.env[KEY] = key
+                if whole:
+                    refreshed(f'ninja cache: {part}{label}', state, named=False)
+
+        engine.start_scenario()
+        broken_responses(engine, scenario, module, candidate, fresh, cached)
     finally:
         scenario.close()
         engine.close()
-    print(f'identical {counts["identical"]}, sanctioned {counts["sanctioned"]}, failures {len(failures)}')
+    print(f'identical {counts["identical"]}, sanctioned {counts["sanctioned"]}, refused {counts["refused"]}, failures {len(failures)}')
     return 1 if failures else 0
 
 
