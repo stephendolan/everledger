@@ -280,6 +280,23 @@ short of the reference's.
 python3 parity/interrupts.py target/seams/debug/everledger
 ```
 
+## Cache files no sync writes
+
+`damage.py` puts about two hundred damaged checkpoints, indexes, journals, and
+ninja cache files in front of both implementations: the wrong JSON type, a
+missing key, a number where text belongs, bytes that are not UTF-8. The corpus
+and the fuzz only ever hand an implementation files it wrote itself. For each
+damaged file both sides run the commands that read it and must exit with the
+same code, send the same requests, and print the same stdout. Where the
+reference carries on with a payload it could not have written and the candidate
+refuses it with exit code 1 and no ForeverDB request, the case is named in
+`SANCTIONED` with its reason. A candidate that sends a request the reference
+does not is never sanctioned.
+
+```sh
+python3 parity/damage.py target/seams/debug/everledger
+```
+
 ## One data directory, two implementations
 
 During cutover both implementations read and write the same data directory.
