@@ -8,15 +8,17 @@ data directory. The differential runner gives each side its own copy of the
 state, so it never runs one implementation on files the other wrote, and never
 runs both at once. This does:
 
-- **Takeover.** A 40-vendor sync needs two daily attempts. One implementation
-  makes the first and the other finishes it, in both orders. The published
-  index, the journal, and the finishing attempt's output must equal those of
-  the reference making both attempts. The two attempts run at the default
-  daily cap, and again with a different cap each, as two wrappers with
-  different environments would.
+- **Takeover.** A 40-vendor sync takes two attempts. One implementation makes
+  the first and the other finishes it, in both orders. The published index,
+  the journal with its spends, and the finishing attempt's output must equal
+  those of the reference making both attempts. The attempts run a day apart
+  at the default cap, and back to back under a different cap each, as two
+  wrappers with different environments would: the second attempt then spends
+  what the first left of its own cap.
 - **Lock.** One implementation holds the sync lock mid-request while the other
-  starts a refresh on the same directory. The second must wait, send no
-  ForeverDB request, and then defer to the cooldown, in both orders.
+  starts a refresh on the same directory, both at a cap of 6. The second must
+  wait, send no ForeverDB request, and then find the window spent, in both
+  orders.
 
 CANDIDATE needs the `parity-seams` feature.
 """
@@ -31,7 +33,7 @@ from pathlib import Path
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from parity.engine import Engine, Normalizer, ROOT, snapshot
+from parity.engine import Engine, Normalizer, ROOT, elapsed, snapshot
 from parity.fixture import Fixture
 
 PAGES = ['alchemy', 'blacksmithing', 'enchanting', 'engineering', 'leatherworking', 'tailoring',
@@ -60,23 +62,20 @@ def environment(cap=None):
     return env
 
 
-def a_day_passes(directory):
-    path = Path(directory, 'vendors/foreverdb.net/attempt.json')
-    state = json.loads(path.read_text())
-    state.update(attempted_at='2020-01-01T00:00:00Z', finished_at='2020-01-01T00:00:00Z')
-    path.write_text(json.dumps(state))
+def takeover(engine, first, second, caps, gap):
+    """Two attempts on one directory, gap seconds apart, each by the named side under its own cap.
 
-
-def takeover(engine, first, second, caps):
-    """Two attempts on one directory, each by the named side under its own cap; the finishing attempt's observables."""
+    Returns the first attempt's transcript and the finishing attempt's observables.
+    """
     server = fixture()
     server.large()
     try:
         with tempfile.TemporaryDirectory(prefix='everledger-handoff-') as directory, \
                 tempfile.TemporaryDirectory(prefix='everledger-handoff-controls-') as controls:
             argv = ['refresh', 'catalogue', '--json']
+            engine.start_scenario()
             opening = engine.capture(first, argv, environment(caps[0]), server, directory, snapshot(directory), Path(controls))
-            a_day_passes(directory)
+            engine.advance(seconds=elapsed(opening) + gap)
             closing = engine.capture(second, argv, environment(caps[1]), server, directory, snapshot(directory), Path(controls))
             return opening, Normalizer().transcript(closing)
     finally:
@@ -93,11 +92,13 @@ def lock(engine, holder, waiter, holder_name, waiter_name):
                 tempfile.TemporaryDirectory(prefix='everledger-handoff-a-') as first_controls, \
                 tempfile.TemporaryDirectory(prefix='everledger-handoff-b-') as second_controls:
             argv = ['refresh', 'catalogue', '--json']
+            engine.start_scenario()
             processes = []
             for command, controls in ((holder, first_controls), (waiter, second_controls)):
                 Path(controls, 'elapsed').write_text('0.0')
                 Path(controls, 'sleeps').write_bytes(b'')
-                env = engine.environment(environment(), server, directory, Path(controls))
+                # At a cap of 6 the holder's sync spends the whole window.
+                env = engine.environment(environment('6'), server, directory, Path(controls))
                 processes.append(subprocess.Popen([*command, *argv], cwd=ROOT, env=env, stdout=subprocess.PIPE,
                                                   stderr=subprocess.PIPE))
                 if len(processes) == 1 and not server.held.wait(20):
@@ -117,7 +118,7 @@ def lock(engine, holder, waiter, holder_name, waiter_name):
             except (ValueError, KeyError):
                 deferred = {}
             check(deferred.get('deferred') == 'daily sync limit' and deferred.get('requests') == 0,
-                  f'{waiter_name} then defers to the cooldown with zero requests')
+                  f'{waiter_name} then finds the window spent and sends nothing')
     finally:
         server.release.set()
         server.close()
@@ -129,13 +130,14 @@ def main():
     candidate = [str(Path(sys.argv[1]).resolve())]
     engine = Engine(candidate)
     try:
-        # The cap of each attempt, and the requests the first one then spends on 40 vendors.
-        for caps, spent in (((None, None), 36), ((None, '5000'), 36), (('7', None), 7)):
-            _, reference = takeover(engine, ORACLE, ORACLE, caps)
+        # Each attempt's cap, the seconds between the two, and what the first then spends on 40 vendors.
+        for caps, gap, spent in (((None, None), 86400, 36), ((None, '5000'), 0, 36), (('7', '50'), 0, 7)):
+            _, reference = takeover(engine, ORACLE, ORACLE, caps, gap)
             for first, second, order in ((ORACLE, candidate, 'Rust finishes a sync Python started'),
                                          (candidate, ORACLE, 'Python finishes a sync Rust started')):
-                label = f'{order} (caps {caps[0] or "default"}, then {caps[1] or "default"})'
-                opening, closing = takeover(engine, first, second, caps)
+                label = (f'{order} (caps {caps[0] or "default"} then {caps[1] or "default"}, '
+                         f'{"a day apart" if gap else "back to back"})')
+                opening, closing = takeover(engine, first, second, caps, gap)
                 requests = sum(row['path'].startswith('/api/v1/') for row in opening['requests'])
                 check(requests == spent, f'{label}: the first attempt spends its {spent}-request cap')
                 for name in SYNC_FILES:

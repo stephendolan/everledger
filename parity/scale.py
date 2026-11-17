@@ -160,6 +160,7 @@ def main():
                 tempfile.TemporaryDirectory(prefix='everledger-scale-controls-') as controls:
             Path(directory, 'catalogue.json').write_bytes(catalogue)
             initial = snapshot(directory)
+            engine.start_scenario()
             row, sides = [' '.join(argv) + ' (whole sync)'], []
             engine.timeout = 3600
             try:

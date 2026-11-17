@@ -48,9 +48,9 @@ class Harness(unittest.TestCase):
                 if mode == 'query':
                     self.assertTrue(record['candidate']['requests'][0]['path'].endswith('&unexpected=1'))
 
-    def test_abrupt_exit_rejects_cooldown_measured_from_attempt_start(self):
+    def test_abrupt_exit_rejects_a_spend_dated_from_attempt_start(self):
         report = run([sys.executable, str(ROOT / 'parity/wrong_candidate.py'), 'cooldown'],
-                     ['foreverdb/abrupt_exit_cooldown'], progress=False)
+                     ['foreverdb/abrupt_exit_spend'], progress=False)
         self.assertFalse(report['success'])
         self.assertEqual(report['errors'], [])
         retry = next(row for row in report['steps'] if row['name'].endswith('/2/replay'))
@@ -186,11 +186,11 @@ class FullCorpus(unittest.TestCase):
                 report = run([str(ROOT / 'parity/oracle-candidate')], progress=False)
                 self.assertEqual(report['errors'], [])
                 self.assertTrue(report['success'])
-                self.assertEqual(len(report['selected']), 76)
+                self.assertEqual(len(report['selected']), 82)
                 self.assertTrue(all(row['state'] == 'identical' for row in report['steps']))
                 totals.append(len(report['steps']))
                 print(f'\noracle/oracle run {iteration + 1}: {len(report["steps"])} identical; 0 sanctioned; 0 unexplained', flush=True)
-                for scenario in ('budgeted_bootstrap', 'mid_detail_interrupt', 'abrupt_exit_cooldown', '502_retry_at_budget_boundary'):
+                for scenario in ('budgeted_bootstrap', 'mid_detail_interrupt', 'abrupt_exit_spend', 'window_expiry', '502_retry_at_budget_boundary'):
                     self.assertTrue(any(scenario in row['name'] for row in report['steps']))
                 first = next(row for row in report['steps'] if row['name'] == 'foreverdb/budgeted_bootstrap_resumes_without_activating_partial_index/1/replay')
                 result = json.loads(first['oracle']['stdout'])

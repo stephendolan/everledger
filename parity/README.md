@@ -19,10 +19,10 @@ empty help output, credential leak, or empty scenario selection. It exits 0
 only when every selected step passes. A full run takes roughly two minutes
 on this host; the self-suite runs the full corpus twice.
 
-Each source test maps to a named scenario. `--list` prints all 76 mappings;
+Each source test maps to a named scenario. `--list` prints all 82 mappings;
 the report includes the same accounting, selection, and CLI translation notes.
-An inventory check fails if the reference test set changes. All 76 methods
-have CLI equivalents, including the 27 ForeverDB methods that use internals.
+An inventory check fails if the reference test set changes. All 82 methods
+have CLI equivalents, including the 33 ForeverDB methods that use internals.
 
 ## Scoreboard and report
 
@@ -35,7 +35,7 @@ have CLI equivalents, including the 27 ForeverDB methods that use internals.
 
 Each sanctioned step prints its exemption class beside each affected field.
 The JSON report includes the table, every step, both complete transcripts, all
-differences, byte ranges with offsets, assertion errors, and the 76-test
+differences, byte ranges with offsets, assertion errors, and the 82-test
 accounting. Bytes use `{"base64": "...", "length": N}` so invalid UTF-8 and
 trailing whitespace survive. Decode with `base64.b64decode(value['base64'])`.
 Request lists retain their order and exact path/query strings. The four logged
@@ -74,22 +74,29 @@ The two subprocess calls to `lookup(refresh=True)` in `test_cache_failure_window
 become public `refresh catalogue` calls with the same two-day/eight-day cache
 states and 503 response. The refresh fixture also supplies the twelve profession
 pages. Other in-process ForeverDB behavior uses `refresh catalogue`, `vendors`,
-`status`, and the resulting cache files. The synthetic 40-vendor bootstrap
-consumes 36 requests then resumes with 5. The extraction-change case consumes
-36 full list pages before encountering a changed build on page 37. The retry
-boundary case places a retryable 502 at request 36. Those run at the default
-cap. The scenarios translated from the reference's cap tests set
-`EVERLEDGER_FOREVERDB_DAILY_REQUESTS` for both sides: caps of 1, 40, and 5000
-on the 40-vendor bootstrap, and each invalid value against `refresh`, `status`,
-and `vendors`.
+`status`, and the resulting cache files. Where the reference patches its cap,
+the scenario sets `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` for both sides. The
+synthetic 40-vendor bootstrap spends the default cap of 36, is deferred, and
+resumes with 5 a day later. The extraction-change and retry-boundary cases run
+as the reference writes them, at a cap of 1, and then at the default cap on a
+cleared cache: 36 list pages before a changed build on page 37, and a
+retryable 502 as request 36.
+
+A ForeverDB scenario's clock runs. Each invocation starts where the virtual
+time of the one before ended, `tomorrow()` moves the clock a day on, and a
+scenario can start an invocation at an instant read from the journal. The
+reference's tests hold their clock still during an attempt, so a spend there
+ends the instant it began. Here it ends seconds later, so the window scenarios
+take their boundaries from the recorded `finished_at`: one second before a
+spend is 24 hours old, and that second.
 
 SIGINT and SIGKILL cases hold the third ForeverDB response after logging its
 request, signal the running process group, wait for process exit, and release
 the server. Their next invocations compare the old index, checkpoint, journal,
-resumption, and cooldown through the CLI. The abrupt-exit case shifts the
-recorded attempt-start timestamp to 24h05m and last-start timestamp to 23h55m
-before the next origin, reproducing the
-original test's clock movement without a cap override. Connector cases load
+resumption, and spends through the CLI. The abrupt-exit case runs at a cap of
+3 and starts its next invocation one second before the killed attempt's last
+request start is 24 hours old, when its `attempted_at` already is: the spend
+must still count, and one second later it must not. Connector cases load
 an actual temporary `dynamic_credentials.py` through the documented variable.
 Import, preparation, and `Failure` exceptions use a sentinel which must be
 absent from stdout, stderr, and every data file on **both** sides.
@@ -120,6 +127,7 @@ builds contain none of these overrides:
 - `EVERLEDGER_SEAM_NOW`: UTC ISO-8601 origin with `Z` suffix. The corpus uses
   `2026-11-15T12:00:00Z`; `EVERLEDGER_PARITY_ORIGIN` gives the runner another
   origin, and a fractional one exercises sub-second age and pacing arithmetic.
+  A scenario whose clock has moved passes the moved instant.
 - `EVERLEDGER_SEAM_SLEEP_LOG`: each sleep returns immediately, appends the
   Python `repr` of its float seconds plus a newline, and advances elapsed time.
 - `EVERLEDGER_SEAM_FOREVERDB_URL`: loopback base replacing ForeverDB. A seam
@@ -165,8 +173,8 @@ bytes always score identical, even on an exemptible step.
 The self-suite checks two consecutive full oracle-versus-oracle runs with zero
 sanctioned entries, plus deliberately wrong executables for one stdout byte,
 exit status, contract stderr, request order, query strings, one cache byte,
-and the sleep log. A further wrong candidate ignores the last request start
-for abrupt-exit cooldown and must be rejected. The suite also compares the wrapper with plain `./everledger` on
+and the sleep log. A further wrong candidate dates a killed attempt's spend
+from the attempt's start instead of its last request and must be rejected. The suite also compares the wrapper with plain `./everledger` on
 three scenarios without time-dependent observations, tests clock inheritance
 in a real Python child, exercises exact-query routing and redirect refusal,
 and checks normalization and allowlist boundaries.
@@ -209,9 +217,10 @@ The `sync` suite drives `refresh catalogue` through several attempts per case:
 random profession pages for the catalogue build, a random ForeverDB dataset of
 up to 120 vendors, scripted failures at random request indices (retryable and
 plain 502, 503, 401, 302, bodies that are not JSON or not the mapped shape),
-and a day passing or not between attempts. Each attempt runs under its own
-daily cap: unset, a value from 1 to 5000 in several spellings, or now and then
-one the CLI refuses. Scripted failures are aimed at the cap's last request and
+and time passing between attempts: none, part of a 24-hour window, more than
+one, or to within a second of the instant a recorded spend expires. Each
+attempt runs under its own daily cap: unset, a value from 1 to 5000 in several
+spellings, or now and then one the CLI refuses. Scripted failures are aimed at the cap's last request and
 the one before it. Every step also asserts the fixture key is absent from
 stdout, stderr, and every file.
 
@@ -250,7 +259,8 @@ python3 scripts/check_foreverdb_recovery.py target/seams/debug/everledger
 During cutover both implementations read and write the same data directory.
 The runner gives each side its own copy of the state, so `handoff.py` covers
 what it cannot: one implementation finishing a sync the other started, in both
-orders, and one waiting on the sync lock the other holds.
+orders, a day apart and back to back under different caps, and one waiting on
+the sync lock the other holds.
 
 ```sh
 python3 parity/handoff.py target/seams/debug/everledger
