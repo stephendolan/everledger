@@ -14,7 +14,8 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
-ORACLE_COMMIT = '32f05ab'
+ORACLE_COMMIT = 'b24e183'
+CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 _reference = None
 
 
@@ -65,6 +66,8 @@ INTERNAL = [
     'connector_sync_uses_stub_module_and_browser_ua_without_key', 'env_transport_outgoing_user_agent',
     'missing_connector_module_is_clear_and_status_still_works', 'both_transports_refuse_redirects',
     'connector_exceptions_are_redacted_and_journaled',
+    'unset_daily_requests_defaults_to_36', 'valid_daily_requests_is_parsed_once',
+    'invalid_daily_requests_is_a_usage_error', 'sync_honors_raised_daily_cap_from_environment',
 ]
 TRANSLATIONS = {
     'cache_failure_window': 'The two in-process lookup(refresh=True) calls become refresh catalogue, followed by vendors; the same two-day and eight-day cache states and 503 response are retained.',
@@ -74,19 +77,24 @@ TRANSLATIONS = {
     '502_retry_at_budget_boundary_resumes_next_day': '35 successful detail requests plus the list request reach the real cap; the retryable 502 occupies request 36.',
     'key_files_precedence_and_no_key_dormancy': 'Dormant refresh and status plus separate default-file, explicit-file, and environment-key refreshes make key precedence visible in HTTP headers.',
     'observed_list_page_uses_total_and_offset': 'The observed 100-row list fixture plus synthetic offsets through 1000 are consumed through refresh at the real daily cap.',
+    'unset_daily_requests_defaults_to_36': 'With the variable unset, a 40-vendor bootstrap stops at 36 requests.',
+    'valid_daily_requests_is_parsed_once': 'A cap of 1 allows the list request alone; the next day a cap of 5000 fetches the 40 details in one attempt. That a loaded module keeps its cap when the environment changes afterwards has no CLI form: an invocation is one process.',
+    'invalid_daily_requests_is_a_usage_error': 'Each invalid value fails refresh, status, and a vendor lookup alike, before any request.',
+    'sync_honors_raised_daily_cap_from_environment': 'A cap of 40 leaves the 40-vendor bootstrap one request short and a cap of 5000 completes it in one attempt of 41. The original gives each cap its own cache directory; here the cache is cleared between the two.',
 }
 
 
 def accounting(module):
     names = sorted(name[5:] for name in dir(module.CLI) if name.startswith('test_'))
     rows = [{'test': 'CLI.test_' + name, 'scenarios': ['cli/' + name], 'not_cli_observable': None} for name in names]
-    rows += [{'test': 'ForeverDB.test_' + name, 'scenarios': ['foreverdb/' + name], 'not_cli_observable': None} for name in INTERNAL]
-    # Detect both additions and removals, rather than silently printing 71.
+    # Detect both additions and removals, rather than silently printing 76.
     import ast
     tree = ast.parse((ROOT / 'tests/test_foreverdb.py').read_text())
-    actual = {node.name[5:] for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
-    if actual != set(INTERNAL) or len(rows) != 71:
+    owners = {node.name[5:]: owner.name for owner in tree.body if isinstance(owner, ast.ClassDef)
+              for node in owner.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
+    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 76:
         raise ValueError('test inventory drift: update the corpus accounting')
+    rows += [{'test': owners[name] + '.test_' + name, 'scenarios': ['foreverdb/' + name], 'not_cli_observable': None} for name in INTERNAL]
     return rows
 
 
@@ -313,6 +321,25 @@ def replay_db(engine, module, name):
                 s.connector(code)
                 (s.cache / 'attempt.json').unlink(missing_ok=True)
                 s.sync(forbidden=(sentinel,)); s.status()
+        elif name == 'unset_daily_requests_defaults_to_36':
+            f.large(); s.env.pop(CAP, None)
+            s.sync(); s.status()
+        elif name == 'valid_daily_requests_is_parsed_once':
+            f.large(); s.env[CAP] = '1'
+            s.sync(); s.status(); s.tomorrow()
+            s.env[CAP] = '5000'
+            s.sync(); s.lookup()
+        elif name == 'invalid_daily_requests_is_a_usage_error':
+            for value in ('', 'invalid', '1.5', '0', '-1'):
+                s.env[CAP] = value
+                s.sync(); s.status(); s.lookup()
+        elif name == 'sync_honors_raised_daily_cap_from_environment':
+            f.large(); s.env[CAP] = '40'
+            s.sync(); s.status()
+            import shutil
+            shutil.rmtree(s.cache)
+            s.env[CAP] = '5000'
+            s.sync(); s.status(); s.lookup()
         else:
             raise ValueError('missing scenario: ' + name)
     finally:

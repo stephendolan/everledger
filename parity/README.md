@@ -19,10 +19,10 @@ empty help output, credential leak, or empty scenario selection. It exits 0
 only when every selected step passes. A full run takes roughly two minutes
 on this host; the self-suite runs the full corpus twice.
 
-Each source test maps to a named scenario. `--list` prints all 71 mappings;
+Each source test maps to a named scenario. `--list` prints all 76 mappings;
 the report includes the same accounting, selection, and CLI translation notes.
-An inventory check fails if the reference test set changes. All 71 methods
-have CLI equivalents, including the 23 ForeverDB methods that use internals.
+An inventory check fails if the reference test set changes. All 76 methods
+have CLI equivalents, including the 27 ForeverDB methods that use internals.
 
 ## Scoreboard and report
 
@@ -35,7 +35,7 @@ have CLI equivalents, including the 23 ForeverDB methods that use internals.
 
 Each sanctioned step prints its exemption class beside each affected field.
 The JSON report includes the table, every step, both complete transcripts, all
-differences, byte ranges with offsets, assertion errors, and the 71-test
+differences, byte ranges with offsets, assertion errors, and the 76-test
 accounting. Bytes use `{"base64": "...", "length": N}` so invalid UTF-8 and
 trailing whitespace survive. Decode with `base64.b64decode(value['base64'])`.
 Request lists retain their order and exact path/query strings. The four logged
@@ -52,7 +52,7 @@ at the default `parity/report.json` location.
 ## Replay and isolation
 
 `corpus.py` loads `tests/test_cli.py` as a fixture vocabulary and executes its
-48 test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
+49 test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
 subprocess runs. Original assertions still run against the oracle result;
 assertion failures fail the harness independently of parity. This preserves
 loops, cursor chaining, route changes, file edits, environment edits, and
@@ -77,8 +77,11 @@ pages. Other in-process ForeverDB behavior uses `refresh catalogue`, `vendors`,
 `status`, and the resulting cache files. The synthetic 40-vendor bootstrap
 consumes 36 requests then resumes with 5. The extraction-change case consumes
 36 full list pages before encountering a changed build on page 37. The retry
-boundary case places a retryable 502 at request 36. The compile-time cap stays
-36 throughout.
+boundary case places a retryable 502 at request 36. Those run at the default
+cap. The scenarios translated from the reference's cap tests set
+`EVERLEDGER_FOREVERDB_DAILY_REQUESTS` for both sides: caps of 1, 40, and 5000
+on the 40-vendor bootstrap, and each invalid value against `refresh`, `status`,
+and `vendors`.
 
 SIGINT and SIGKILL cases hold the third ForeverDB response after logging its
 request, signal the running process group, wait for process exit, and release
@@ -125,8 +128,9 @@ builds contain none of these overrides:
 Elapsed time is an f64 starting at 0.0 for each invocation. Wall time is origin
 plus elapsed, rounded half-even to microseconds; monotonic time is elapsed.
 The oracle wrapper patches `datetime.datetime.now`, `time.monotonic`, and
-`time.sleep`, then sets only `everledger_foreverdb.BASE`. No oracle source file
-is edited. The private oracle elapsed-state file shares the clock with Python
+`time.sleep`, then sets only `everledger_foreverdb.BASE`. When that module
+refuses its configuration as it loads, the wrapper leaves the report to the
+CLI. No oracle source file is edited. The private oracle elapsed-state file shares the clock with Python
 children through `oracle_hook/sitecustomize.py`; this includes
 `refresh.sh -> build_catalogue.py`, so generated catalogues use the same clock.
 Startup-hook failure exits 125 and fails the harness. These private wrapper

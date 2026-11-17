@@ -8,6 +8,10 @@ answered with help, or accepted. What an accepted command then does is the
 differential runner's concern. Every source URL points at a closed loopback
 port, so nothing leaves the machine. Exits 1 when any classification differs
 outside the sanctioned integer forms that `sanctioned` names.
+
+The daily request cap is read from the environment before the arguments are.
+Each value in `CAP_VALUES` is classified on both sides as refused or accepted,
+and a refused value must end every argv with the same bytes on both sides.
 """
 import json, os, random, shutil, socket, subprocess, sys, tempfile
 from pathlib import Path
@@ -91,12 +95,12 @@ env = dict(os.environ, TZ='UTC', EVERLEDGER_DATA_DIR=tmp, EVERLEDGER_ROSTER_URL=
            EVERLEDGER_AHLEDGER_URL=dead, EVERLEDGER_VENDOR_URL=dead, HTTP_PROXY=dead, HTTPS_PROXY=dead,
            NO_PROXY='127.0.0.1,localhost')
 for key in ('EVERLEDGER_FOREVERDB_API_KEY', 'EVERLEDGER_FOREVERDB_API_KEY_FILE', 'EVERLEDGER_FOREVERDB_VIA_CONNECTOR',
-            'EVERLEDGER_DYNAMIC_CREDENTIALS_DIR'):
+            'EVERLEDGER_DYNAMIC_CREDENTIALS_DIR', 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'):
     env.pop(key, None)
 
 
-def run(binary, argv):
-    r = subprocess.run([binary, *argv], env=env, capture_output=True, text=True, timeout=120)
+def run(binary, argv, extra=None):
+    r = subprocess.run([binary, *argv], env=dict(env, **(extra or {})), capture_output=True, text=True, timeout=120)
     return r.returncode, r.stdout, r.stderr
 
 
@@ -161,6 +165,53 @@ for argv in unique:
         exempt.append(dict(row, sanctioned=reason))
     else:
         mismatches.append(row)
+
+CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
+REFUSAL = (2, '', CAP + ' must be a positive integer\n')
+CAP_VALUES = ['1', '36', '5000', ' 40 ', '\t40\n', '\x0b40', '40\xa0', '\u200940', '+40', '4_0', '0040', '4294967296',
+              '9223372036854775807', '', ' ', 'invalid', '1.5', '40.', '0', '-0', '+0', '00', '-1', '-40', '1e3', '0x24',
+              '4 0', '_40', '40_', '4__0', '+ 40', '--40', '+-40', '\x1c40', 'None', 'true', '36,000', '٤٠', '４０', '4٠',
+              '9223372036854775808', '1' + '0' * 30]
+
+
+def cap_class(result):
+    if result == REFUSAL:
+        return 'refused'
+    return 'accepted' if result[0] == 0 and 'sage:' in result[1] else 'other'
+
+
+def cap_sanctioned(value):
+    """Name the sanctioned reason a candidate may refuse a cap that Python accepts."""
+    try:
+        number = int(value)
+    except ValueError:
+        return None
+    if any(ch.isdigit() and not ch.isascii() for ch in value):
+        return 'non-ASCII digits in the daily cap'
+    if number not in I64:
+        return 'daily cap beyond i64'
+    return None
+
+
+cap_rows, cap_exempt, cap_mismatches = [], [], []
+for value in CAP_VALUES:
+    row = {'value': value, 'oracle': cap_class(run(str(ROOT / 'everledger'), ['--help'], {CAP: value})),
+           'candidate': cap_class(run(CANDIDATE, ['--help'], {CAP: value}))}
+    cap_rows.append(row)
+    if row['oracle'] == row['candidate'] != 'other':
+        continue
+    reason = cap_sanctioned(value) if (row['oracle'], row['candidate']) == ('accepted', 'refused') else None
+    if reason:
+        cap_exempt.append(dict(row, sanctioned=reason))
+    else:
+        cap_mismatches.append(row)
+refused_everywhere = 0
+for value in ('invalid', '0', ''):
+    for argv in unique[:18] + unique[18::12]:
+        refused_everywhere += 1
+        outcomes = {'oracle': run(str(ROOT / 'everledger'), argv, {CAP: value}), 'candidate': run(CANDIDATE, argv, {CAP: value})}
+        if not outcomes['oracle'] == outcomes['candidate'] == REFUSAL:
+            cap_mismatches.append({'value': value, 'argv': argv, **{side: list(result) for side, result in outcomes.items()}})
 shutil.rmtree(tmp, ignore_errors=True)
 summary = {}
 for row in results:
@@ -172,4 +223,14 @@ for row in exempt:
 print('mismatches', len(mismatches))
 for row in mismatches:
     print('  ', json.dumps(row, ensure_ascii=False))
-sys.exit(1 if mismatches else 0)
+cap_summary = {}
+for row in cap_rows:
+    cap_summary[row['oracle']] = cap_summary.get(row['oracle'], 0) + 1
+print('daily cap values', len(cap_rows), 'oracle classes', cap_summary, '| refused value on', refused_everywhere, 'argvs')
+print('sanctioned', len(cap_exempt))
+for row in cap_exempt:
+    print('  ', json.dumps(row, ensure_ascii=False))
+print('mismatches', len(cap_mismatches))
+for row in cap_mismatches:
+    print('  ', json.dumps(row, ensure_ascii=False))
+sys.exit(1 if mismatches or cap_mismatches else 0)

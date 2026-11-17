@@ -57,7 +57,13 @@ def install():
     datetime.datetime = ClockDateTime
     time.monotonic = elapsed
     time.sleep = sleep
-    import everledger_foreverdb as db
+    from everledger_core import Failure
+    try:
+        import everledger_foreverdb as db
+    except Failure:
+        # The module refuses its configuration as it loads. The CLI imports it
+        # again and reports the failure itself.
+        return
     db.BASE = loopback(os.environ['EVERLEDGER_SEAM_FOREVERDB_URL']).rstrip('/')
 
 
