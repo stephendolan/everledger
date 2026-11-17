@@ -96,7 +96,9 @@ way:
 - Request starts are 2.1 seconds apart at any cap.
 - An interrupt during a sync closes the journal on a second thread and then
   ends the process as SIGINT ends one, whatever fails on the way, so a stopped
-  process never keeps the lock. Outside a sync SIGINT has its default effect.
+  process never keeps the lock. That thread holds the snapshot's lock until
+  the process is gone, so the syncing thread can neither write nor send after
+  it. Outside a sync SIGINT has its default effect.
 - One `flock` on `sync.lock` serializes syncs, including against the Python
   implementation on the same data directory.
 
@@ -120,6 +122,14 @@ interrupt.
 A retryable 502 is retried once. The attempt waits for it only when the wait
 is 300 seconds or less. A longer wait is recorded in the checkpoint as
 `not_before`, the attempt ends pending, and a later attempt takes it up.
+
+A cache file is read as the reference reads it. JSON `null` is no file. An
+empty container is no index and no journal to a lookup, and an unusable
+checkpoint to a sync. Anything else that is not an object is an error. Errors
+keep the reference's three kinds (`CacheError`): a file that cannot be decoded
+ends the command with exit code 1; a failure or an I/O error inside a sync
+becomes a failed result; and after a failed sync `refresh` skips only the
+kinds the reference skips.
 
 The cap is read once, before the arguments, into `config::DailyRequestCap`,
 which cannot be zero. A value that is not a positive integer ends every

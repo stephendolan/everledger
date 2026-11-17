@@ -42,12 +42,28 @@ STATUS = ['status', '--json']
 LOOKUP = ['vendors', '2604', '--json']
 NOT_JSON = b'{not json'
 NOT_UTF8 = b'\xff'
-# The reference computes with whatever a spend holds; the port needs whole, non-negative counts in a list.
+# The reference computes with whatever a spend holds, and drops an expired spend without reading it.
+# The port needs a list of spends, each with a whole, non-negative count.
 SPENDS = "the journal's spends are not a list of whole, non-negative request counts"
-SANCTIONED = {(prefix + label, 'refresh'): SPENDS
-              for prefix in ('journal: ', 'journal inside the window: ')
-              for label in ('spends is an object', 'a spend of 1.5 requests', 'a spend of -1 requests',
-                            'a spend of true requests')}
+FAILED = "the journal's failed flag is not a boolean"
+SANCTIONED = {
+    **{(prefix + label, 'refresh'): SPENDS
+       for prefix in ('journal: ', 'journal inside the window: ')
+       for label in ('spends is an object', 'a spend of 1.5 requests', 'a spend of -1 requests',
+                     'a spend of true requests')},
+    ('journal: a spend without requests', 'refresh'): SPENDS,
+    ('journal: a spend of "1" requests', 'refresh'): SPENDS,
+    ('journal: failed is 1', 'refresh'): FAILED,
+    ('journal: failed is 1', 'status'): FAILED,
+    ('journal: failed is 1', 'vendors'): FAILED,
+    ('journal: status is text', 'refresh'): "the journal's status is not a number",
+    # The reference sends a request with the text as its offset before the service's answer fails the sync.
+    ('resumed checkpoint: next_offset as text', 'refresh'): "the checkpoint's next_offset is not a number",
+    # The reference prints the text as the total.
+    ('checkpoint with the window spent: total_requests as text', 'refresh'): "the checkpoint's total_requests is not a number",
+    # The reference spends its requests and fails when it builds the next index from the old one.
+    ('index: items is a list', 'refresh'): "the index's items are not an object",
+}
 BROKEN = {'a status line that is not HTTP': b'HTTP/1.1 abc\r\n\r\n',
           'a body shorter than its Content-Length':
               b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{"data": [',
