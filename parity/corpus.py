@@ -4,6 +4,7 @@ import datetime
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -14,7 +15,7 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
-ORACLE_COMMIT = 'b24e183'
+ORACLE_COMMIT = 'd28214c'
 CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 _reference = None
 
@@ -57,7 +58,7 @@ INTERNAL = [
     'sync_and_sale_labels_and_locations', 'no_index_record_and_known_empty_after_removal',
     'daily_refresh_refetches_details_without_revision_guarantee', 'interrupted_sync_preserves_previous_index',
     'budgeted_bootstrap_resumes_without_activating_partial_index', 'mid_detail_interrupt_resumes_and_old_index_survives',
-    'unknown_labels_and_malformed_shapes_do_not_invent_provenance', 'abrupt_exit_cooldown_uses_the_last_request_start',
+    'unknown_labels_and_malformed_shapes_do_not_invent_provenance', 'abrupt_exit_spend_uses_the_last_request_start',
     'changed_extraction_discards_checkpoint_and_recovers_next_day', 'failed_index_stays_ineligible_through_incomplete_retry',
     'invalid_header_transport_error_cannot_print_key', 'key_files_precedence_and_no_key_dormancy',
     'pacing_and_failures_do_not_expose_credentials', 'observed_list_page_uses_total_and_offset',
@@ -68,13 +69,25 @@ INTERNAL = [
     'connector_exceptions_are_redacted_and_journaled',
     'unset_daily_requests_defaults_to_36', 'valid_daily_requests_is_parsed_once',
     'invalid_daily_requests_is_a_usage_error', 'sync_honors_raised_daily_cap_from_environment',
+    'window_spend_across_two_attempts_defers_at_cap', 'raised_cap_resumes_inside_window_with_remaining_budget',
+    'window_expiry_restores_only_expired_spend_then_full_budget',
+    'legacy_checkpoint_migrates_own_requests_at_finish_or_last_request',
+    'abrupt_exit_preserves_prior_window_spend', '502_retry_counts_against_remaining_window_budget',
 ]
 TRANSLATIONS = {
     'cache_failure_window': 'The two in-process lookup(refresh=True) calls become refresh catalogue, followed by vendors; the same two-day and eight-day cache states and 503 response are retained.',
     'sync_foreverdb': 'The in-process transport patch becomes refresh catalogue against real fixture HTTP with the virtual clock.',
-    'abrupt_exit_cooldown_uses_the_last_request_start': 'SIGKILL at the third held vendor request; the next invocation starts 24h05m after attempted_at and 23h55m after the last request start (the original transport advanced wall time by five minutes per successful request).',
-    'changed_extraction_discards_checkpoint_and_recovers_next_day': '36 list pages consume the real cap before the changed extraction is observed on page 37.',
-    '502_retry_at_budget_boundary_resumes_next_day': '35 successful detail requests plus the list request reach the real cap; the retryable 502 occupies request 36.',
+    'abrupt_exit_spend_uses_the_last_request_start': 'SIGKILL at the third held vendor request, at a cap of 3. The next invocation starts one second short of 24 hours after that request began, when attempted_at is already more than 24 hours old, and is deferred; one second later the spend has expired. (The original moves its clock five minutes per request and checks 23h55m.)',
+    'changed_extraction_discards_checkpoint_and_recovers_next_day': 'A cap of 1 reads one list page; the next day the second page carries another build, twice. Then, on a cleared cache, 36 list pages spend the default cap before the changed build appears on page 37, and the restarted traversal meets it again a day later.',
+    '502_retry_at_budget_boundary_resumes_next_day': 'A cap of 1 whose only request is a retryable 502. Then, on a cleared cache, the same boundary at the default cap: the list request and 35 details, with the 502 as request 36.',
+    'daily_refresh_refetches_details_without_revision_guarantee': 'The cap of 6 is set through the variable.',
+    'pacing_and_failures_do_not_expose_credentials': 'The scripted 503 is removed before the last refresh, which the original runs on its restored transport.',
+    'window_spend_across_two_attempts_defers_at_cap': 'A cap of 12 through the variable; the scenario clock moves 34 minutes between the two attempts.',
+    'raised_cap_resumes_inside_window_with_remaining_budget': 'Caps of 2 and then 6 through the variable, 34 minutes apart on the scenario clock.',
+    'window_expiry_restores_only_expired_spend_then_full_budget': 'The original holds its clock still during an attempt; here an attempt takes virtual time, so each boundary is taken from the journal: one second before the first spend is 24 hours old, that second, and the second on which the next spend expires.',
+    'legacy_checkpoint_migrates_own_requests_at_finish_or_last_request': 'The legacy journal is written into the cache directory with timestamps relative to the scenario clock.',
+    'abrupt_exit_preserves_prior_window_spend': 'SIGKILL at the held first request of the second attempt stands in for SystemExit.',
+    '502_retry_counts_against_remaining_window_budget': 'A retryable 502 is scripted at the first request of the second attempt, which is the only one its budget allows.',
     'key_files_precedence_and_no_key_dormancy': 'Dormant refresh and status plus separate default-file, explicit-file, and environment-key refreshes make key precedence visible in HTTP headers.',
     'observed_list_page_uses_total_and_offset': 'The observed 100-row list fixture plus synthetic offsets through 1000 are consumed through refresh at the real daily cap.',
     'unset_daily_requests_defaults_to_36': 'With the variable unset, a 40-vendor bootstrap stops at 36 requests.',
@@ -87,12 +100,12 @@ TRANSLATIONS = {
 def accounting(module):
     names = sorted(name[5:] for name in dir(module.CLI) if name.startswith('test_'))
     rows = [{'test': 'CLI.test_' + name, 'scenarios': ['cli/' + name], 'not_cli_observable': None} for name in names]
-    # Detect both additions and removals, rather than silently printing 76.
+    # Detect both additions and removals, rather than silently printing 82.
     import ast
     tree = ast.parse((ROOT / 'tests/test_foreverdb.py').read_text())
     owners = {node.name[5:]: owner.name for owner in tree.body if isinstance(owner, ast.ClassDef)
               for node in owner.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
-    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 76:
+    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 82:
         raise ValueError('test inventory drift: update the corpus accounting')
     rows += [{'test': owners[name] + '.test_' + name, 'scenarios': ['foreverdb/' + name], 'not_cli_observable': None} for name in INTERNAL]
     return rows
@@ -162,7 +175,8 @@ class DBScenario:
         self.stub = self.root.parent / (self.root.name + '-credentials')
         self.stub.mkdir()
         self.env['EVERLEDGER_DYNAMIC_CREDENTIALS_DIR'] = str(self.stub)
-        self.engine.start_scenario()
+        # Time runs: each invocation starts where the virtual time of the last one ended.
+        self.engine.start_scenario(flows=True)
 
     def step(self, *args, **kwargs):
         self.count += 1
@@ -179,10 +193,17 @@ class DBScenario:
         return self.step('status', '--json')
 
     def tomorrow(self):
-        path = self.cache / 'attempt.json'
-        state = json.loads(path.read_text())
-        state.update(attempted_at='2020-01-01T00:00:00Z', finished_at='2020-01-01T00:00:00Z')
-        path.write_text(json.dumps(state))
+        self.engine.advance(days=1)
+
+    def advance(self, **delta):
+        self.engine.advance(**delta)
+
+    def journal(self):
+        return json.loads((self.cache / 'attempt.json').read_text())
+
+    def clock_to(self, stamp, **delta):
+        """Start the next invocation at a journal timestamp, moved by delta."""
+        self.engine.clock = datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')) + datetime.timedelta(**delta)
 
     def connector(self, code=None):
         self.env['EVERLEDGER_FOREVERDB_API_KEY'] = ''
@@ -200,7 +221,6 @@ class DBScenario:
     def close(self):
         self.fixture.close()
         self.case.doCleanups()
-        import shutil
         shutil.rmtree(self.stub)
 
 
@@ -217,6 +237,7 @@ def replay_db(engine, module, name):
             f.forever['details']['8681']['data']['sells'].pop()
             s.tomorrow(); s.sync(); s.lookup(9001); s.lookup()
         elif name == 'daily_refresh_refetches_details_without_revision_guarantee':
+            s.env[CAP] = '6'
             s.sync(); s.sync(); s.tomorrow(); s.sync()
         elif name == 'interrupted_sync_preserves_previous_index':
             s.sync(); s.tomorrow()
@@ -234,23 +255,33 @@ def replay_db(engine, module, name):
             s.sync(); s.lookup(); s.tomorrow()
             f.forever['pages'][0]['data'][0].pop('id')
             s.sync(); s.lookup()
-        elif name == 'abrupt_exit_cooldown_uses_the_last_request_start':
+        elif name == 'abrupt_exit_spend_uses_the_last_request_start':
+            s.env[CAP] = '3'
             f.scripts = {3: {'hold': True}}
             s.sync(death=signal.SIGKILL)
-            state = json.loads((s.cache / 'attempt.json').read_text())
-            # The third start is 12:00:04Z; 23h55m later is next day 11:55:04Z.
-            # Move the journal back by 23h55m while keeping the process origin.
-            origin = datetime.datetime.fromisoformat(ORIGIN.replace('Z', '+00:00'))
-            shifted = origin - datetime.timedelta(hours=23, minutes=55)
-            state['last_request_at'] = shifted.isoformat(timespec='seconds').replace('+00:00', 'Z')
-            state['attempted_at'] = (origin - datetime.timedelta(hours=24, minutes=5)).isoformat(timespec='seconds').replace('+00:00', 'Z')
-            (s.cache / 'attempt.json').write_text(json.dumps(state))
-            f.scripts = {}; s.sync(); s.status()
+            last = s.journal()['last_request_at']
+            f.scripts = {}
+            # The killed attempt spent the cap, dated at its last request start.
+            s.clock_to(last, days=1, seconds=-1); s.sync(); s.status()
+            s.clock_to(last, days=1); s.sync()
         elif name == 'changed_extraction_discards_checkpoint_and_recovers_next_day':
+            observed = json.loads((ROOT / 'tests/fixtures/foreverdb-list.json').read_text())
+            observed['meta']['total'] = 101
+            f.forever = {'details': {}, 'pages': [observed, {'data': [{'id': 101}], 'meta': {
+                'build': 'next-build', 'total': 101, 'limit': 100, 'offset': 100, 'next': None}}]}
+            s.env[CAP] = '1'
+            s.sync(); s.tomorrow()
+            s.env.pop(CAP)
+            s.sync(); s.status(); s.sync(); s.tomorrow()
+            f.forever = json.loads((ROOT / 'tests/fixtures/foreverdb.json').read_text())
+            s.sync(); s.lookup()
+            shutil.rmtree(s.cache)
             f.large(3601, 37)
             s.sync(); s.tomorrow()
             f.forever['pages'][36]['meta']['build'] = 'next-build'
             s.sync(); s.status(); s.sync(); s.tomorrow()
+            # The restarted traversal reaches pages 36 and 37 a day later and meets the changed build again.
+            s.sync(); s.tomorrow()
             f.forever = json.loads((ROOT / 'tests/fixtures/foreverdb.json').read_text())
             s.sync(); s.lookup()
         elif name == 'failed_index_stays_ineligible_through_incomplete_retry':
@@ -274,7 +305,9 @@ def replay_db(engine, module, name):
         elif name == 'pacing_and_failures_do_not_expose_credentials':
             s.sync(); s.tomorrow()
             f.scripts = {1: {'status': 503, 'body': {'echo': 'secret-fixture'}}}
-            s.sync(forbidden=('secret-fixture',)); s.sync()
+            s.sync(forbidden=('secret-fixture',))
+            f.scripts = {}
+            s.sync()
         elif name == 'observed_list_page_uses_total_and_offset':
             f.large(1014, 11)
             f.forever['pages'][0] = json.loads((ROOT / 'tests/fixtures/foreverdb-list.json').read_text())
@@ -296,6 +329,12 @@ def replay_db(engine, module, name):
             f.scripts = {1: {'status': 502, 'body': {'retryable': True, 'retry_after': 75}}}
             s.sync()
         elif name == '502_retry_at_budget_boundary_resumes_next_day':
+            s.env[CAP] = '1'
+            f.scripts = {1: {'status': 502, 'body': {'retryable': True, 'retry_after': 60}}}
+            s.sync(); s.status(); s.tomorrow()
+            s.env.pop(CAP); f.scripts = {}
+            s.sync()
+            shutil.rmtree(s.cache)
             f.large()
             f.scripts = {36: {'status': 502, 'body': {'retryable': True, 'retry_after': 60}}}
             s.sync(); s.status(); s.tomorrow(); f.scripts = {}; s.sync()
@@ -336,10 +375,55 @@ def replay_db(engine, module, name):
         elif name == 'sync_honors_raised_daily_cap_from_environment':
             f.large(); s.env[CAP] = '40'
             s.sync(); s.status()
-            import shutil
             shutil.rmtree(s.cache)
             s.env[CAP] = '5000'
             s.sync(); s.status(); s.lookup()
+        elif name == 'window_spend_across_two_attempts_defers_at_cap':
+            s.env[CAP] = '12'
+            s.sync(); s.advance(minutes=34); s.sync(); s.sync(); s.status()
+        elif name == 'raised_cap_resumes_inside_window_with_remaining_budget':
+            s.env[CAP] = '2'
+            s.sync(); s.status(); s.advance(minutes=34)
+            s.env[CAP] = '6'
+            s.sync(); s.lookup()
+        elif name == 'window_expiry_restores_only_expired_spend_then_full_budget':
+            s.env[CAP] = '4'
+            s.sync()
+            first = s.journal()['finished_at']
+            s.advance(hours=1)
+            s.env[CAP] = '6'
+            s.sync()
+            second = s.journal()['finished_at']
+            s.clock_to(first, days=1, seconds=-1); s.sync()   # both spends are inside the window
+            s.clock_to(first, days=1); s.sync()               # the first has expired
+            s.clock_to(second, days=1); s.sync()              # and now the second
+            s.tomorrow(); s.sync(); s.status()
+        elif name == 'legacy_checkpoint_migrates_own_requests_at_finish_or_last_request':
+            for timestamp in ('finished_at', 'last_request_at'):
+                stamp = lambda **ago: (s.engine.now() - datetime.timedelta(**ago)).isoformat(timespec='seconds').replace('+00:00', 'Z')
+                for stale in ('pending.json', 'index.json'):
+                    (s.cache / stale).unlink(missing_ok=True)
+                s.cache.mkdir(parents=True, exist_ok=True)
+                (s.cache / 'attempt.json').write_text(json.dumps({
+                    'attempted_at': stamp(days=2), timestamp: stamp(minutes=34), 'requests': 2,
+                    'total_requests': 100, 'sync_id': 'legacy', 'failed': False}))
+                s.env[CAP] = '2'
+                s.sync()
+                s.env[CAP] = '6'
+                s.sync(); s.sync(); s.status()
+        elif name == 'abrupt_exit_preserves_prior_window_spend':
+            s.env[CAP] = '8'
+            s.sync()
+            f.scripts = {1: {'hold': True}}
+            s.sync(death=signal.SIGKILL)
+            f.scripts = {}
+            s.sync(); s.sync(); s.status()
+        elif name == '502_retry_counts_against_remaining_window_budget':
+            s.env[CAP] = '1'
+            s.sync()
+            s.env[CAP] = '2'
+            f.scripts = {1: {'status': 502, 'body': {'retryable': True}}}
+            s.sync(); s.sync(); s.status()
         else:
             raise ValueError('missing scenario: ' + name)
     finally:

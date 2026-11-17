@@ -1,6 +1,7 @@
 """Capture raw transcripts and compare only under the shared parity policy."""
 import base64
 import copy
+import datetime
 import difflib
 import json
 import os
@@ -240,6 +241,14 @@ def jsonable(value):
     return value
 
 
+def elapsed(transcript):
+    """Virtual seconds an invocation ran: its sleeps, added in the order its clock added them."""
+    total = 0.0
+    for line in transcript['sleep_log'].split():
+        total += float(line)
+    return total
+
+
 class Engine:
     def __init__(self, candidate, both=True):
         self.candidate = candidate
@@ -249,6 +258,8 @@ class Engine:
         self.previous = {}
         self.candidate_files = {}
         self.normalizers = [Normalizer(), Normalizer()]
+        self.clock = None   # the instant the next invocation starts at; None is ORIGIN
+        self.flows = False  # whether an invocation's virtual time carries into the next
         self.timeout = 30  # seconds one invocation may run
         self.dead_proxy = socket.socket()
         self.dead_proxy.bind(('127.0.0.1', 0))  # bound, deliberately not listening
@@ -256,10 +267,18 @@ class Engine:
     def close(self):
         self.dead_proxy.close()
 
-    def start_scenario(self):
+    def start_scenario(self, flows=False):
         self.previous = {}
         self.candidate_files = {}
         self.normalizers = [Normalizer(), Normalizer()]
+        self.clock = None
+        self.flows = flows
+
+    def now(self):
+        return self.clock or datetime.datetime.fromisoformat(ORIGIN.replace('Z', '+00:00'))
+
+    def advance(self, **delta):
+        self.clock = self.now() + datetime.timedelta(**delta)
 
     def environment(self, given, fixture, directory, controls):
         env = {k: v for k, v in given.items() if k.startswith('EVERLEDGER_') or k in ('TZ', 'PATH', 'LANG', 'LC_ALL', 'SYSTEMROOT')}
@@ -277,7 +296,8 @@ class Engine:
                    http_proxy=proxy, https_proxy=proxy, all_proxy=proxy,
                    NO_PROXY='127.0.0.1,localhost,::1', no_proxy='127.0.0.1,localhost,::1',
                    PYTHONDONTWRITEBYTECODE='1', EVERLEDGER_DATA_DIR=str(directory),
-                   EVERLEDGER_SEAM_NOW=ORIGIN, EVERLEDGER_SEAM_SLEEP_LOG=str(controls / 'sleeps'),
+                   EVERLEDGER_SEAM_NOW=ORIGIN if self.clock is None else self.clock.isoformat().replace('+00:00', 'Z'),
+                   EVERLEDGER_SEAM_SLEEP_LOG=str(controls / 'sleeps'),
                    EVERLEDGER_PARITY_ELAPSED=str(controls / 'elapsed'))
         return env
 
@@ -352,6 +372,8 @@ class Engine:
                     self.candidate_files = b['files']
         self.previous = replay['files']
         restore(directory, self.previous)
+        if self.flows:
+            self.advance(seconds=elapsed(replay))
         # Existing test assertions inspect Handler.requests. Expose only the
         # replay oracle's requests, not the comparison or alternate rendering.
         fixture.vocabulary.requests = requests_before + [row['path'] for row in replay['requests']]

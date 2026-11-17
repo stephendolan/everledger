@@ -550,6 +550,9 @@ CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 CAPS = [None, None, None, None, '1', '2', '3', '7', '36', '37', '50', '5000', '5000', ' 12 ', '+9', '1_0',
         '4294967297', 'refused']  # 2**32 + 1 is 1 to a cap narrowed to 32 bits
 REFUSED_CAPS = ['', '0', '-3', 'x', '1.5']
+# Seconds between attempts: none, part of a 24-hour window, a window, more. 'edge' starts the
+# next attempt within a second of the instant one recorded spend turns 24 hours old.
+GAPS = [0, 0, 600, 3600, 43200, 82800, 86400, 90000, 172800, 'edge', 'edge', 'edge']
 
 
 def sync_script(rng, cap):
@@ -594,7 +597,7 @@ def sync_case(engine, rng, label, commands):
                 # Outside the data directory, whose every file is checked for the key.
                 Path(keys, 'key').write_text(' secret-fixture\n')
                 env['EVERLEDGER_FOREVERDB_API_KEY_FILE'] = str(Path(keys, 'key'))
-            engine.start_scenario()
+            engine.start_scenario(flows=True)
             attempt = Path(directory, 'vendors/foreverdb.net/attempt.json')
             step = 0
             for _ in range(rng.randrange(2, 6)):
@@ -619,10 +622,16 @@ def sync_case(engine, rng, label, commands):
                         continue
                     engine.step(f'{label}/{step}', argv, env, fixture, directory, forbidden=('secret-fixture',))
                     step += 1
-                if attempt.exists() and rng.random() < 0.75:
-                    state = json.loads(attempt.read_text())
-                    state.update(attempted_at='2020-01-01T00:00:00Z', finished_at='2020-01-01T00:00:00Z')
-                    attempt.write_text(json.dumps(state))
+                gap = rng.choice(GAPS)
+                if gap != 'edge':
+                    engine.advance(seconds=gap)
+                elif attempt.exists():
+                    spends = json.loads(attempt.read_text()).get('spends') or []
+                    if spends:
+                        edge = (datetime.datetime.fromisoformat(rng.choice(spends)['finished_at'].replace('Z', '+00:00'))
+                                + datetime.timedelta(days=1, seconds=rng.choice([-1, 0, 1])))
+                        if edge > engine.now():
+                            engine.clock = edge
     finally:
         fixture.close()
 

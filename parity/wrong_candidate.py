@@ -15,14 +15,18 @@ if mode in ('request-order', 'query', 'cooldown'):
     original = core.request
     saved = {}
     if mode == 'cooldown':
+        # An attempt that died mid-request is dated from its start, not from
+        # its last request: the journal reader never sees last_request_at.
+        import json
+        import types
         import everledger_foreverdb as db
-        read = db.read
-        def ignore_last_start(name):
-            value = read(name)
-            if name == 'attempt.json' and value and 'finished_at' not in value:
+
+        def loads(text):
+            value = json.loads(text)
+            if isinstance(value, dict) and 'attempted_at' in value and not value.get('finished_at'):
                 value.pop('last_request_at', None)
             return value
-        db.read = ignore_last_start
+        db.json = types.SimpleNamespace(loads=loads, dump=json.dump)
 
     def request(url, headers=None):
         if mode == 'query' and '/events?' in url:
