@@ -45,17 +45,25 @@ fn invalid_daily_cap_precedes_every_argument_path() {
         vec!["vendors", "2604", "--json"],
         vec!["refresh", "catalogue", "--json"],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_everledger"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_everledger"));
+        command
             .args(&args)
             .env("EVERLEDGER_DATA_DIR", &directory)
             .env("EVERLEDGER_ROSTER_URL", &url)
             .env("EVERLEDGER_AHLEDGER_URL", &url)
             .env("EVERLEDGER_VENDOR_URL", &url)
+            .env_remove("EVERLEDGER_FOREVERDB_API_KEY")
+            .env_remove("EVERLEDGER_FOREVERDB_API_KEY_FILE")
+            .env_remove("EVERLEDGER_FOREVERDB_VIA_CONNECTOR")
+            .env("EVERLEDGER_FOREVERDB_DAILY_REQUESTS", "invalid");
+        // Only a seam build can aim ForeverDB at the fixture. Any other build
+        // runs without a ForeverDB credential, so a regression here cannot
+        // reach the real service.
+        #[cfg(feature = "parity-seams")]
+        command
             .env("EVERLEDGER_SEAM_FOREVERDB_URL", &url)
-            .env("EVERLEDGER_FOREVERDB_API_KEY", "fixture")
-            .env("EVERLEDGER_FOREVERDB_DAILY_REQUESTS", "invalid")
-            .output()
-            .expect("run everledger");
+            .env("EVERLEDGER_FOREVERDB_API_KEY", "fixture");
+        let output = command.output().expect("run everledger");
         assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(output.stdout.is_empty(), "{args:?}");
         assert_eq!(
