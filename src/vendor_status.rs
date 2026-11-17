@@ -113,9 +113,12 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
     } else {
         None
     };
-    let active = completed
-        .as_ref()
-        .filter(|i| crate::foreverdb::usable_index(i, attempt.as_ref(), context));
+    let active = match &completed {
+        Some(index) if crate::foreverdb::usable_index(index, attempt.as_ref(), context)? => {
+            Some(index)
+        }
+        Some(_) | None => None,
+    };
     let state = if attempt.as_ref().is_some_and(|a| a.failed) {
         if active.is_some() {
             ForeverdbState::ServingPrevious

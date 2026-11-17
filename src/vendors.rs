@@ -1,3 +1,4 @@
+use crate::foreverdb::{CacheError, CacheResult};
 use crate::{
     Context, Copper, Failure, Result,
     catalogue::{Item, OrderedMap, nullable},
@@ -227,7 +228,7 @@ pub fn lookup(item_id: i64, context: &Context<'_>) -> Result<VendorAnswer> {
     if crate::foreverdb::transport::Transport::select(context.config)?.is_some()
         && crate::foreverdb::attempt(context)?.is_some_and(|a| a.failed)
     {
-        ninja_fallback(&mut answer, context)?;
+        ninja_fallback(&mut answer, context).map_err(CacheError::into_failure)?;
     }
     Ok(VendorAnswer::Ninja(answer))
 }
@@ -375,8 +376,8 @@ fn status(e: &Failure) -> Result<Option<i64>> {
         .transpose()
         .map(Option::flatten)
 }
-fn fetch(item_id: i64, context: &Context<'_>) -> Result<NinjaAnswer> {
-    let get = |suffix: &str| -> Result<Option<(Document, Option<String>)>> {
+fn fetch(item_id: i64, context: &Context<'_>) -> CacheResult<NinjaAnswer> {
+    let get = |suffix: &str| -> CacheResult<Option<(Document, Option<String>)>> {
         match context.http.request(
             &Request::get(format!(
                 "{}/items/{item_id}.{suffix}",
@@ -392,7 +393,7 @@ fn fetch(item_id: i64, context: &Context<'_>) -> Result<NinjaAnswer> {
                 if status(&e)? == Some(404) {
                     Ok(None)
                 } else {
-                    Err(e)
+                    Err(CacheError::Failure(e))
                 }
             }
         }
@@ -444,7 +445,7 @@ fn fetch(item_id: i64, context: &Context<'_>) -> Result<NinjaAnswer> {
                 .collect(),
         )
     };
-    NinjaAnswer::decode(Document::object([
+    Ok(NinjaAnswer::decode(Document::object([
         (
             "item",
             Document::object([
@@ -466,9 +467,9 @@ fn fetch(item_id: i64, context: &Context<'_>) -> Result<NinjaAnswer> {
             "backend_url",
             Document::from(context.config.vendor_url.clone()),
         ),
-    ]))
+    ]))?)
 }
-fn write_cache(path: &std::path::Path, data: &Document) -> Result<()> {
+fn write_cache(path: &std::path::Path, data: &Document) -> CacheResult<()> {
     let parent = path
         .parent()
         .ok_or_else(|| Failure::error("cache path has no parent"))?;
@@ -489,15 +490,24 @@ fn write_cache(path: &std::path::Path, data: &Document) -> Result<()> {
     Ok(())
 }
 pub fn ninja_lookup(item_id: i64, refresh: bool, context: &Context<'_>) -> Result<NinjaAnswer> {
+    cached_ninja_lookup(item_id, refresh, context).map_err(CacheError::into_failure)
+}
+fn cached_ninja_lookup(
+    item_id: i64,
+    refresh: bool,
+    context: &Context<'_>,
+) -> CacheResult<NinjaAnswer> {
     let path = context
         .config
         .data_dir
         .join("vendors")
         .join(BACKEND)
         .join(format!("{item_id}.json"));
-    let cached = match std::fs::read_to_string(&path) {
-        Ok(s) => {
-            let d = crate::document::parse(&s)?;
+    let cached = match std::fs::read(&path) {
+        Ok(bytes) => {
+            let text =
+                String::from_utf8(bytes).map_err(|e| Failure::shape("ninja cache text", e))?;
+            let d = crate::document::parse(&text)?;
             if d.truthy() {
                 if cache_matches(&d, context)? {
                     Some(NinjaAnswer::decode(d)?)
@@ -524,17 +534,19 @@ pub fn ninja_lookup(item_id: i64, refresh: bool, context: &Context<'_>) -> Resul
                 write_cache(&path, a.payload.document())?;
                 a
             }
-            Err(e) => match cached {
-                Some(c)
-                    if crate::time::age(Some(&c.payload.view().fetched_at), context.clock)
-                        .is_some_and(|a| a <= 7 * 86400)
-                        && status(&e)?.is_none_or(|s| s >= 500) =>
-                {
+            Err(CacheError::Failure(error)) => match cached {
+                Some(c) => {
+                    let age = crate::time::age(Some(&c.payload.view().fetched_at), context.clock)
+                        .ok_or_else(|| Failure::shape("ninja cache", "invalid fetched_at"))?;
+                    if age > 7 * 86400 || status(&error)?.is_some_and(|s| s < 500) {
+                        return Err(CacheError::Failure(error));
+                    }
                     stale = true;
                     c
                 }
-                Some(_) | None => return Err(e),
+                None => return Err(CacheError::Failure(error)),
             },
+            Err(error) => return Err(error),
         }
     };
     let mut seen = 0;
@@ -572,6 +584,7 @@ struct CacheOrigin {
     backend_url: Option<String>,
 }
 fn cache_matches(document: &Document, context: &Context<'_>) -> Result<bool> {
+    crate::foreverdb::cache_object(document, "ninja cache origin")?;
     let origin: CacheOrigin = document.decode("ninja cache origin")?;
     Ok(origin.backend_url.as_deref() == Some(&context.config.vendor_url))
 }
@@ -597,13 +610,14 @@ fn cache_paths(context: &Context<'_>) -> Result<Vec<std::path::PathBuf>> {
     paths.sort();
     Ok(paths)
 }
-fn ninja_fallback(answer: &mut NinjaAnswer, context: &Context<'_>) -> Result<()> {
+fn ninja_fallback(answer: &mut NinjaAnswer, context: &Context<'_>) -> CacheResult<()> {
     if crate::time::age(Some(&answer.payload.view().fetched_at), context.clock)
-        .is_some_and(|a| a > 7 * 86400)
+        .ok_or_else(|| Failure::shape("ninja cache", "invalid fetched_at"))?
+        > 7 * 86400
     {
-        return Err(Failure::unreachable(
+        return Err(CacheError::Failure(Failure::unreachable(
             "ForeverDB sync failed; ninja fallback cache is older than 7d",
-        ));
+        )));
     }
     answer.payload.set("stale", true)?;
     let mut sources = crate::provenance::sources(answer.payload.document())?;
@@ -627,15 +641,15 @@ pub fn refresh_cached(
 ) -> Result<(Vec<Source>, crate::foreverdb::SyncResult)> {
     let synced = crate::foreverdb::sync(context)?;
     let index_sources = (|| {
-        crate::foreverdb::active_index(context)?
-            .map(|index| crate::foreverdb::index_sources(&index, context))
+        crate::foreverdb::cached_active_index(context)?
+            .map(|index| crate::foreverdb::cached_index_sources(&index, context))
             .transpose()
     })();
     match index_sources {
         Ok(Some(sources)) => return Ok((sources, synced)),
         Ok(None) => {}
-        Err(error) if !synced.view().failed => return Err(error),
-        Err(_) => {}
+        Err(CacheError::Failure(_) | CacheError::Io(_)) if synced.view().failed => {}
+        Err(error) => return Err(error.into_failure()),
     }
     let paths = cache_paths(context)?;
     let mut used = vec![];
@@ -646,16 +660,16 @@ pub fn refresh_cached(
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| Failure::shape("ninja cache path", "invalid item id"))?;
         let refreshed = (|| {
-            let mut answer = ninja_lookup(id, true, context)?;
+            let mut answer = cached_ninja_lookup(id, true, context)?;
             if synced.view().failed {
                 ninja_fallback(&mut answer, context)?;
             }
-            sources(&answer)
+            sources(&answer).map_err(CacheError::Invalid)
         })();
         match refreshed {
             Ok(sources) => used.extend(sources),
-            Err(error) if !synced.view().failed => return Err(error),
-            Err(_) => {}
+            Err(CacheError::Failure(_)) if synced.view().failed => {}
+            Err(error) => return Err(error.into_failure()),
         }
     }
     Ok((used, synced))
