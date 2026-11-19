@@ -5,99 +5,119 @@ use crate::{
 };
 use clap::{CommandFactory, FromArgMatches};
 use std::{ffi::OsString, io::Write};
-const EPILOG: &str = "Selectors: --char accepts a unique first or full character name.\nTimes: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,\nuntil exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.\nJSON uses API field names, integer copper totals and UTC ISO timestamps.\nHuman unknown values print as unknown; JSON keeps nulls and full provenance.\nHuman booleans print as yes/no; JSON keeps booleans.\nHuman output ends with one source: summary of sources, save/data times and ages.\nStale data has one stale: notice after all rows, before the source summary.\nOld journal saves show their age without a stale notice or exit-code change.\nJSON matched/returned counts describe the accompanying filtered array;\naggregates count all pages, events count the current page, bootstrap counts zero.\nExit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.\nJournal save age is normal: old saves alone do not change exit codes.\nPrice/margins AH freshness limit: 15m; catalogue advisory age: 14d.\nListings use the roster scan limit (15m). Positions apply both market/scan limits.\nVendor queries cache snapshots until refresh catalogue; after 1d they are stale.\nOn refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.\nNinja sale/price claims are Classic 1.12 baseline; vendor sightings may be seen\nin Forever. ForeverDB maps its own sell-row labels separately from sightings.\nNinja quantity/faction are unavailable; ForeverDB retains stack and side.\nAll zones appear, including Horde; faction filtering is unavailable. Listed prices are not used in craft margins.\nConfiguration: standalone everledger binary.\nOnly connector transport needs python3 and the dynamic_credentials helper.\nEVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).\nEVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN\nor EVERLEDGER_ROSTER_TOKEN_FILE for bearer authentication.\nEVERLEDGER_MARKET defaults to forever.pvp.alliance.us.\nEVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.\nEVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.\nSet EVERLEDGER_FOREVERDB_API_KEY or EVERLEDGER_FOREVERDB_API_KEY_FILE\n(default: EVERLEDGER_DATA_DIR/foreverdb-api-key), or select vault transport with\nEVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb (no raw key required).\nEVERLEDGER_DYNAMIC_CREDENTIALS_DIR defaults to\n/opt/muse/skills/custom-connector-setup/bin; connector mode needs dynamic_credentials.\nBoth transports send a browser User-Agent and refuse redirects.\nNinja stays active until a key or connector is configured and a sync completes.\nThen ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja\nretained as fallback. Data from ForeverDB.net (https://foreverdb.net).\nRefresh downloads profession pages and refreshes cached ninja IDs, or syncs\nForeverDB vendors only: rolling 24-hour request budget across attempts.\nDefault cap 36 requests; paced below 30/minute.\nOverride with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).\nList pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014\ndetail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).\nAt the default 36/day, bootstrap takes at least 29 daily attempts; retries add requests.\nRetryable HTTP 502 gets one retry within the daily cap; in-attempt waits are\n60-300s. Longer waits stay pending until a later attempt. Unfinished syncs resume; only complete indexes activate.\nForeverDB prices are per item only when stack price divides evenly by stack;\notherwise show the total and quantity, e.g. 10c per 3. Limited stock is marked.\nWith ForeverDB active, vendors adds a plain fallback-coverage count when the\nninja cache knows additional distinct sellers; --in applies to both sets.\nStatus names the transport and vendor/item record counts for each backend.\nStatus and vendor lookups never make ForeverDB requests.\n";
 #[derive(clap::Parser, Debug)]
-#[command(name="everledger",about="everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.",after_help=EPILOG,disable_help_subcommand=true)]
+#[command(name="everledger",about="everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.",after_help=help_epilogue(),disable_help_subcommand=true)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
 }
-#[derive(clap::Subcommand, Debug, Clone)]
-pub enum Command {
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct OutputArgs {
+    #[arg(long = "json", help = "one JSON document using API field names")]
+    pub json: bool,
+}
+
+macro_rules! commands {
+    ($( $(#[$meta:meta])* $variant:ident($module:ident), )*) => {
+        #[derive(clap::Subcommand, Debug, Clone)]
+        pub enum Command {
+            $( $(#[$meta])* $variant(commands::$module::Args), )*
+        }
+        impl Command {
+            pub fn as_json(&self) -> bool {
+                match self {
+                    $( Self::$variant(args) => args.output.json, )*
+                }
+            }
+        }
+        pub fn dispatch(command: &Command, context: &Context<'_>) -> Result<CommandOutput> {
+            match command {
+                $( Command::$variant(args) => commands::$module::run(args, context), )*
+            }
+        }
+    };
+}
+
+commands! {
     #[command(name = "price", about = "AHledger quote plus vendor listed prices")]
-    Price(crate::commands::price::Args),
+    Price(price),
     #[command(
         name = "recipe",
         about = "Catalogue facts and roster known-by annotation"
     )]
-    Recipe(crate::commands::recipe::Args),
+    Recipe(recipe),
     #[command(name = "bridge", about = "Catalogue skill-up bands across a range")]
-    Bridge(crate::commands::bridge::Args),
+    Bridge(bridge),
     #[command(
         name = "margins",
         about = "AHledger craft margins; optional roster recipe/level scope"
     )]
-    Margins(crate::commands::margins::Args),
+    Margins(margins),
     #[command(
         name = "vendors",
         about = "Vendor listed prices/locations; ForeverDB includes faction"
     )]
-    Vendors(crate::commands::vendors::Args),
+    Vendors(vendors),
     #[command(
         name = "char",
         about = "Characters, profession ranks and known recipes"
     )]
-    Char(crate::commands::char::Args),
+    Char(char),
     #[command(
         name = "listings",
         about = "Recorded live auction listings and AHledger floor comparison"
     )]
-    Listings(crate::commands::listings::Args),
+    Listings(listings),
     #[command(
         name = "positions",
         about = "Inventory holdings/listings and AHledger floor; basis unknown without assignments"
     )]
-    Positions(crate::commands::positions::Args),
+    Positions(positions),
     #[command(name = "sales", about = "Sales proceeds (defaults to auction)")]
-    Sales(crate::commands::sales::Args),
+    Sales(sales),
     #[command(name = "purchases", about = "Auction and vendor purchases")]
-    Purchases(crate::commands::purchases::Args),
+    Purchases(purchases),
     #[command(
         name = "expirations",
         about = "Expired auctions with market repost inputs"
     )]
-    Expirations(crate::commands::expirations::Args),
+    Expirations(expirations),
     #[command(
         name = "net",
         about = "Item auction cash/count diagnostic; profit basis stays unknown"
     )]
-    Net(crate::commands::net::Args),
+    Net(net),
     #[command(
         name = "events",
         about = "Typed journal feed; prints next_cursor, has_more and service checkpoint"
     )]
-    Events(crate::commands::events::Args),
+    Events(events),
     #[command(
         name = "status",
         about = "Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors"
     )]
-    Status(crate::commands::status::Args),
+    Status(status),
     #[command(
         name = "refresh",
         about = "Rebuild catalogue and refresh the configured vendor backend"
     )]
-    Refresh(crate::commands::refresh::Args),
+    Refresh(refresh),
 }
-impl Command {
-    pub fn as_json(&self) -> bool {
-        match self {
-            Self::Price(args) => args.json,
-            Self::Recipe(args) => args.json,
-            Self::Bridge(args) => args.json,
-            Self::Margins(args) => args.json,
-            Self::Vendors(args) => args.json,
-            Self::Char(args) => args.json,
-            Self::Listings(args) => args.json,
-            Self::Positions(args) => args.json,
-            Self::Sales(args) => args.json,
-            Self::Purchases(args) => args.json,
-            Self::Expirations(args) => args.json,
-            Self::Net(args) => args.json,
-            Self::Events(args) => args.json,
-            Self::Status(args) => args.json,
-            Self::Refresh(args) => args.json,
-        }
-    }
+
+fn help_epilogue() -> String {
+    format!(
+        include_str!("cli_help.txt"),
+        market_minutes = crate::market::FRESHNESS_SECONDS / 60,
+        catalogue_days = crate::catalogue::ADVISORY_DAYS,
+        data_dir_name = crate::config::DATA_DIR_NAME,
+        roster_url = crate::config::DEFAULT_ROSTER_URL,
+        market = crate::config::DEFAULT_MARKET,
+        ahledger_url = crate::config::DEFAULT_AHLEDGER_URL,
+        vendor_url = crate::config::DEFAULT_VENDOR_URL,
+        key_file = crate::config::DEFAULT_KEY_FILE,
+        dynamic_credentials_dir = crate::config::DEFAULT_DYNAMIC_CREDENTIALS_DIR,
+        daily_cap = crate::config::DEFAULT_DAILY_REQUESTS,
+    )
 }
 pub fn parser() -> clap::Command {
     Cli::command().term_width(80).disable_colored_help(true)
@@ -151,25 +171,6 @@ pub fn parse_from(
     }
     Cli::from_arg_matches(&matches).map(|cli| cli.command)
 }
-pub fn dispatch(command: &Command, context: &Context<'_>) -> Result<CommandOutput> {
-    match command {
-        Command::Price(args) => commands::price::run(args, context),
-        Command::Recipe(args) => commands::recipe::run(args, context),
-        Command::Bridge(args) => commands::bridge::run(args, context),
-        Command::Margins(args) => commands::margins::run(args, context),
-        Command::Vendors(args) => commands::vendors::run(args, context),
-        Command::Char(args) => commands::char::run(args, context),
-        Command::Listings(args) => commands::listings::run(args, context),
-        Command::Positions(args) => commands::positions::run(args, context),
-        Command::Sales(args) => commands::sales::run(args, context),
-        Command::Purchases(args) => commands::purchases::run(args, context),
-        Command::Expirations(args) => commands::expirations::run(args, context),
-        Command::Net(args) => commands::net::run(args, context),
-        Command::Events(args) => commands::events::run(args, context),
-        Command::Status(args) => commands::status::run(args, context),
-        Command::Refresh(args) => commands::refresh::run(args, context),
-    }
-}
 pub fn execute(command: &Command, context: &Context<'_>, stdout: &mut dyn Write) -> ExitCode {
     let result = dispatch(command, context).and_then(|output| {
         let rendered = crate::human::emit(
@@ -181,11 +182,7 @@ pub fn execute(command: &Command, context: &Context<'_>, stdout: &mut dyn Write)
             context.clock,
         )?;
         stdout.write_all(rendered.as_bytes())?;
-        Ok(if output.stale {
-            ExitCode::Stale
-        } else {
-            output.code
-        })
+        Ok(output.exit_code())
     });
     match result {
         Ok(code) => code,

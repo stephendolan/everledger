@@ -101,70 +101,40 @@ pub struct BackendStatusData {
 }
 pub type BackendStatus = Payload<BackendStatusData>;
 pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Source>)> {
-    let transport = crate::foreverdb::transport::Transport::select(context.config)?;
-    let configured = transport.is_some();
-    let completed = if configured {
-        crate::foreverdb::index(context)?
-    } else {
-        None
+    let mut backend =
+        super::BackendState::load(context).map_err(crate::foreverdb::CacheError::into_failure)?;
+    let state = backend
+        .state(context)
+        .map_err(crate::foreverdb::CacheError::into_failure)?;
+    let completed = backend.completed.as_ref().map(Payload::view);
+    let transport = backend.transport.as_ref();
+    let foreverdb = Counts {
+        record_count: completed.map_or(0, |i| i.record_count),
+        item_count: completed.map_or(0, |i| i.item_count),
     };
-    let attempt = if configured {
-        crate::foreverdb::attempt(context)?
-    } else {
-        None
-    };
-    let active = match &completed {
-        Some(index) if crate::foreverdb::usable_index(index, attempt.as_ref(), context)? => {
-            Some(index)
-        }
-        Some(_) | None => None,
-    };
-    let state = if attempt.as_ref().is_some_and(|a| a.failed) {
-        if active.is_some() {
-            ForeverdbState::ServingPrevious
-        } else {
-            ForeverdbState::NinjaFallback
-        }
-    } else if !configured {
-        ForeverdbState::NotConfigured
-    } else if active.is_some() {
-        ForeverdbState::Synced
-    } else {
-        ForeverdbState::Awaiting
-    };
+    let attempt = backend.attempt();
+    let active = backend.serving_index(state);
     let info = Document::object([
         ("backend", crate::foreverdb::BACKEND.into()),
         ("state", state.name().into()),
-        ("transport", transport.as_ref().map(|t| t.name()).into()),
+        ("transport", transport.map(|t| t.name()).into()),
         (
             "last_sync_at",
-            completed
-                .as_ref()
-                .map(|i| i.view().fetched_at.clone())
-                .into(),
+            completed.map(|i| i.fetched_at.clone()).into(),
         ),
-        (
-            "record_count",
-            completed
-                .as_ref()
-                .map_or(0, |i| i.view().record_count)
-                .into(),
-        ),
-        (
-            "item_count",
-            completed.as_ref().map_or(0, |i| i.view().item_count).into(),
-        ),
+        ("record_count", foreverdb.record_count.into()),
+        ("item_count", foreverdb.item_count.into()),
         (
             "last_attempt_at",
-            attempt.as_ref().and_then(|a| a.attempted_at.clone()).into(),
+            attempt.and_then(|a| a.attempted_at.clone()).into(),
         ),
         (
             "last_attempt_requests",
-            Document::from_typed(&attempt.as_ref().map_or(0, |a| a.requests))?,
+            Document::from_typed(&attempt.map_or(0, |a| a.requests))?,
         ),
         (
             "pending",
-            (configured
+            (transport.is_some()
                 && crate::foreverdb::cache_dir(context)
                     .join("pending.json")
                     .exists())
@@ -173,41 +143,27 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
     ]);
     let mut cached = vec![];
     for path in super::cache_paths(context)? {
-        let document = crate::document::parse(&std::fs::read_to_string(path)?)?;
-        if super::cache_matches(&document, context)? {
+        if let Some(document) = super::read_ninja_cache(&path, super::NinjaRead::Status, context)
+            .map_err(crate::foreverdb::CacheError::into_failure)?
+        {
             cached.push(document.decode::<super::CachedCoverage>("ninja status cache")?);
         }
     }
-    let ninja_rows = cached
-        .iter()
-        .flat_map(|c| c.vendors.iter().flatten())
-        .collect::<Vec<_>>();
+    let ninja_rows = || cached.iter().flat_map(|c| c.vendors.iter().flatten());
     let ninja = Counts {
-        record_count: ninja_rows
-            .iter()
+        record_count: ninja_rows()
             .map(|r| r.npc_id)
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
         item_count: cached.len(),
     };
-    let foreverdb = Counts {
-        record_count: completed.as_ref().map_or(0, |i| i.view().record_count),
-        item_count: completed.as_ref().map_or(0, |i| i.view().item_count),
-    };
     let coverage = Document::object([
         (super::BACKEND, ninja.document()),
         (crate::foreverdb::BACKEND, foreverdb.document()),
     ]);
-    let (summary, sources) = match active {
+    let (mut summary, counts, sources) = match active {
         Some(index) => {
-            let mut counts = [0usize; 3];
-            for row in index.view().items.0.iter().flat_map(|(_, e)| &e.vendors) {
-                match row.basis {
-                    crate::foreverdb::mapping::Basis::Seen => counts[0] += 1,
-                    crate::foreverdb::mapping::Basis::Baseline => counts[1] += 1,
-                    crate::foreverdb::mapping::Basis::Unverified => counts[2] += 1,
-                }
-            }
+            let counts = super::basis_counts(super::index_bases(index));
             let summary = Document::object([
                 ("source", "vendors".into()),
                 ("backend", crate::foreverdb::BACKEND.into()),
@@ -216,23 +172,15 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
                 ("published_at", index.view().published_at.as_deref().into()),
                 ("last_sync_at", index.view().fetched_at.clone().into()),
                 ("record_count", index.view().record_count.into()),
-                ("seen", counts[0].into()),
-                ("baseline", counts[1].into()),
-                ("unverified", counts[2].into()),
-                ("foreverdb", info),
-                ("coverage", coverage),
             ]);
-            (summary, crate::foreverdb::index_sources(index, context)?)
+            (
+                summary,
+                counts,
+                crate::foreverdb::index_sources(index, attempt, context)?,
+            )
         }
         None => {
-            let mut counts = [0usize; 3];
-            for row in ninja_rows {
-                match row.basis {
-                    super::Basis::Seen => counts[0] += 1,
-                    super::Basis::Baseline => counts[1] += 1,
-                    super::Basis::Unverified => counts[2] += 1,
-                }
-            }
+            let counts = super::basis_counts(ninja_rows().map(|r| r.basis));
             let published = cached
                 .iter()
                 .filter_map(|c| c.published_at.as_deref().filter(|s| !s.is_empty()))
@@ -242,19 +190,23 @@ pub fn backend_status(context: &Context<'_>) -> Result<(BackendStatus, Vec<Sourc
                 ("backend", super::BACKEND.into()),
                 ("cache_items", cached.len().into()),
                 ("published_at", published.into()),
-                ("seen", counts[0].into()),
-                ("baseline", counts[1].into()),
-                ("unverified", counts[2].into()),
-                ("foreverdb", info),
-                ("coverage", coverage),
             ]);
             let mut s = source(super::BACKEND, published, context.clock)?;
             s.set(
                 "detail",
                 crate::human::status::ninja_detail(cached.len(), state),
             )?;
-            (summary, vec![s])
+            (summary, counts, vec![s])
         }
     };
+    for (key, value) in [
+        ("seen", counts[0].into()),
+        ("baseline", counts[1].into()),
+        ("unverified", counts[2].into()),
+        ("foreverdb", info),
+        ("coverage", coverage),
+    ] {
+        summary.set(key, value)?;
+    }
     Ok((Payload::decode(summary, "vendor backend status")?, sources))
 }

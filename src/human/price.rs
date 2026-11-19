@@ -47,7 +47,7 @@ pub fn render(id: i64, q: &MarketQuote, r: &RoundedQuote, vendors: &VendorAnswer
             }
         }
         VendorAnswer::Ninja(a) => {
-            let rows = a.coverage().rows();
+            let rows = a.rows();
             if !rows.is_empty() {
                 lines.push(format!(
                     "vendor: listed price {} | 1.12 baseline sale/price; purchase quantity unknown",

@@ -2,6 +2,7 @@
 
 pub mod catalogue;
 pub mod catalogue_build;
+pub mod catalogue_check;
 pub mod cli;
 pub mod clock;
 pub mod commands;

@@ -3,8 +3,8 @@
 pub struct Args {
     #[arg(allow_negative_numbers=true,required=true,num_args=1..)]
     pub item: Vec<String>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Copper, Result,
@@ -13,7 +13,6 @@ use crate::{
     document::Document,
     http::Payload,
     primitives::{Scalar, rounded_copper},
-    vendors::VendorAnswer,
 };
 use serde::Deserialize;
 #[derive(Debug, Deserialize)]
@@ -76,7 +75,8 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     )?;
     source.set(
         "stale",
-        crate::time::age(latest.observed_at.as_deref(), context.clock).is_none_or(|a| a > 900),
+        crate::time::age(latest.observed_at.as_deref(), context.clock)
+            .is_none_or(|a| a > crate::market::FRESHNESS_SECONDS),
     )?;
     let field = |key| {
         data.document()
@@ -107,28 +107,14 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         ("sources", Document::Array(vec![source.into_document()])),
     ]);
     let vendors = crate::vendors::lookup(item.id, context)?;
-    match &vendors {
-        VendorAnswer::Ninja(a) => {
-            quote.set("vendors", a.sellers_document()?)?;
-            quote.set("vendor_reason", Document::from(a.reason()))?;
-            let mut sources = crate::provenance::sources(&quote)?;
-            sources.extend(crate::vendors::sources(a)?);
-            quote.set(
-                "sources",
-                Document::Array(sources.into_iter().map(|s| s.into_document()).collect()),
-            )?;
-        }
-        VendorAnswer::Foreverdb(a) => {
-            quote.set("vendors", a.sellers_document()?)?;
-            quote.set("vendor_reason", Document::from(a.reason()))?;
-            let mut sources = crate::provenance::sources(&quote)?;
-            sources.extend(a.sources()?);
-            quote.set(
-                "sources",
-                Document::Array(sources.into_iter().map(Payload::into_document).collect()),
-            )?;
-        }
-    }
+    quote.set("vendors", vendors.sellers_document()?)?;
+    quote.set("vendor_reason", Document::from(vendors.reason()))?;
+    let mut sources = crate::provenance::sources(&quote)?;
+    sources.extend(vendors.sources()?);
+    quote.set(
+        "sources",
+        Document::Array(sources.into_iter().map(Payload::into_document).collect()),
+    )?;
     let lines = crate::human::price::render(item.id, v, &rounded, &vendors);
     crate::catalogue::disclose_item_source(&mut quote, Some(&item), context)?;
     let stale = crate::provenance::is_stale(&crate::provenance::sources(&quote)?);

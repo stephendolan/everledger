@@ -16,15 +16,3 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 ureq = { version = "=3.5.2", default-features = false, features = ["rustls", "platform-verifier"] }
 jiff = { version = "=0.2.45", features = ["serde"] }
-
-[[test]]
-name = "golden"
-path = "rust-tests/golden.rs"
-
-[[test]]
-name = "boundaries"
-path = "rust-tests/boundaries.rs"
-
-[[test]]
-name = "oracle_probe"
-path = "rust-tests/oracle_probe.rs"

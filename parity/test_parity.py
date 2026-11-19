@@ -8,9 +8,19 @@ import tempfile
 import unittest
 import urllib.request
 
-from parity.corpus import DBScenario, load_cli
+from parity.corpus import DBScenario, ORACLE_COMMIT, load_cli
+from parity.oracle import ORACLE_FILES
 from parity.engine import Engine, Normalizer, ORIGIN, ROOT, compare, snapshot
 from parity.run import run
+
+
+class Reference(unittest.TestCase):
+    def test_implementation_matches_oracle_commit(self):
+        for name in ORACLE_FILES:
+            with self.subTest(file=name):
+                original = subprocess.run(['git', 'show', f'{ORACLE_COMMIT}:{name}'],
+                                          cwd=ROOT, capture_output=True, check=True).stdout
+                self.assertEqual((ROOT / 'python' / name).read_bytes(), original)
 
 
 class Harness(unittest.TestCase):
@@ -67,7 +77,7 @@ class Harness(unittest.TestCase):
                 initial = snapshot(self.scenario.root)
                 a = self.engine.capture([sys.executable, str(ROOT / 'parity/oracle.py')], args,
                                         self.scenario.env, fixture, self.scenario.root, initial, Path(temp))
-                b = self.engine.capture([str(ROOT / 'everledger')], args, self.scenario.env,
+                b = self.engine.capture([str(ROOT / 'python/everledger')], args, self.scenario.env,
                                         fixture, self.scenario.root, initial, Path(temp), plain=True)
                 state, diffs = compare(a, b)
                 self.assertEqual((state, diffs), ('identical', []))
@@ -78,7 +88,7 @@ class Harness(unittest.TestCase):
             (controls / 'elapsed').write_text('0.0')
             (controls / 'sleeps').write_bytes(b'')
             env = self.engine.environment(self.scenario.env, self.scenario.fixture, self.scenario.root, controls)
-            env.update(EVERLEDGER_PARITY_ORACLE='1', PYTHONPATH=str(ROOT / 'parity/oracle_hook') + ':' + str(ROOT))
+            env.update(EVERLEDGER_PARITY_ORACLE='1', PYTHONPATH=':'.join(str(path) for path in (ROOT / 'parity/oracle_hook', ROOT, ROOT / 'python')))
             script = "import datetime,time,subprocess,sys; print(datetime.datetime.now(datetime.UTC).isoformat(),flush=True); time.sleep(2.1); subprocess.run([sys.executable,'-c','import datetime,time; print(datetime.datetime.now(datetime.UTC).isoformat()); print(time.monotonic()); time.sleep(0.0)'],check=True)"
             result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)

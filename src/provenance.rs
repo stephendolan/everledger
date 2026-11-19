@@ -1,4 +1,4 @@
-use crate::{ExitCode, Result, clock::Clock, document::Document, http::Payload};
+use crate::{Result, clock::Clock, document::Document, http::Payload};
 use serde::{Deserialize, Deserializer};
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -110,11 +110,4 @@ pub fn sources(data: &Document) -> Result<Vec<Source>> {
 }
 pub fn is_stale(items: &[Source]) -> bool {
     items.iter().any(|s| s.view().stale == Some(true))
-}
-pub fn stale_code(items: &[Source]) -> ExitCode {
-    if is_stale(items) {
-        ExitCode::Stale
-    } else {
-        ExitCode::Answer
-    }
 }

@@ -14,7 +14,6 @@ pub mod refresh;
 pub mod sales;
 pub mod status;
 pub mod vendors;
-pub mod verify;
 
 pub struct CommandOutput {
     pub data: Document,
@@ -31,6 +30,13 @@ impl CommandOutput {
             code: ExitCode::Answer,
             stale: false,
             source_families: vec![],
+        }
+    }
+    pub fn exit_code(&self) -> ExitCode {
+        if self.stale {
+            ExitCode::Stale
+        } else {
+            self.code
         }
     }
 }

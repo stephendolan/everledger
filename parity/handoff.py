@@ -51,6 +51,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from parity.corpus import DBScenario, load_cli
 from parity.engine import Engine, Normalizer, ROOT, elapsed, snapshot
+from parity.oracle import ORACLE_FILES
 from parity.fixture import Fixture
 
 PAGES = ['alchemy', 'blacksmithing', 'enchanting', 'engineering', 'leatherworking', 'tailoring',
@@ -144,6 +145,9 @@ def earlier_build(commit, directory):
     tree = Path(directory, commit)
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as files:
         files.extractall(tree, filter='data')
+    (tree / 'python').mkdir()
+    for name in ORACLE_FILES:
+        (tree / name).rename(tree / 'python' / name)
     (tree / 'parity').mkdir()
     shutil.copy(ROOT / 'parity/oracle.py', tree / 'parity/oracle.py')
     shutil.copytree(ROOT / 'parity/oracle_hook', tree / 'parity/oracle_hook')

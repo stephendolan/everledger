@@ -3,8 +3,8 @@
 pub struct Args {
     #[arg(allow_negative_numbers = true, value_enum)]
     pub target: Target,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -19,17 +19,10 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         context.clock,
     )?];
     let (vendor_sources, synced) = crate::vendors::refresh_cached(context)?;
-    let stale =
-        !synced.view().failed && vendor_sources.iter().any(|s| s.view().stale == Some(true));
+    let stale = !synced.view().failed && crate::provenance::is_stale(&vendor_sources);
     used.extend(vendor_sources);
     let lines = crate::human::refresh::lines(synced.view());
-    let code = if synced.view().failed {
-        crate::ExitCode::Unreachable
-    } else if stale {
-        crate::ExitCode::Stale
-    } else {
-        crate::ExitCode::Answer
-    };
+    let failed = synced.view().failed;
     let data = Document::object([
         ("refreshed", "catalogue".into()),
         ("vendor_sync", synced.into_document()),
@@ -39,7 +32,9 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         ),
     ]);
     let mut output = CommandOutput::new(data, lines);
-    output.code = code;
+    if failed {
+        output.code = crate::ExitCode::Unreachable;
+    }
     output.stale = stale;
     Ok(output)
 }

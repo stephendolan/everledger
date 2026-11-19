@@ -27,8 +27,8 @@ fn help(command: Option<&str>, columns: &str, force_color: bool) -> String {
 }
 
 #[test]
-fn readme_command_reference_matches_help() {
-    let readme = include_str!("../README.md");
+fn command_reference_matches_help() {
+    let reference = include_str!("../docs/command-reference.md");
     let parser = everledger::cli::parser();
     let commands = std::iter::once(None).chain(
         parser
@@ -36,32 +36,32 @@ fn readme_command_reference_matches_help() {
             .map(|command| Some(command.get_name())),
     );
     assert_eq!(
-        readme.matches("```text\n").count(),
+        reference.matches("```text\n").count(),
         parser.get_subcommands().count() + 1
     );
     for command in commands {
         let section = match command {
-            None => readme,
+            None => reference,
             Some(name) => {
-                readme
+                reference
                     .split_once(&format!("\n## {name}\n"))
-                    .unwrap_or_else(|| panic!("missing README heading for {name}"))
+                    .unwrap_or_else(|| panic!("missing command reference heading for {name}"))
                     .1
             }
         };
         let section = section.split("\n## ").next().unwrap();
         let documented = section
             .split_once("```text\n")
-            .expect("README text block")
+            .expect("command reference text block")
             .1
             .split_once("```")
-            .expect("closed README text block")
+            .expect("closed command reference text block")
             .0;
         let actual = help(command, "80", false);
         assert!(!actual.is_empty());
         assert_eq!(
             documented, actual,
-            "README help for {command:?}; regenerate with python3 scripts/update_command_reference.py target/debug/everledger"
+            "command reference help for {command:?}; regenerate with python3 scripts/update_command_reference.py target/debug/everledger"
         );
         for (columns, force_color) in [("20", true), ("240", false)] {
             assert_eq!(

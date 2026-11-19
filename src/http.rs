@@ -1,4 +1,3 @@
-#[path = "http_forward.rs"]
 mod forward;
 use crate::{
     ExitCode, Failure, Result,

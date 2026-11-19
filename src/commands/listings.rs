@@ -5,8 +5,8 @@ pub struct Args {
     pub char: Option<String>,
     #[arg(long = "item", allow_negative_numbers = true)]
     pub item: Option<String>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Copper, Result,

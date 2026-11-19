@@ -291,11 +291,16 @@ fn raised_cap_resumes_inside_window_with_remaining_budget() -> Result<()> {
     assert_eq!(world.http.requests.borrow().len(), 6);
     let index = foreverdb::index(&world.context())?.unwrap();
     assert_eq!(
-        foreverdb::lookup(2604, &index, &world.context())?
-            .get("vendors")
-            .and_then(Document::as_array)
-            .unwrap()
-            .len(),
+        foreverdb::lookup(
+            2604,
+            &index,
+            foreverdb::attempt(&world.context())?.as_ref(),
+            &world.context()
+        )?
+        .get("vendors")
+        .and_then(Document::as_array)
+        .unwrap()
+        .len(),
         3
     );
     Ok(())
@@ -877,7 +882,7 @@ fn refresh_reports_sync_failure_without_stale_notice_or_stderr() -> Result<()> {
             };
             let command = everledger::cli::Command::Refresh(everledger::commands::refresh::Args {
                 target: everledger::commands::refresh::Target::Catalogue,
-                json,
+                output: everledger::cli::OutputArgs { json },
             });
             let mut stdout = Vec::new();
             assert_eq!(
@@ -918,10 +923,10 @@ fn refresh_stale_decision_uses_vendor_sources_after_successful_partial_sync() ->
     };
     let args = everledger::commands::refresh::Args {
         target: everledger::commands::refresh::Target::Catalogue,
-        json: false,
+        output: everledger::cli::OutputArgs { json: false },
     };
     let output = everledger::commands::refresh::run(&args, &context)?;
-    assert_eq!(output.code, everledger::ExitCode::Stale);
+    assert_eq!(output.exit_code(), everledger::ExitCode::Stale);
     assert_eq!(
         output.lines,
         [

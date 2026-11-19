@@ -1,14 +1,13 @@
 #[derive(clap::Args, Debug, Clone)]
 #[command(args_override_self = true)]
 pub struct Args {
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, ExitCode, Result,
     commands::CommandOutput,
     document::Document,
-    http::Request,
     provenance::{Field, Source, is_stale, sources},
     vendors::status::Backend,
 };
@@ -114,7 +113,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let mut stale = false;
     match crate::catalogue::load_catalogue(context) {
         Ok(cat) => {
-            let (ok, checks) = crate::commands::verify::check_catalogue(cat);
+            let (ok, checks) = crate::catalogue_check::check(cat);
             used.push(crate::catalogue::catalogue_source(cat, context.clock)?);
             rows.push(Document::object([
                 ("source", "catalogue".into()),
@@ -171,10 +170,10 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     match vendor.view().backend {
         Backend::Foreverdb => {}
         Backend::Ninja => {
-            let state = match context.http.request(
-                &Request::get(&context.config.vendor_url)
-                    .header("User-Agent", "Mozilla/5.0 (compatible; everledger)"),
-            ) {
+            let state = match context
+                .http
+                .request(&crate::vendors::ninja_request(&context.config.vendor_url))
+            {
                 Ok(_) => "reachable".into(),
                 Err(e) => {
                     accumulate(&mut code, e.code);

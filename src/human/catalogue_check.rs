@@ -1,4 +1,4 @@
-use crate::{catalogue::Catalogue, commands::verify::Check, human::text};
+use crate::{catalogue::Catalogue, catalogue_check::Check, human::text};
 pub fn render(checks: &[Check<'_>], cat: &Catalogue) -> Vec<String> {
     let mut lines = checks
         .iter()
