@@ -77,7 +77,7 @@ fn coordinate<'de, D: Deserializer<'de>>(
         Ok(n)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Basis {
     Seen,

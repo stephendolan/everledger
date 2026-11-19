@@ -11,10 +11,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-#[path = "vendors_foreverdb.rs"]
 mod foreverdb_answer;
 pub use foreverdb_answer::ForeverdbAnswer;
-#[path = "vendor_status.rs"]
 pub mod status;
 pub const BACKEND: &str = "wowforever.ninja";
 const USER_AGENT: &str = "Mozilla/5.0 (compatible; everledger)";
@@ -129,14 +127,6 @@ pub enum Status {
     Unverified,
 }
 pub use crate::foreverdb::mapping::Basis;
-impl Serialize for Basis {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.name())
-    }
-}
 pub(crate) fn index_bases(index: &Index) -> impl Iterator<Item = Basis> {
     index
         .view()

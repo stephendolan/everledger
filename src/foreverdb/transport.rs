@@ -72,7 +72,7 @@ enum ShimResponse {
 }
 fn shim(context: &Context<'_>, url: Option<&str>) -> Result<Vec<u8>> {
     let output = Command::new("python3")
-        .args(["-c", include_str!("foreverdb_connector.py")])
+        .args(["-c", include_str!("connector.py")])
         .arg(&context.config.dynamic_credentials_dir)
         .arg(&context.config.foreverdb_connector)
         .arg(url.unwrap_or(""))

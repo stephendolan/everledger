@@ -1,8 +1,5 @@
-#[path = "foreverdb_interrupt.rs"]
 mod interrupt;
-#[path = "foreverdb_mapping.rs"]
 pub mod mapping;
-#[path = "foreverdb_transport.rs"]
 pub mod transport;
 use crate::{
     Context, Failure, Result,
