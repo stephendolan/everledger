@@ -11,17 +11,26 @@ function takes and returns, read the code.
 
 | Path | Holds |
 | --- | --- |
-| `src/main.rs` | Parses arguments, builds the collaborators, runs, exits with the code. |
-| `src/cli.rs` | The `Command` enum, exhaustive dispatch, and the argument rules argparse applies that clap does not. |
-| `src/commands/<name>.rs` | One command: its `Args` struct and its logic. |
-| `src/human/<name>.rs` | That command's human rendering. |
-| `src/roster.rs`, `read_roster.rs`, `journal.rs` | The roster service: transport, character views, and the event stream with its cursor states. |
-| `src/market.rs` | The AHledger price table. |
-| `src/vendors.rs`, `vendors_foreverdb.rs`, `vendor_status.rs` | Vendor answers from either backend, backend selection, and backend status. |
-| `src/foreverdb.rs`, `foreverdb_mapping.rs`, `foreverdb_transport.rs`, `foreverdb_interrupt.rs`, `foreverdb_connector.py` | The ForeverDB sync, its strict mapping, both transports, interrupt handling, and the connector shim. |
-| `src/catalogue.rs`, `catalogue_build.rs` | The catalogue file and the build that produces it from profession pages. |
-| `src/document.rs`, `document_decode.rs`, `primitives.rs`, `time.rs` | The ordered document with its Python-compatible writer, typed decoding straight from a document, and text, number, and time primitives. |
-| `src/types.rs`, `config.rs`, `clock.rs`, `http.rs`, `provenance.rs`, `diagnostics.rs` | Units and failures, configuration, clocks, HTTP, sources, and the stderr sink. |
+| `src/lib.rs`, `src/main.rs` | Library exports, collaborators, process setup, and exit. |
+| `src/cli.rs`, `src/cli_help.txt` | Command table, parser rules, dispatch, and help epilogue. |
+| `src/commands/`, `src/human/` | Command logic and human rendering; each command has a file in each directory. |
+| `src/roster.rs`, `src/read_roster.rs`, `src/journal.rs` | Roster transport, character views, journal pages, aggregates, and cursors. |
+| `src/market.rs` | AHledger price tables and quantity decoding. |
+| `src/vendors.rs`, `src/vendors/foreverdb_answer.rs`, `src/vendors/status.rs` | Backend selection, ninja data, ForeverDB answers, coverage, and status. |
+| `src/foreverdb.rs`, `src/foreverdb/` | Sync engine, mapping, transports, interrupt handling, and `src/foreverdb/connector.py`. |
+| `src/catalogue.rs`, `src/catalogue_build.rs`, `src/catalogue_check.rs` | Catalogue views, profession-page parsing, and anchor checks. |
+| `src/document.rs`, `src/document/decode.rs`, `src/document/tests.rs` | Ordered documents, typed decoding, and document unit tests. |
+| `src/http.rs`, `src/http/forward.rs` | HTTP requests, payloads, and typed forwarding from documents. |
+| `src/types.rs`, `src/primitives.rs`, `src/time.rs` | Units, failures, and Python-compatible scalar and time operations. |
+| `src/config.rs`, `src/clock.rs`, `src/provenance.rs`, `src/diagnostics.rs` | Configuration, clocks, source records, and the stderr sink. |
+| `src/generated/html_entities.json`, `src/unicode.tsv` | HTML entity and Unicode tables. |
+| `tests/` | Integration tests, golden vectors, the oracle probe, and shared fixtures. |
+| `python/` | Frozen reference implementation, fallback, and its tests. |
+| `parity/` | Differential harness, instruments, matrix, and build comparison. |
+
+A module with submodules keeps its parent file and places the submodules in a
+directory with the same name: `src/document.rs` and `src/document/`, for example.
+The same rule applies to HTTP, vendors, and ForeverDB.
 
 ## Conventions
 
@@ -55,7 +64,8 @@ cursor, and an opaque page cursor are three different types.
 `CommandOutput`: the document, the human lines, whether the answer is stale,
 and an exit code for what staleness does not decide. `human::emit` writes the
 document, or the lines followed by the stale notice and the single `source:`
-footer.
+footer. `CommandOutput::exit_code` returns 3 for a stale answer and otherwise
+returns the command's own code.
 
 **One decision gives the stale notice and exit code 3.** Each command decides
 from the sources it holds to a freshness limit whether its answer is stale.
@@ -66,8 +76,17 @@ from the sources afterwards.
 resync notice, or cache notice through `context.diagnostics`, so the line
 survives a failure that follows it.
 
+**One command table drives the CLI.** The `commands!` table in `src/cli.rs`
+defines the command enum, selects the shared `--json` flag through `OutputArgs`,
+and generates exhaustive dispatch.
+
+**Journal rows have one reading.** `Event::item` supplies a row's item;
+`Journal::rows` supplies a service page's rows. Outcome commands build a distinct
+`Aggregate` with its own `events` array and `rows` accessor, rather than reading
+it as a service page.
+
 **Collaborators are explicit.** `Context` carries the clock, HTTP, configuration,
-catalogue store, and diagnostics, so every command runs in-process against
+catalogue store, and diagnostics, so command logic can run in-process against
 fixtures.
 
 **Credentials cannot be printed.** `config::Secret` and the transport's `ApiKey`
@@ -76,24 +95,32 @@ have no formatting that shows their value.
 **No path that depends on input data can panic.** Failures carry one of the
 five exit codes.
 
+## Vendor backend state
+
+`BackendState` in `src/vendors.rs` loads the selected transport and configured
+index once for the command. It reads the attempt journal lazily and retains
+the result, so a command opens only the files its answer needs. With no
+transport configured, it opens neither index nor journal. A lookup without a
+completed index can fall back to ninja without opening the journal; status
+reads it when reporting the last attempt. The same state supplies backend
+selection, stale eligibility, and failure status.
+
 ## The ForeverDB sync
 
-A sync spends a budget of requests over a rolling 24 hours. The cap is 36
-unless `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` sets it. `attempt.json` records
-what each attempt spent and when it ended; a spend counts for 24 hours, and an
-attempt may send the cap less the spends still counting. A full sync needs
-1,025 requests, so at the default cap it is a traversal spread over weeks, and
-at a cap above 1,025 it is one attempt. Its correctness is an ordering either
-way:
+A sync spends requests over a rolling 24 hours. The [ForeverDB reference](foreverdb.md#requests-and-the-rolling-budget)
+owns the cap, request arithmetic, and examples. `plan_sync` reads the index,
+journal, and checkpoint and fixes the attempt's remaining allowance before
+opening it. Correctness depends on this ordering:
 
 - The attempt journal is written before each request is sent, so a request is
   counted even if the process dies while it is in flight. The next reader
   dates that attempt's spend from its last request start.
-- The checkpoint is written after each finished page and each finished detail.
+- `walk_pages` and `walk_details` write the checkpoint after each finished
+  page or detail.
 - The index is published by atomic replace only when every detail is present.
 - The budget is fixed when an attempt starts. Spends that expire while it runs
   leave the journal and add nothing to it.
-- Request starts are 2.1 seconds apart at any cap.
+- Within an attempt, request starts are at least 2.1 seconds apart at any cap.
 - An interrupt during a sync closes the journal on a second thread and then
   ends the process as SIGINT ends one, whatever fails on the way, so a stopped
   process never keeps the lock. That thread holds the snapshot's lock until
@@ -102,19 +129,19 @@ way:
 - One `flock` on `sync.lock` serializes syncs, including against the Python
   implementation on the same data directory.
 
-A sync loads `attempt.json` through one reader, which adds the spend of an
-attempt that was killed before it finished and drops expired spends. Every
-journal write drops them again. `status` and `vendors` read the file plainly:
+`load_attempt` adds the spend of an unfinished attempt and drops expired
+spends when it reads `attempt.json` for a sync. Every journal write drops them
+again. `status` and `vendors` read the file plainly:
 they use its `failed` flag and the last attempt's time and request count, and
 nothing about spends.
 
-A request is reserved before it is counted. The journal is written with the
-next count first, and the counters in memory move only when that write
+`reserve_request` reserves a request before counting it. The journal is written
+with the next count first, and the counters in memory move only when that write
 succeeds, so a failed write neither counts a request nor sends one.
 
-The sync returns one result on every path: `configured`, `complete`,
-`pending`, `requests`, `total_requests`, `failed`, `deferred`, `status`, and
-`error`. A failed request, mapping, or write is part of that result, and
+`close_attempt` records completion, pending work, or failure. The sync result
+contains `configured`, `complete`, `pending`, `requests`, `total_requests`,
+`failed`, `deferred`, `status`, and `error`. A failed request, mapping, or write is part of that result, and
 `refresh` reports it on stdout with exit code 4. Two things leave by another
 route: a cache file that cannot be decoded, which is an error, and an
 interrupt.
@@ -135,21 +162,25 @@ The cap is read once, before the arguments, into `config::DailyRequestCap`,
 which cannot be zero. A value that is not a positive integer ends every
 invocation as a usage error, whatever the command.
 
-The connector transport runs each request through `foreverdb_connector.py`, a
+The connector transport runs each request through `src/foreverdb/connector.py`, a
 Python process that calls the `dynamic_credentials` helper and performs the
 request itself. The helper may replace the request rather than add a header to
 it, and the surrogate credential never enters the Rust process.
 
 ## Verification
 
-- `cargo test` runs the unit and integration tests, the golden vectors, the
-  oracle probe, and the check that the README matches `--help`.
-- `parity/` compares this binary with the Python reference: the replayed test
-  corpus, a fuzz over random worlds, and the argument surface. See
-  `parity/README.md`.
-- `docs/rust-port-differences.md` lists every deliberate difference from the
-  reference.
-- The cargo feature `parity-seams` gives the differential tools a virtual
-  clock, a sleep log, and a loopback ForeverDB address. Release builds contain
-  none of it.
-- `.cargo/config.toml` confines everything cargo runs to loopback.
+`cargo test` runs unit and integration tests, golden vectors, the oracle probe,
+and the generated [command reference](command-reference.md) check. The
+[parity guide](../parity/README.md) gives the commands for:
+
+- `parity/matrix.py`, which runs every differential instrument against the
+  Python reference, including captured roster shapes and sync recovery.
+- `parity/compare_builds.py`, which compares two seam builds' candidate
+  transcripts without the matrix's policy exemptions.
+
+The [difference register](rust-port-differences.md) names each sanctioned
+difference and its instrument. The `parity-seams` feature supplies a virtual
+clock, a sleep log, and a loopback ForeverDB address. Builds without that
+feature contain none of these overrides. `.cargo/config.toml` sets a closed loopback proxy
+and loopback bypass for programs launched by Cargo. Invoking the built binary
+directly uses the process environment.

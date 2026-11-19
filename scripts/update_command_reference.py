@@ -25,7 +25,12 @@ def main():
             raise RuntimeError(f'expected nonempty help and no stderr: {argv}')
         heading = b'' if command is None else b'## ' + command + b'\n\n'
         blocks.append(heading + b'```text\n' + result.stdout + b'```\n\n')
-    reference.write_bytes(b''.join(blocks))
+    reference.write_bytes(
+        b'# Command reference\n\n'
+        b'Generated from `--help`; regenerate with '
+        b'`python3 scripts/update_command_reference.py target/release/everledger`.\n\n'
+        + b''.join(blocks)
+    )
     print(f'Updated docs/command-reference.md from {len(commands)} help invocations.')
 
 

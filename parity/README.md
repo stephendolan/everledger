@@ -26,6 +26,7 @@ matrices can increase its runtime.
 | --- | --- |
 | `corpus` | Replay the reference suite through both commands. |
 | `corpus-fractional` | Replay with a fractional clock origin. |
+| `captured-roster` | Compare captured service keys and types through public commands. |
 | `self-suite` | Prove the harness detects deliberately wrong candidates. |
 | `argv-surface` | Compare argument acceptance and request-cap parsing. |
 | `fuzz-read` | Generate random read-command worlds. |
@@ -243,11 +244,14 @@ apply to the cap.
 
 ## Differential fuzz
 
-`fuzz.py` builds random worlds inside the shapes the oracle's contract allows
-(null where the oracle tolerates null, absent keys where it reads with a
-default, every provenance spelling, paged and recoverable journals) and runs
-random invocations through the same engine and comparison policy as the
-replayed corpus. The corpus is fixed and can be fitted; the fuzz cannot.
+`fuzz.py` builds random worlds around the captured roster keys and the
+spellings the adapter reads: list-shaped endpoint sources, wrapped character
+details, listing `item_id`/`name` with nested prices, and journal `entries` with
+nested items. It varies supported provenance timestamp and age fields, missing
+or null optional values, and paged or recoverable journals. Inventory and
+pricing internals retain their fixture vocabulary. Commands run through the
+same engine and policy as the replayed corpus. Sorted choice lists keep a seed
+reproducible across processes without a `PYTHONHASHSEED` pin.
 
 ```sh
 python3 parity/fuzz.py target/seams/debug/everledger --cases 40 --seed 1
@@ -382,4 +386,36 @@ part of this compatibility check.
 
 ```sh
 python3 parity/handoff.py target/seams/debug/everledger
+```
+
+## Compare two builds
+
+The matrix compares each build with the Python reference by policy. That can
+exempt stderr wording or allow the binary to refuse data the reference accepts.
+`compare_builds.py` compares the two builds' candidate transcripts byte for byte
+on those paths too, after masking loopback ports, temporary paths, generated
+sync IDs, and atomic-write suffixes. It runs the corpus and read fuzz at both
+clock origins, plus sync fuzz. Both binaries must be files named `everledger`,
+because the argument parser prints its own file name.
+
+```sh
+python3 parity/compare_builds.py target/seams/debug/everledger target/seams/release/everledger
+```
+
+Use paths to the two seam builds to compare. An optional third argument chooses
+the log directory; otherwise the script prints a fresh temporary directory.
+Every suite pair must have identical steps, exit codes, output, requests,
+sleeps, files, and file modes. A difference or failed suite exits nonzero.
+`BUILD PAIRS IDENTICAL` means every pair matches.
+
+## Captured roster shapes
+
+`captured_roster.py` compares public commands over the service capture's keys
+and JSON types, including listing key order, journal pass-through fields, and
+wrapped character details. The [journal contract](../docs/journalator-contract.md)
+distinguishes captured structures from fixture-established internals and
+explains the list-professions shape the adapter refuses.
+
+```sh
+python3 parity/captured_roster.py target/seams/debug/everledger
 ```
