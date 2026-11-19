@@ -658,7 +658,7 @@ fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRu
         .as_ref()
         .map(|d| d.decode("ForeverDB attempt"))
         .transpose()?;
-    let mut pending = sync_read(context, "pending.json")?;
+    let pending = sync_read(context, "pending.json")?;
     let budget = RequestBudget::remaining(
         context.config.foreverdb_daily_requests,
         old_attempt.as_ref().map_or(&[], |attempt| &attempt.spends),
@@ -684,47 +684,13 @@ fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRu
         return Ok(SyncPlan::BudgetSpent);
     }
 
-    if let Some(doc) = pending.as_ref().filter(|d| d.truthy())
-        && !matching_format(doc).map_err(SyncFailure::InvalidCache)?
-    {
-        pending = None;
-    }
-    if let (Some(p), Some(old)) = (pending.as_ref().filter(|d| d.truthy()), &previous) {
-        let identity: CheckpointIdentity = p
-            .decode("ForeverDB checkpoint identity")
-            .map_err(SyncFailure::InvalidCache)?;
-        if Some(identity.sync_id.as_str()) == old.view().sync_id.as_deref() {
-            remove(dir, "pending.json")?;
-            pending = None;
-        }
-    }
-    let pending = match pending {
-        Some(p) => p,
-        None => Document::object([
-            ("format", FORMAT.into()),
-            ("sync_id", random_id()?.into()),
-            ("started_at", iso(context.clock.now()).into()),
-            ("next_offset", 0i64.into()),
-            ("vendor_ids", Document::Array(vec![])),
-            ("details", Document::Object(vec![])),
-            ("metadata", Document::Null),
-            ("total_requests", 0i64.into()),
-        ]),
-    };
-    let mut pending: Payload<Pending> =
-        Payload::decode(pending, "ForeverDB checkpoint").map_err(SyncFailure::InvalidCache)?;
-    if pending.view().next_offset.is_none() && pending.view().metadata.is_none() {
-        return Err(SyncFailure::InvalidCache(Failure::shape(
-            "ForeverDB checkpoint",
-            "metadata is required after the vendor pages are complete",
-        )));
-    }
-    if let Some(a) = &old_attempt
-        && a.sync_id.as_deref() == Some(&pending.view().sync_id)
-    {
-        let total = pending.view().total_requests.max(a.total_requests);
-        pending.set("total_requests", Document::from_typed(&total)?)?;
-    }
+    let pending = prepare_checkpoint(
+        context,
+        dir,
+        pending,
+        previous.as_ref(),
+        old_attempt.as_ref(),
+    )?;
     let attempt: Payload<Attempt> = Payload::decode(
         Document::object([
             ("attempted_at", iso(context.clock.now()).into()),
@@ -759,6 +725,56 @@ fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRu
         attempt,
         budget,
     })))
+}
+fn prepare_checkpoint(
+    context: &Context<'_>,
+    dir: &Path,
+    mut pending: Option<Document>,
+    previous: Option<&Index>,
+    old_attempt: Option<&PreviousAttempt>,
+) -> SyncRun<Payload<Pending>> {
+    if let Some(doc) = pending.as_ref().filter(|d| d.truthy())
+        && !matching_format(doc).map_err(SyncFailure::InvalidCache)?
+    {
+        pending = None;
+    }
+    if let (Some(p), Some(old)) = (pending.as_ref().filter(|d| d.truthy()), previous) {
+        let identity: CheckpointIdentity = p
+            .decode("ForeverDB checkpoint identity")
+            .map_err(SyncFailure::InvalidCache)?;
+        if Some(identity.sync_id.as_str()) == old.view().sync_id.as_deref() {
+            remove(dir, "pending.json")?;
+            pending = None;
+        }
+    }
+    let pending = match pending {
+        Some(p) => p,
+        None => Document::object([
+            ("format", FORMAT.into()),
+            ("sync_id", random_id()?.into()),
+            ("started_at", iso(context.clock.now()).into()),
+            ("next_offset", 0i64.into()),
+            ("vendor_ids", Document::Array(vec![])),
+            ("details", Document::Object(vec![])),
+            ("metadata", Document::Null),
+            ("total_requests", 0i64.into()),
+        ]),
+    };
+    let mut pending: Payload<Pending> =
+        Payload::decode(pending, "ForeverDB checkpoint").map_err(SyncFailure::InvalidCache)?;
+    if pending.view().next_offset.is_none() && pending.view().metadata.is_none() {
+        return Err(SyncFailure::InvalidCache(Failure::shape(
+            "ForeverDB checkpoint",
+            "metadata is required after the vendor pages are complete",
+        )));
+    }
+    if let Some(a) = old_attempt
+        && a.sync_id.as_deref() == Some(&pending.view().sync_id)
+    {
+        let total = pending.view().total_requests.max(a.total_requests);
+        pending.set("total_requests", Document::from_typed(&total)?)?;
+    }
+    Ok(pending)
 }
 struct Engine<'a, 'b> {
     context: &'a Context<'b>,
