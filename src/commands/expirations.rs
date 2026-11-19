@@ -42,7 +42,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         context,
     )?;
     let data = journal::item_events(params, item.as_ref(), context)?;
-    let mut rows = journal::event_rows(&data)?;
+    let mut rows = data.rows()?;
     let mut lines = crate::human::events::event_lines(&rows);
     let mut document = data.document().clone();
     document.remove("events");
@@ -54,13 +54,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         used.push(market_source);
         document.set("sources", journal::source_documents(used))?;
         for row in &mut rows {
-            let price = row
-                .view()
-                .item
-                .item
-                .as_ref()
-                .and_then(|i| i.id.as_ref())
-                .and_then(|id| prices.get(id));
+            let price = row.view().item().id.and_then(|id| prices.get(&id));
             row.set("market", Document::from_typed(&price)?)?;
             if let Some(price) = price {
                 lines.push(crate::human::expirations::repost(price));
@@ -71,9 +65,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         "expirations",
         Document::Array(rows.into_iter().map(|r| r.into_document()).collect()),
     )?;
-    if data.view().available == Some(false) {
-        lines.push(crate::human::events::journal_unavailable(&data));
-    }
+    lines.extend(crate::human::events::unavailable_line(&data.view().state));
     disclose_item_source(&mut document, item.as_ref(), context)?;
     let mut output = CommandOutput::new(document, lines);
     output.stale = stale;

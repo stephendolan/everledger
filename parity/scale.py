@@ -118,7 +118,7 @@ def main():
     catalogue = (ROOT / 'tests/fixtures/catalogue-fixture.json').read_bytes()
     routes = {'/': (200, ''), '/characters': (200, {'characters': [], 'sources': []}),
               '/listings': (200, {'listings': [], 'sources': []}),
-              '/events': (200, {'events': [], 'next_cursor': None, 'checkpoint': 'terminal', 'has_more': False, 'sources': []}),
+              '/events': (200, {'entries': [], 'next_cursor': None, 'checkpoint': 'terminal', 'has_more': False, 'sources': []}),
               f'/v1/pricetable/{MARKET}': (200, 'market|version|%d|2' % datetime.datetime.fromisoformat(ORIGIN.replace('Z', '+00:00')).timestamp())}
     for page in PAGES:
         routes[f'/professions/{page}/'] = (200, 'Recipes (0)')

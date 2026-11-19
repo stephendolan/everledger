@@ -81,7 +81,7 @@ fn execute(args: &[&str], http: &Fixture) -> (ExitCode, String, String) {
 fn aggregate_snapshot_restart_discards_rows_and_sources() {
     let http = Fixture::new([
         body(
-            r#"{"events":[{"id":"discard","type":"sale","venue":"auction","count":1,"proceeds_copper":99}],"has_more":true,"next_cursor":"page","sources":[{"file":"discard.lua"}]}"#,
+            r#"{"has_more":true,"next_cursor":"page","sources":[{"file":"discard.lua"}],"entries":[{"id":"discard","type":"sale","venue":"auction","count":1,"proceeds_copper":99}]}"#,
         ),
         conflict("snapshot_changed"),
         body(
@@ -131,7 +131,7 @@ fn inventory_explicit_null_availability_stays_unknown() {
     let http = Fixture::new([
         body("market|version|1794744000|2\n2604:88:87:709:::::3808\n"),
         body(r#"{"characters":[{"name":"Slade"}]}"#),
-        body(r#"{"events":[],"has_more":false,"checkpoint":"watch"}"#),
+        body(r#"{"has_more":false,"checkpoint":"watch","entries":[]}"#),
         body(r#"{"listings":[]}"#),
         body(r#"{"bags":{"available":null,"items":[]}}"#),
     ]);
@@ -190,8 +190,8 @@ fn numeric_positions_keep_nameless_inventory_and_linkless_listings() {
     let http = Fixture::new([
         body("market|version|1794744000|2\n2604:88:87:709:::::3808\n"),
         body(r#"{"characters":[{"name":"Slade"}]}"#),
-        body(r#"{"events":[],"has_more":false,"checkpoint":"watch"}"#),
-        body(r#"{"listings":[{"item":{"id":2604,"name":null},"count":2}]}"#),
+        body(r#"{"has_more":false,"checkpoint":"watch","entries":[]}"#),
+        body(r#"{"listings":[{"count":2,"item_id":2604,"name":null}]}"#),
         body(r#"{"bags":{"available":true,"items":[{"item_id":2604,"count":4}]}}"#),
     ]);
     let (code, output, stderr) = execute(&["positions", "--item", "2604", "--json"], &http);
@@ -215,9 +215,9 @@ fn linkless_listing_position_preserves_item_and_purchase_basis() {
         body("market|version|1794744000|2\n2604:88:87:709:::::3808\n"),
         body(r#"{"characters":[]}"#),
         body(
-            r#"{"events":[{"type":"purchase","item":{"id":null,"name":"rEd DyE"},"count":2}],"has_more":false,"checkpoint":"watch"}"#,
+            r#"{"has_more":false,"checkpoint":"watch","entries":[{"type":"purchase","item":{"id":null,"name":"rEd DyE"},"count":2}]}"#,
         ),
-        body(r#"{"listings":[{"item":{"name":"Red Dye","id":null,"id_basis":"name"},"count":2}]}"#),
+        body(r#"{"listings":[{"count":2,"item_id":null,"name":"Red Dye"}]}"#),
     ]);
     let (code, output, stderr) = execute(&["positions", "--json"], &http);
     assert_eq!(code, ExitCode::Answer, "{stderr}");
@@ -236,7 +236,7 @@ fn linkless_listing_position_preserves_item_and_purchase_basis() {
             .len(),
         1
     );
-    assert!(output.contains(r#""item": {"name": "Red Dye", "id": null, "id_basis": "name"}"#));
+    assert!(output.contains(r#""item": {"id": null, "name": "Red Dye"}"#));
     assert!(output.contains(r#""match_basis": ["name"]"#));
 }
 
@@ -245,7 +245,7 @@ fn nested_listing_availability_null_is_preserved() {
     let http = Fixture::new([
         body("market|version|1794744000|2\n2604:88:87:709:::::3808\n"),
         body(
-            r#"{"listings":[{"item_id":2604,"count":1,"buyout_copper":null,"price":{"available":null,"recorded":{"buyout_copper":200}}}]}"#,
+            r#"{"listings":[{"item_id":2604,"count":1,"price":{"available":null,"recorded":{"buyout_copper":null}}}]}"#,
         ),
     ]);
     let (code, output, stderr) = execute(&["listings", "--json"], &http);
@@ -261,7 +261,7 @@ fn nested_listing_availability_null_is_preserved() {
 fn character_resolution_precedes_after_validation_and_allows_null_name() {
     let http = Fixture::new([
         body(r#"{"character":{"name":null}}"#),
-        body(r#"{"events":[],"has_more":false,"checkpoint":"watch"}"#),
+        body(r#"{"has_more":false,"checkpoint":"watch","entries":[]}"#),
     ]);
     let (code, _, stderr) = execute(
         &["events", "--char", "Slade", "--after", "old", "--json"],
@@ -302,7 +302,7 @@ fn stale_notice_and_exit_code_follow_the_same_freshness_decision() {
             ("net", true),
         ] {
             let journal = body(
-                r#"{"events":[{"type":"posting","venue":"auction","item":{"id":2604},"count":1},{"type":"expiration","venue":"auction","item":{"id":2604},"count":1}],"sources":[{"file":"Journalator.lua","mtime":"2020-01-01T00:00:00Z","stale":true}]}"#,
+                r#"{"sources":[{"file":"Journalator.lua","mtime":"2020-01-01T00:00:00Z","stale":true}],"entries":[{"type":"posting","venue":"auction","item":{"id":2604},"count":1},{"type":"expiration","venue":"auction","item":{"id":2604},"count":1}]}"#,
             );
             let mut responses = vec![journal];
             if command == "expirations" {
@@ -361,9 +361,9 @@ fn expirations_without_rows_never_fetch_the_market_and_old_journal_is_not_stale(
     for json in [false, true] {
         for rows in [false, true] {
             let mut responses = vec![body(if rows {
-                r#"{"events":[{"type":"expiration","item":{"id":2604},"count":1}],"sources":[{"file":"old.lua","stale":true}]}"#
+                r#"{"sources":[{"file":"old.lua","stale":true}],"entries":[{"type":"expiration","item":{"id":2604},"count":1}]}"#
             } else {
-                r#"{"events":[],"sources":[{"file":"old.lua","stale":true}]}"#
+                r#"{"sources":[{"file":"old.lua","stale":true}],"entries":[]}"#
             })];
             if rows {
                 responses.push(body("m|v|1794744000\n2604:88:87:709.9:::::10"));
@@ -428,7 +428,7 @@ fn selected_positions_resolve_the_character_once_and_use_the_resolved_name() {
         body("m|v|1794744000\n2604:88:87:709:::::10"),
         body(r#"{"characters":[{"name":"Other"}]}"#),
         body(r#"{"character":{"name":"Slade Undertow","short_name":"Wrong"}}"#),
-        body(r#"{"events":[]}"#),
+        body(r#"{"entries":[]}"#),
         body(r#"{"listings":[]}"#),
         body(r#"{"bags":{"available":true,"items":[{"item_id":2604,"count":4}]}}"#),
     ]);
@@ -464,7 +464,7 @@ fn reconciled_net_omits_deposits_lost_and_carries_freshness() {
     for json in [false, true] {
         let http = Fixture::new([
             body(
-                r#"{"events":[{"type":"posting","venue":"auction","item":{"id":2604},"count":1},{"type":"sale","venue":"auction","item":{"id":2604},"count":1}],"sources":[{"file":"old.lua","stale":true}]}"#,
+                r#"{"sources":[{"file":"old.lua","stale":true}],"entries":[{"type":"posting","venue":"auction","item":{"id":2604},"count":1},{"type":"sale","venue":"auction","item":{"id":2604},"count":1}]}"#,
             ),
             body(r#"{"listings":[],"sources":[{"file":"scan.lua","stale":false}]}"#),
         ]);
@@ -509,7 +509,7 @@ fn positions_freshness_uses_market_roster_inventory_and_listings_but_not_journal
                     stale_kind == "characters"
                 )),
                 body(&format!(
-                    r#"{{"events":[],"sources":[{{"file":"Journalator.lua","mtime":"2020-01-01T00:00:00Z","stale":{}}}]}}"#,
+                    r#"{{"entries":[],"sources":[{{"file":"Journalator.lua","mtime":"2020-01-01T00:00:00Z","stale":{}}}]}}"#,
                     stale_kind == "journal"
                 )),
                 body(&format!(

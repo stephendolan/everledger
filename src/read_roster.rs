@@ -48,32 +48,16 @@ pub struct Characters {
 }
 #[derive(Debug, Deserialize)]
 pub struct CharacterResponse {
-    #[serde(default)]
-    pub character: Field<Character>,
+    pub character: Character,
     pub generated_at: Option<String>,
 }
-pub struct CharacterSnapshot {
-    pub payload: Payload<CharacterResponse>,
-    pub character: Character,
-}
-pub fn character(context: &Context<'_>, name: &str) -> Result<CharacterSnapshot> {
-    let payload: Payload<CharacterResponse> = crate::roster::roster(
+pub fn character(context: &Context<'_>, name: &str) -> Result<Payload<CharacterResponse>> {
+    crate::roster::roster(
         context.http,
         context.config,
         &crate::roster::character_path(name),
         &[],
-    )?;
-    let character = match &payload.view().character {
-        Field::Missing => payload.document().decode("roster character")?,
-        Field::Null => {
-            return Err(crate::Failure::shape(
-                "roster character",
-                "character is null",
-            ));
-        }
-        Field::Value(ch) => ch.clone(),
-    };
-    Ok(CharacterSnapshot { payload, character })
+    )
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Knowledge {

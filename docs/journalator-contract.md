@@ -34,6 +34,21 @@ UTC timestamps to integer epoch seconds for `since` and exclusive `until`.
 `resync_since` accepts ISO strings, decimal strings, and integer hints, including
 zero; the retry uses the same normalization. `--after` excludes time inputs.
 
+## Response shapes
+
+Service pages carry rows under `entries`; the command aggregate carries rows
+under its own `events` key before publishing `sales`, `purchases`, or
+`expirations`. An entry's character comes from `character`, and its item comes
+from `item`. Listings use `item_id` and `name` on the row, with recorded prices
+under `price.recorded` and availability under `price.available`. A character
+detail response carries the `character` wrapper. Endpoint `sources` are lists;
+source timestamp and age alternatives inside pricing remain supported.
+
+Service counts pass through unchanged, including `matched_count` and
+`returned_count`. They describe the service response, not the locally filtered
+array. An aggregate retains the terminal page's counts, and bootstrap retains
+them even though it prints no entries.
+
 ## Learnings
 
 The first live service check on 2026-11-15 exposed fixture assumptions that did

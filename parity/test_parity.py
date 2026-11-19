@@ -1,6 +1,7 @@
 """Run with python3 -m unittest parity.test_parity -v (standard library only)."""
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -61,7 +62,7 @@ class Harness(unittest.TestCase):
 
     def test_wrapper_equals_plain_oracle_without_time_output(self):
         fixture = self.scenario.fixture
-        fixture.vocabulary.routes['/events'] = (200, {'events': [], 'sources': []})
+        fixture.vocabulary.routes['/events'] = (200, {'entries': [], 'sources': []})
         for args in [('events', '--limit', '5', '--since', '2026-11-01', '--json'), ('events', '--type', 'invalid'), ('refresh',)]:
             with self.subTest(argv=args), tempfile.TemporaryDirectory() as temp:
                 initial = snapshot(self.scenario.root)
@@ -200,6 +201,22 @@ class FullCorpus(unittest.TestCase):
                 self.assertFalse(result['vendor_sync']['complete'])
         self.assertEqual(totals[0], totals[1])
         self.assertGreater(totals[0], 500)
+
+
+class FuzzDeterminism(unittest.TestCase):
+    def test_read_worlds_are_independent_of_python_hash_seed(self):
+        script = """
+import json, random
+from parity.fuzz import world, invocation
+for seed in range(20):
+    rng = random.Random(seed)
+    routes, respond, catalogue, items, names = world(rng)
+    argv = [invocation(rng, items, names, catalogue, {'after': [], 'page': []}) for _ in range(14)]
+    print(json.dumps([routes, respond({'limit': ['500']}), catalogue, argv]))
+"""
+        runs = [subprocess.check_output([sys.executable, '-c', script], cwd=ROOT,
+                env=dict(os.environ, PYTHONHASHSEED=seed)) for seed in ('1', '2')]
+        self.assertEqual(runs[0], runs[1])
 
 
 if __name__ == '__main__':

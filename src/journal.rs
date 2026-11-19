@@ -1,6 +1,6 @@
 use crate::{
     Context, Copper, EpochSeconds, Failure, Result,
-    catalogue::{Item, ItemRow, MatchBasis, item_basis, item_matches},
+    catalogue::{Item, ItemRef, MatchBasis, RecordedItem, item_basis, item_matches},
     document::{Document, JsonMode, dumps},
     http::Payload,
     primitives::{base64_decode, base64_encode, casefold},
@@ -10,18 +10,12 @@ use crate::{
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct Actor {
-    pub character: Option<String>,
-}
-#[derive(Clone, Debug, Deserialize)]
 pub struct Event {
-    #[serde(flatten)]
-    pub item: ItemRow,
+    pub item: Option<RecordedItem>,
     #[serde(rename = "type")]
     pub event_type: String,
     pub venue: Option<String>,
     pub character: Option<String>,
-    pub actor: Option<Actor>,
     pub count: Option<i64>,
     pub cash_copper: Option<Copper>,
     pub proceeds_copper: Option<Copper>,
@@ -30,25 +24,21 @@ pub struct Event {
 }
 impl Event {
     pub fn actor(&self) -> Option<&str> {
-        self.character
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .or_else(|| self.actor.as_ref().and_then(|a| a.character.as_deref()))
+        self.character.as_deref().filter(|s| !s.is_empty())
+    }
+    pub fn item(&self) -> ItemRef<'_> {
+        self.item
+            .as_ref()
+            .map(RecordedItem::reference)
+            .unwrap_or_default()
+    }
+    pub fn matched_by_name(&self) -> bool {
+        self.match_basis.as_deref() == Some("name") || self.item().matched_by_name()
     }
 }
 pub type EventRow = Payload<Event>;
-#[derive(Clone, Debug, Deserialize, Default)]
-pub struct Counts {
-    #[serde(default)]
-    pub matched: Field<i64>,
-    #[serde(default)]
-    pub returned: Field<i64>,
-}
 #[derive(Clone, Debug, Deserialize)]
-pub struct EventData {
-    #[serde(default)]
-    pub events: Field<Vec<Event>>,
-    pub entries: Option<Vec<Event>>,
+pub struct JournalState {
     pub has_more: Option<bool>,
     pub next_cursor: Option<String>,
     pub checkpoint: Option<String>,
@@ -56,27 +46,52 @@ pub struct EventData {
     pub available: Option<bool>,
     pub state: Option<String>,
     pub reason: Option<String>,
-    #[serde(default)]
-    pub matched: Field<i64>,
-    #[serde(default)]
-    pub returned: Field<i64>,
-    pub counts: Option<Counts>,
+}
+impl JournalState {
+    pub fn unavailable(&self) -> bool {
+        self.available == Some(false)
+    }
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct EventData {
+    #[serde(rename = "entries")]
+    _entries: Option<Vec<Event>>,
+    #[serde(flatten)]
+    pub state: JournalState,
 }
 pub type Journal = Payload<EventData>;
-
-#[derive(Clone, Debug)]
-pub enum ItemView {
-    Resolved(Payload<Item>),
-    Text(String),
+impl Journal {
+    pub fn rows(&self) -> Result<Option<Vec<EventRow>>> {
+        self.document()
+            .get("entries")
+            .map(|_| row_payloads(self.document(), "entries", "journal event"))
+            .transpose()
+    }
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct AggregateData {
+    #[serde(rename = "events")]
+    _events: Vec<Event>,
+    #[serde(flatten)]
+    pub state: JournalState,
+}
+pub type Aggregate = Payload<AggregateData>;
+impl Aggregate {
+    pub fn rows(&self) -> Result<Vec<EventRow>> {
+        row_payloads(self.document(), "events", "journal aggregate event")
+    }
+}
+#[derive(Clone, Debug)]
+pub struct ItemView(Payload<Item>);
 impl ItemView {
     pub fn resolved(item: &Item) -> Result<Self> {
-        Ok(Self::Resolved(Payload::decode(
+        Ok(Self(Payload::decode(
             Document::from_typed(item)?,
             "journal item view",
         )?))
     }
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct View {
     pub char: Option<String>,
@@ -91,13 +106,7 @@ impl View {
             entries.push(("char", Document::from(v.clone())));
         }
         if let Some(v) = &self.item {
-            entries.push((
-                "item",
-                match v {
-                    ItemView::Resolved(item) => item.document().clone(),
-                    ItemView::Text(s) => Document::from(s.clone()),
-                },
-            ));
+            entries.push(("item", v.0.document().clone()));
         }
         if let Some(v) = &self.venue {
             entries.push(("venue", Document::from(v.clone())));
@@ -123,24 +132,9 @@ impl View {
         {
             return false;
         }
-        match &self.item {
-            None => true,
-            Some(ItemView::Resolved(item)) => item_matches(&event.item, item.view()),
-            Some(ItemView::Text(query)) => {
-                if query.is_empty() {
-                    return true;
-                }
-                let recorded = event.item.item.as_ref();
-                let id = recorded
-                    .and_then(|r| r.id.as_ref())
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "None".into());
-                id == *query
-                    || recorded
-                        .and_then(|r| r.name.as_ref())
-                        .is_some_and(|n| casefold(n) == casefold(query))
-            }
-        }
+        self.item
+            .as_ref()
+            .is_none_or(|item| item_matches(event.item(), item.0.view()))
     }
 }
 #[derive(Clone, Debug, Deserialize)]
@@ -216,19 +210,7 @@ pub struct Character {
 }
 #[derive(Deserialize)]
 pub struct SelectedCharacter {
-    #[serde(default)]
-    pub character: Field<Character>,
-    #[serde(flatten)]
-    pub direct: Character,
-}
-impl SelectedCharacter {
-    pub fn selected(&self) -> Result<&Character> {
-        match &self.character {
-            Field::Missing => Ok(&self.direct),
-            Field::Value(c) => Ok(c),
-            Field::Null => Err(Failure::shape("character", "null character")),
-        }
-    }
+    pub character: Character,
 }
 pub fn event_params(s: Selectors<'_>, context: &Context<'_>) -> Result<EventQuery> {
     let event_type = s
@@ -245,7 +227,7 @@ pub fn event_params(s: Selectors<'_>, context: &Context<'_>) -> Result<EventQuer
     let character = if let Some(name) = s.character.filter(|s| !s.is_empty()) {
         let selected: Payload<SelectedCharacter> =
             roster(context.http, context.config, &character_path(name), &[])?;
-        match &selected.view().selected()?.name {
+        match &selected.view().character.name {
             Field::Missing => return Err(Failure::shape("character", "missing name")),
             Field::Null => None,
             Field::Value(name) => Some(name.clone()),
@@ -303,16 +285,10 @@ pub fn event_params(s: Selectors<'_>, context: &Context<'_>) -> Result<EventQuer
     })
 }
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum EncodedItemView {
-    Resolved(Item),
-    Text(String),
-}
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EncodedView {
     char: Option<String>,
-    item: Option<EncodedItemView>,
+    item: Option<Item>,
     venue: Option<String>,
     #[serde(rename = "type")]
     event_type: Option<String>,
@@ -339,20 +315,20 @@ pub fn page_params(cursor: &str, limit: Option<i64>, order: PageOrder) -> Result
         if decoded.cursor.is_empty() || view.iter().any(|(_, v)| matches!(v, Document::Null)) {
             return Err(invalid());
         }
-        let item = match decoded.view.item {
-            None => None,
-            Some(EncodedItemView::Text(s)) => Some(ItemView::Text(s)),
-            Some(EncodedItemView::Resolved(_item)) => {
+        let item = decoded
+            .view
+            .item
+            .map(|_| -> Result<ItemView> {
                 let item = document
                     .get("view")
                     .and_then(|v| v.get("item"))
                     .cloned()
                     .ok_or_else(invalid)?;
-                Some(ItemView::Resolved(
+                Ok(ItemView(
                     Payload::decode(item, "snapshot item view").map_err(|_| invalid())?,
                 ))
-            }
-        };
+            })
+            .transpose()?;
         let view = View {
             char: decoded.view.char,
             item,
@@ -473,14 +449,6 @@ pub struct EventPage {
     pub data: Journal,
     pub end: PageEnd,
 }
-pub fn event_rows(data: &Journal) -> Result<Vec<EventRow>> {
-    let key = match &data.view().events {
-        Field::Missing => "entries",
-        Field::Value(_) => "events",
-        Field::Null => return Err(Failure::shape("events", "null event array")),
-    };
-    row_payloads(data.document(), key, "journal event")
-}
 pub fn row_payloads<T: serde::de::DeserializeOwned>(
     document: &Document,
     key: &str,
@@ -495,66 +463,44 @@ pub fn row_payloads<T: serde::de::DeserializeOwned>(
         Some(_) => Err(Failure::shape(boundary, "expected array")),
     }
 }
-pub fn recount(document: &mut Document, count: usize) -> Result<()> {
-    let count = i64::try_from(count).map_err(|e| Failure::shape("event count", e))?;
-    for key in ["matched", "returned"] {
-        if document.get(key).is_some() {
-            document.set(key, count)?;
-        }
-    }
-    if let Some(mut counts) = document.get("counts").cloned() {
-        for key in ["matched", "returned"] {
-            if counts.get(key).is_some() {
-                counts.set(key, count)?;
-            }
-        }
-        document.set("counts", counts)?;
-    }
-    Ok(())
-}
 pub fn event_page(params: &EventQuery, context: &Context<'_>) -> Result<EventPage> {
     let mut data: Journal = roster(context.http, context.config, "/events", &params.wire())?;
-    for key in ["events", "entries"] {
-        if data.document().get(key).is_some() {
-            let rows: Vec<EventRow> = row_payloads(data.document(), key, "journal event")?;
-            data.set(
-                key,
-                Document::Array(
-                    rows.into_iter()
-                        .filter(|r| params.view.includes(r.view()))
-                        .map(Payload::into_document)
-                        .collect(),
-                ),
-            )?;
-        }
+    if let Some(rows) = data.rows()? {
+        data.set(
+            "entries",
+            Document::Array(
+                rows.into_iter()
+                    .filter(|r| params.view.includes(r.view()))
+                    .map(Payload::into_document)
+                    .collect(),
+            ),
+        )?;
     }
-    let end = if data.view().has_more == Some(true) {
+    let end = if data.view().state.has_more == Some(true) {
         let cursor = data
             .view()
+            .state
             .next_cursor
             .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(stuck)?;
+            .filter(|s| !s.is_empty());
+        let cursor = pagination_progress(cursor, &[])?;
         let cursor = page_cursor(cursor, &params.view, params.until())?;
         data.set("next_cursor", cursor.as_str())?;
         data.set("after_cursor", Document::Null)?;
         PageEnd::More(cursor)
     } else {
-        let checkpoint = data.view().checkpoint.clone();
+        let checkpoint = data.view().state.checkpoint.clone();
         data.set("next_cursor", Document::Null)?;
         data.set("after_cursor", Document::from(checkpoint.clone()))?;
         PageEnd::Complete(checkpoint.map(WatchPosition))
     };
-    let count = event_rows(&data)?.len();
-    let mut doc = data.into_document();
-    recount(&mut doc, count)?;
-    Ok(EventPage {
-        data: Payload::decode(doc, "events")?,
-        end,
-    })
+    Ok(EventPage { data, end })
 }
-fn stuck() -> Failure {
-    Failure::error("events pagination did not advance; refusing a partial tally")
+
+fn pagination_progress<T: PartialEq>(next: Option<T>, seen: &[T]) -> Result<T> {
+    next.filter(|cursor| !seen.contains(cursor)).ok_or_else(|| {
+        Failure::error("events pagination did not advance; refusing a partial tally")
+    })
 }
 #[derive(Deserialize)]
 struct ErrorBody {
@@ -595,15 +541,44 @@ fn announce(hint: &TimeBound, context: &Context<'_>) -> Result<()> {
         .diagnostics
         .warn(&crate::human::events::resync_notice(hint))
 }
+#[derive(Clone, Copy)]
+enum RetryScope {
+    Page,
+    Snapshot,
+}
+fn retry_once<T>(
+    params: EventQuery,
+    scope: RetryScope,
+    context: &Context<'_>,
+    operation: impl Fn(&EventQuery) -> Result<T>,
+) -> Result<T> {
+    match operation(&params) {
+        Ok(data) => Ok(data),
+        Err(error) => match recovery(&error) {
+            Recovery::Resync(hint) => {
+                announce(&hint, context)?;
+                operation(&params.resync(hint))
+            }
+            Recovery::Restart if matches!(scope, RetryScope::Snapshot) => {
+                context
+                    .diagnostics
+                    .warn(crate::human::events::SNAPSHOT_RESTART)?;
+                operation(&params)
+            }
+            Recovery::Restart | Recovery::Refuse => Err(error),
+        },
+    }
+}
 pub fn fetch_events(params: EventQuery, context: &Context<'_>) -> Result<Journal> {
     if params.limit == Some(0) {
         let mut data = collect_events(params, true, context)?.into_document();
         data.remove("events");
         data.set("entries", Document::Array(vec![]))?;
-        let mut journal: Journal = Payload::decode(data, "events")?;
-        if journal.view().available != Some(false)
+        let journal: Journal = Payload::decode(data, "events")?;
+        if !journal.view().state.unavailable()
             && journal
                 .view()
+                .state
                 .checkpoint
                 .as_deref()
                 .is_none_or(str::is_empty)
@@ -612,51 +587,27 @@ pub fn fetch_events(params: EventQuery, context: &Context<'_>) -> Result<Journal
                 "finished bootstrap has no service checkpoint",
             ));
         }
-        let mut data = journal.into_document();
-        recount(&mut data, 0)?;
-        journal = Payload::decode(data, "events")?;
         Ok(journal)
     } else {
-        match event_page(&params, context) {
-            Ok(page) => Ok(page.data),
-            Err(error) => match recovery(&error) {
-                Recovery::Resync(hint) => {
-                    announce(&hint, context)?;
-                    Ok(event_page(&params.resync(hint), context)?.data)
-                }
-                Recovery::Restart | Recovery::Refuse => Err(error),
-            },
-        }
+        retry_once(params, RetryScope::Page, context, |params| {
+            Ok(event_page(params, context)?.data)
+        })
     }
 }
 pub fn collect_events(
-    mut params: EventQuery,
+    params: EventQuery,
     discard: bool,
     context: &Context<'_>,
-) -> Result<Journal> {
-    for attempt in 0..2 {
-        match collect_snapshot(&params, discard, context) {
-            Ok(data) => return Ok(data),
-            Err(error) => {
-                if attempt == 1 {
-                    return Err(error);
-                }
-                match recovery(&error) {
-                    Recovery::Resync(hint) => {
-                        announce(&hint, context)?;
-                        params = params.resync(hint);
-                    }
-                    Recovery::Restart => context
-                        .diagnostics
-                        .warn(crate::human::events::SNAPSHOT_RESTART)?,
-                    Recovery::Refuse => return Err(error),
-                }
-            }
-        }
-    }
-    Err(Failure::error("journal retry exhausted"))
+) -> Result<Aggregate> {
+    retry_once(params, RetryScope::Snapshot, context, |params| {
+        collect_snapshot(params, discard, context)
+    })
 }
-fn collect_snapshot(params: &EventQuery, discard: bool, context: &Context<'_>) -> Result<Journal> {
+fn collect_snapshot(
+    params: &EventQuery,
+    discard: bool,
+    context: &Context<'_>,
+) -> Result<Aggregate> {
     let mut first = params.clone();
     first.limit = Some(500);
     let mut page = event_page(&first, context)?;
@@ -666,7 +617,9 @@ fn collect_snapshot(params: &EventQuery, discard: bool, context: &Context<'_>) -
     loop {
         if !discard {
             rows.extend(
-                event_rows(&page.data)?
+                page.data
+                    .rows()?
+                    .unwrap_or_default()
                     .into_iter()
                     .map(Payload::into_document),
             );
@@ -679,9 +632,7 @@ fn collect_snapshot(params: &EventQuery, discard: bool, context: &Context<'_>) -
         match page.end {
             PageEnd::Complete(_) => break,
             PageEnd::More(cursor) => {
-                if seen.contains(&cursor) {
-                    return Err(stuck());
-                }
+                let cursor = pagination_progress(Some(cursor), &seen)?;
                 let next = page_params(cursor.as_str(), Some(500), PageOrder::LimitCursor)?;
                 seen.push(cursor);
                 page = event_page(&next, context)?;
@@ -690,16 +641,14 @@ fn collect_snapshot(params: &EventQuery, discard: bool, context: &Context<'_>) -
     }
     let mut doc = page.data.into_document();
     doc.remove("entries");
-    let count = rows.len();
     doc.set("events", Document::Array(rows))?;
     doc.set("sources", source_documents(used))?;
-    recount(&mut doc, count)?;
     Payload::decode(doc, "journal aggregate")
 }
 pub fn source_documents(sources: Vec<Source>) -> Document {
     Document::Array(sources.into_iter().map(Payload::into_document).collect())
 }
-pub fn basis(row: &ItemRow) -> &'static str {
+pub fn basis(row: ItemRef<'_>) -> &'static str {
     match item_basis(row) {
         MatchBasis::Id => "id",
         MatchBasis::Name => "name",
@@ -709,14 +658,15 @@ pub fn item_events(
     mut params: EventQuery,
     item: Option<&Item>,
     context: &Context<'_>,
-) -> Result<Journal> {
+) -> Result<Aggregate> {
     params.view.item = item.map(ItemView::resolved).transpose()?;
     let mut data = collect_events(params, false, context)?;
     if item.is_some() {
-        let rows = event_rows(&data)?
+        let rows = data
+            .rows()?
             .into_iter()
             .map(|mut r| {
-                r.set("match_basis", basis(&r.view().item))?;
+                r.set("match_basis", basis(r.view().item()))?;
                 Ok(r.into_document())
             })
             .collect::<Result<Vec<_>>>()?;

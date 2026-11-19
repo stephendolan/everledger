@@ -10,7 +10,7 @@ pub struct Args {
 }
 use crate::{
     Context, Copper, Failure, Result,
-    catalogue::{self, Item, ItemRow, RecordedItem, item_matches},
+    catalogue::{self, Item, ItemRef, RecordedItem, item_matches},
     commands::{CommandOutput, listings},
     document::Document,
     http::Payload,
@@ -33,11 +33,19 @@ struct InventoryItem {
     item: Option<RecordedItem>,
 }
 impl InventoryItem {
-    fn item_row(&self) -> ItemRow {
-        ItemRow {
-            item: self.item.clone(),
-            item_id: Some(self.item_id),
-            name: self.name.clone(),
+    fn item(&self) -> ItemRef<'_> {
+        ItemRef {
+            id: match self.item.as_ref().map(|i| &i.id) {
+                None | Some(Field::Missing) => Some(self.item_id),
+                Some(Field::Null) => None,
+                Some(Field::Value(id)) => Some(*id),
+            },
+            name: match self.item.as_ref().map(|i| &i.name) {
+                None | Some(Field::Missing) => self.name.as_deref(),
+                Some(Field::Null) => None,
+                Some(Field::Value(name)) => Some(name),
+            },
+            id_basis: self.item.as_ref().and_then(|i| i.id_basis.as_deref()),
         }
     }
 }
@@ -79,7 +87,7 @@ pub struct PositionItem {
     pub name: Option<String>,
 }
 impl PositionItem {
-    fn matches(&self, row: &ItemRow) -> bool {
+    fn matches(&self, row: ItemRef<'_>) -> bool {
         if let Some(id) = self.id {
             return item_matches(
                 row,
@@ -89,18 +97,9 @@ impl PositionItem {
                 },
             );
         }
-        let id = match row.item.as_ref().map(|r| &r.id) {
-            None | Some(Field::Missing) => row.item_id,
-            Some(Field::Null) => None,
-            Some(Field::Value(id)) => Some(*id),
-        };
-        let name = match row.item.as_ref().map(|r| &r.name) {
-            None | Some(Field::Missing) => row.name.as_deref(),
-            Some(Field::Null) => None,
-            Some(Field::Value(name)) => Some(name.as_str()),
-        };
-        id.is_none()
-            && name
+        row.id.is_none()
+            && row
+                .name
                 .filter(|s| !s.is_empty())
                 .zip(self.name.as_deref().filter(|s| !s.is_empty()))
                 .is_some_and(|(a, b)| {
@@ -248,7 +247,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             for r in &section.items {
                 if item
                     .as_ref()
-                    .is_some_and(|item| !item_matches(&r.item_row(), item))
+                    .is_some_and(|item| !item_matches(r.item(), item))
                 {
                     continue;
                 }
@@ -274,41 +273,23 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     for r in listings::listing_rows(&current)? {
         if item
             .as_ref()
-            .is_some_and(|item| !item_matches(&r.view().item, item))
+            .is_some_and(|item| !item_matches(r.view().row.item(), item))
         {
             continue;
         }
-        let recorded = r.view().item.item.as_ref();
-        let has_recorded_item = recorded.is_some_and(|i| {
-            !matches!(i.id, Field::Missing)
-                || !matches!(i.name, Field::Missing)
-                || i.id_basis.is_some()
-        }) || r
-            .document()
-            .get("item")
-            .and_then(Document::as_object)
-            .is_some_and(|fields| !fields.is_empty());
-        let item = if has_recorded_item {
-            let document = r
-                .document()
-                .get("item")
-                .cloned()
-                .ok_or_else(|| Failure::shape("listing item", "missing item"))?;
-            Payload::decode(document, "listing position item")?
-        } else {
-            let item = PositionItem {
-                id: r.view().item.item_id,
-                name: r.view().item.name.clone(),
-            };
-            Payload::decode(Document::from_typed(&item)?, "listing position item")?
+        let item = r.view().row.item();
+        let item = PositionItem {
+            id: item.id,
+            name: item.name.map(str::to_owned),
         };
+        let item = Payload::decode(Document::from_typed(&item)?, "listing position item")?;
         let row = position(&mut rows, item);
         row.listed = row
             .listed
-            .checked_add(r.view().count.unwrap_or(0))
+            .checked_add(r.view().row.count.unwrap_or(0))
             .ok_or_else(|| Failure::error("listed count out of range"))?;
     }
-    let purchases = journal::event_rows(&journal)?;
+    let purchases = journal.rows()?;
     for row in &mut rows {
         row.floor_copper = row
             .item
@@ -326,13 +307,13 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             .transpose()?;
         row.purchases = purchases
             .iter()
-            .filter(|e| row.item.view().matches(&e.view().item))
+            .filter(|e| row.item.view().matches(e.view().item()))
             .cloned()
             .collect();
         row.match_basis = row
             .purchases
             .iter()
-            .map(|e| journal::basis(&e.view().item))
+            .map(|e| journal::basis(e.view().item()))
             .collect();
         row.match_basis.sort_unstable();
         row.match_basis.dedup();
@@ -357,11 +338,11 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         ("stale", Document::from(stale)),
         (
             "journal_available",
-            Document::from(journal.view().available),
+            Document::from(journal.view().state.available),
         ),
         (
             "journal_state",
-            Document::from(journal.view().state.clone()),
+            Document::from(journal.view().state.state.clone()),
         ),
         ("sources", journal::source_documents(used)),
     ]);

@@ -100,7 +100,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         params = journal::page_params(cursor, limit, PageOrder::CursorLimit)?;
     }
     let data = journal::fetch_events(params, context)?;
-    let lines = crate::human::events::lines(&data, &journal::event_rows(&data)?);
+    let lines = crate::human::events::lines(&data, &data.rows()?.unwrap_or_default());
     let mut document = data.into_document();
     disclose_item_source(&mut document, item.as_ref(), context)?;
     Ok(CommandOutput::new(document, lines))

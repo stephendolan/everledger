@@ -96,16 +96,7 @@ pub fn sources(data: &Document) -> Result<Vec<Source>> {
             .iter()
             .map(|s| Payload::decode(s.clone(), "source"))
             .collect(),
-        Some(Document::Object(o)) => o
-            .iter()
-            .filter(|(_, v)| matches!(v, Document::Object(_)))
-            .map(|(name, s)| {
-                let mut s = s.clone();
-                s.set("name", name.clone())?;
-                Payload::decode(s, "source")
-            })
-            .collect(),
-        _ => Err(crate::Failure::shape("sources", "expected array or object")),
+        _ => Err(crate::Failure::shape("sources", "expected array")),
     }
 }
 pub fn is_stale(items: &[Source]) -> bool {

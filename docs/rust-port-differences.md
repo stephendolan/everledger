@@ -98,6 +98,29 @@ fails on a damaged file, Rust fails too.
 - **UTF-16 and UTF-32 JSON bodies.** Rust accepts UTF-8, with or without a
   byte-order mark.
 
+## Roster spellings only the reference reads
+
+The v1.3.0 service capture of November 19, 2026 establishes these spellings.
+The differential fixtures send the service spellings to both implementations.
+Unknown fields still pass through in the ordered document; ignoring a field
+for a decision does not by itself remove it from JSON output.
+
+| Removal | Reference-only input | Rust behavior |
+| --- | --- | --- |
+| R1 | `sources` as an object keyed by name | Refuses it when sources are read; accepts a list, including on inventory responses. |
+| R2 | An entry's `actor.character` | Ignores it; reads only the optional entry `character`. |
+| R3 | An unwrapped character response | Refuses it at character-response decoding; requires the `character` wrapper. Commands retain their existing failure handling, including recipe's roster fallback. |
+| R4 | Service page rows under `events` | Ignores them as service rows; reads optional `entries`. Command aggregates have their own `events` array. |
+| R5 | `matched`, `returned`, and `counts.matched`/`counts.returned` | Ignores them and does not recount. All service counts, including `matched_count` and `returned_count`, pass through unchanged. |
+| R6 | A listing's `item`, or flattened price/availability inputs | Uses optional `item_id`/`name` and `price.recorded`/`price.available`. Overwrites flattened output fields from the nested price, with the same defaults and insertion order. |
+| R7 | An entry's own `item_id`/`name` | Ignores them for item decisions; reads the optional `item` object. Inventory retains both item readings, nested first. |
+| R8 | A page cursor view's item as text | Refuses the cursor as a usage error (exit 2); item views are objects. |
+
+The capture does not establish error bodies, 409 recovery, pricing source
+internals, inventory internals, or unavailable journals. Those contracts retain
+their accepted spellings and defaults. In particular, nested `item.id_basis`
+and the pricing source timestamp and age alternatives remain supported.
+
 ## Interrupts
 
 Python takes Ctrl-C as an exception in the thread that is syncing. Rust takes

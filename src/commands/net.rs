@@ -55,7 +55,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         context,
     )?;
     let data = journal::item_events(params, Some(&item), context)?;
-    let rows = journal::event_rows(&data)?;
+    let rows = data.rows()?;
     let current = listings::listings(
         args.char.as_deref(),
         Some(&item.id.to_string()),
@@ -64,7 +64,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     )?;
     let listed_rows = listing_rows(&current)?
         .into_iter()
-        .filter(|r| item_matches(&r.view().item, &item))
+        .filter(|r| item_matches(r.view().row.item(), &item))
         .collect::<Vec<_>>();
     let by_type = ["posting", "sale", "expiration", "cancellation"].map(|typ| {
         rows.iter()
@@ -72,7 +72,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             .map(|e| e.view())
             .collect::<Vec<_>>()
     });
-    let available = data.view().available != Some(false);
+    let available = !data.view().state.unavailable();
     let mut counts = [None; 4];
     if available {
         for (i, events) in by_type.iter().enumerate() {
@@ -100,9 +100,9 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             .iter()
             .all(|r| r.view().available.as_ref() != Some(&false));
     let listed = if listing_known {
-        listed_rows
-            .iter()
-            .try_fold(Some(0), |n, r| journal::checked_count(n, r.view().count))?
+        listed_rows.iter().try_fold(Some(0), |n, r| {
+            journal::checked_count(n, r.view().row.count)
+        })?
     } else {
         None
     };
@@ -139,7 +139,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     };
     let mut match_basis = rows
         .iter()
-        .map(|r| journal::basis(&r.view().item))
+        .map(|r| journal::basis(r.view().item()))
         .collect::<Vec<_>>();
     match_basis.sort_unstable();
     match_basis.dedup();

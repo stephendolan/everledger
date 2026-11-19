@@ -10,11 +10,11 @@ pub struct Args {
 }
 use crate::{
     Context, Copper, Result,
-    catalogue::{ItemRow, disclose_item_source, item_for},
+    catalogue::{ItemRef, disclose_item_source, item_for},
     commands::CommandOutput,
     document::Document,
     http::Payload,
-    journal::{recount, row_payloads, source_documents},
+    journal::{row_payloads, source_documents},
     market::PriceTable,
     provenance::{Field, Source, SourceData, is_stale, sources},
 };
@@ -41,11 +41,30 @@ pub struct Scan {
     pub pricing: Option<Pricing>,
 }
 #[derive(Clone, Debug, Deserialize)]
-pub struct Listing {
-    #[serde(flatten)]
-    pub item: ItemRow,
+pub struct ListingRecord {
+    #[serde(rename = "floor_copper")]
+    _floor_copper: Option<Copper>,
+    #[serde(rename = "undercut")]
+    _undercut: Option<bool>,
+    pub item_id: Option<i64>,
+    pub name: Option<String>,
     pub character: Option<String>,
     pub count: Option<i64>,
+    pub price: Option<Pricing>,
+}
+impl ListingRecord {
+    pub fn item(&self) -> ItemRef<'_> {
+        ItemRef {
+            id: self.item_id,
+            name: self.name.as_deref(),
+            id_basis: None,
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct Listing {
+    #[serde(flatten)]
+    pub row: ListingRecord,
     pub buyout_copper: Option<Copper>,
     pub bid_copper: Option<Copper>,
     pub has_bid: Option<bool>,
@@ -55,13 +74,12 @@ pub struct Listing {
     pub available: Field<bool>,
     pub floor_copper: Option<Copper>,
     pub undercut: Option<bool>,
-    pub price: Option<Pricing>,
 }
 pub type ListingRow = Payload<Listing>;
 #[derive(Clone, Debug, Deserialize)]
 pub struct ListingData {
     #[serde(default)]
-    pub listings: Vec<Listing>,
+    pub listings: Vec<ListingRecord>,
     #[serde(default)]
     pub scans: Vec<Scan>,
     #[serde(default)]
@@ -124,13 +142,10 @@ pub fn listings(
     }
     let used = unique;
     data.set("sources", source_documents(used))?;
-    let mut rows = listing_rows(&data)?;
+    let mut rows: Vec<Payload<ListingRecord>> =
+        row_payloads(data.document(), "listings", "listing record")?;
     for row in &mut rows {
-        let id = match row.view().item.item.as_ref().map(|i| &i.id) {
-            None | Some(Field::Missing) => row.view().item.item_id,
-            Some(Field::Null) => None,
-            Some(Field::Value(id)) => Some(*id),
-        };
+        let id = row.view().item().id;
         let floor = id
             .and_then(|id| prices.and_then(|p| p.get(&id)))
             .and_then(|p| p.floor_copper);
@@ -146,7 +161,7 @@ pub fn listings(
             "deposit_copper",
             "expires_at",
         ] {
-            row.set_default(
+            row.set(
                 key,
                 recorded
                     .as_ref()
@@ -161,11 +176,12 @@ pub fn listings(
             Some(Field::Null) => Document::Null,
             Some(Field::Value(v)) => Document::from(*v),
         };
-        row.set_default("available", available)?;
+        row.set("available", available)?;
+        let recorded = row.view().price.as_ref().and_then(|p| p.recorded.as_ref());
         let undercut = match (
-            row.view().available.as_ref(),
+            row.view().price.as_ref().and_then(|p| p.available.as_ref()),
             floor,
-            row.view().buyout_copper,
+            recorded.and_then(|p| p.buyout_copper),
             row.view().count,
         ) {
             (Some(true), Some(floor), Some(buyout), Some(count)) if count != 0 => {
@@ -176,16 +192,13 @@ pub fn listings(
         row.set("floor_copper", Document::from_typed(&floor)?)?;
         row.set("undercut", Document::from(undercut))?;
     }
-    let count = rows.len();
     if data.document().get("listings").is_some() {
         data.set(
             "listings",
             Document::Array(rows.into_iter().map(Payload::into_document).collect()),
         )?;
     }
-    let mut doc = data.into_document();
-    recount(&mut doc, count)?;
-    Payload::decode(doc, "listings")
+    Ok(data)
 }
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let item = args

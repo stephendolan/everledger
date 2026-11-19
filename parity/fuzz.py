@@ -74,8 +74,10 @@ def provenance(rng, name=None):
 
 def provenance_list(rng):
     rows = [provenance(rng) for _ in range(rng.randrange(0, 4))]
-    if rows and rng.random() < 0.15:
-        return {f'source{i}': row for i, row in enumerate(rows)}
+    for row in rows:
+        row.setdefault('file', 'SavedVariables.lua')
+        row.setdefault('mtime', moment(rng, 0, 9000))
+        row.update(available=True, globals={}, mtime_ns=1794744000000000000, size_bytes=100)
     return rows
 
 
@@ -136,7 +138,7 @@ def character(rng, name, cat):
         elif kind == 'null-known':
             entry['recipes'] = {'available': True, 'known': None}
         professions.append(entry)
-    row = {'name': name, 'level': rng.choice([None, 1, 20, 60]), 'race': rng.choice(['Human', 'Gnome', None]),
+    row = {'class_id': 1, 'race_id': 1, 'partial_data': [], 'sources': {}, 'name': name, 'level': rng.choice([None, 1, 20, 60]), 'race': rng.choice(['Human', 'Gnome', None]),
            'class': rng.choice(['Mage', 'Rogue', None]), 'faction': rng.choice(['Alliance', None]),
            'realm': rng.choice(['Forever', '']), 'gold_copper': rng.choice([None, 0, 5, 123456, 10000, 99]),
            'hearth': rng.choice([None, {'location': 'Ironforge'}, {'location': None}, {}]),
@@ -153,6 +155,14 @@ def inventory(rng, items):
     for location in rng.sample(['bags', 'bank', 'equipped', 'mail'], rng.randrange(0, 5)):
         rows = [{'item_id': item[0], 'name': rng.choice([item[1], item[1], None]), 'count': rng.randrange(1, 40)}
                 for item in rng.sample(items, rng.randrange(0, 4))]
+        for row in rows:
+            shape = rng.choice(['flat', 'nested', 'missing', 'null'])
+            if shape == 'nested':
+                row['item'] = {'id': row['item_id'], 'name': row['name']}
+            elif shape == 'missing':
+                row['item'] = {}
+            elif shape == 'null':
+                row['item'] = {'id': None, 'name': None}
         section = {'items': rows}
         if rng.random() < 0.85:
             section['available'] = rng.random() < 0.8
@@ -164,42 +174,33 @@ def inventory(rng, items):
 
 def listings(rng, items, names):
     def scan_source():
-        return {'file': 'DataStore_Auctions.lua', 'scanned_at': moment(rng, 0, 3000), 'stale': rng.random() < 0.2}
+        entry = provenance(rng, 'DataStore_Auctions.lua')
+        entry['stale'] = rng.random() < 0.2
+        return entry
 
     rows = []
     for _ in range(rng.randrange(0, 6)):
         item = rng.choice(items)
         row = {'character': rng.choice(names + [None]), 'count': rng.choice([1, 2, 5, 20, None, 0])}
+        row.update(item_id=item[0], name=rng.choice([item[1], None]), auctionID=rng.randrange(1, 100000),
+                   expirationTime=1794744000, location={}, realm='Forever', source='DataStore_Auctions', undercut=None)
+        recorded = {'buyout_copper': rng.choice([rng.randrange(1, 90000), None]),
+                    'bid_copper': rng.choice([None, 10]), 'has_bid': rng.random() < 0.3,
+                    'deposit_copper': rng.choice([None, 25]), 'expires_at': rng.choice([None, moment(rng, -90000, 0)])}
+        for key in rng.sample(list(recorded), rng.randrange(0, 3)):
+            del recorded[key]
+        price = {'recorded': rng.choice([recorded, recorded, None])}
+        if rng.random() < 0.85:
+            price['available'] = rng.random() < 0.8
         if rng.random() < 0.5:
-            row['item'] = {'id': item[0], 'name': rng.choice([item[1], None])}
-        else:
-            row['item_id'] = item[0]
-            row['name'] = rng.choice([item[1], None])
-        buyout = rng.choice([rng.randrange(1, 90000), None])
-        shape = rng.choice(['flat', 'nested', 'nested', 'bare'])
-        if shape == 'flat':
-            row['buyout_copper'] = buyout
-            if rng.random() < 0.6:
-                row['available'] = rng.random() < 0.8
-            if rng.random() < 0.5:
-                row['expires_at'] = moment(rng, -90000, 0)
-        elif shape == 'nested':
-            recorded = {'buyout_copper': buyout, 'bid_copper': rng.choice([None, 10]), 'has_bid': rng.random() < 0.3,
-                        'deposit_copper': rng.choice([None, 25]), 'expires_at': rng.choice([None, moment(rng, -90000, 0)])}
-            for key in rng.sample(list(recorded), rng.randrange(0, 3)):
-                del recorded[key]
-            price = {'recorded': rng.choice([recorded, recorded, None])}
-            if rng.random() < 0.85:
-                price['available'] = rng.random() < 0.8
-            if rng.random() < 0.5:
-                price['source'] = scan_source()
-            row['price'] = price
+            price['source'] = scan_source()
+        row['price'] = price
         rows.append(row)
-    data = {'listings': rows}
+    data = {'filters': {}, 'generated_at': moment(rng, 0, 500), 'listings': rows, 'returned_count': len(rows)}
     if rng.random() < 0.7:
         scans = []
         for _ in range(rng.randrange(0, 3)):
-            scan = {'available': rng.random() < 0.85}
+            scan = {'available': rng.random() < 0.85, 'character': rng.choice(names)}
             kind = rng.choice(['priced', 'priced', 'unpriced', 'none'])
             if kind == 'priced':
                 scan['pricing'] = {'available': rng.random() < 0.85, 'source': scan_source()}
@@ -209,10 +210,9 @@ def listings(rng, items, names):
         data['scans'] = scans
     if rng.random() < 0.8:
         data['sources'] = provenance_list(rng)
-    if rng.random() < 0.4:
-        data['counts'] = {'matched': 99, 'returned': 99}
-    if rng.random() < 0.2:
-        data.update(matched=7, returned=7)
+        for source in data['sources']:
+            source.setdefault('file_age_seconds', rng.randrange(0, 9000))
+            source['max_age_seconds'] = 900
     if rng.random() < 0.1:
         data['available'] = False
     return data
@@ -226,11 +226,14 @@ def events(rng, items, names):
         row = {'id': f'e{index}', 'type': kind, 'venue': rng.choice(['auction', 'auction', 'vendor']),
                'count': rng.choice([1, 2, 3, 10, None]), 'cash_copper': rng.choice([None, -500, -13, 0, 250, 38400]),
                'recorded_at': rng.choice([None, moment(rng, 0, 600000)])}
-        who = rng.choice(names + [None])
-        if rng.random() < 0.8:
-            row['character'] = who
-        else:
-            row['actor'] = {'character': who}
+        row['character'] = rng.choice(names)
+        row.update(actor={}, barter_items=rng.choice([[], None]), cash_basis='recorded',
+                   cost_basis_eligible=True, counterparty=rng.choice(['Other', None]),
+                   currencies=rng.choice([[], None]), deposit_copper=rng.choice([1, None]),
+                   fee_copper=None, item_match_basis=None, payment_confirmed=None,
+                   posting_basis='recorded', price_basis='recorded', proceeds_copper=None,
+                   provenance={}, quote={}, raw={}, unit_copper=rng.choice([1, 1.5, None]),
+                   value_copper=rng.choice([1, None]))
         shape = rng.choice(['linked', 'linked', 'linkless', 'name-basis', 'null', 'absent'])
         if shape == 'linked':
             row['item'] = {'id': item[0], 'name': item[1]}
@@ -245,7 +248,7 @@ def events(rng, items, names):
             row['value_copper'] = 40000
         rows.append(row)
     page_size = rng.choice([2, 3, 5, 500])
-    key = rng.choice(['entries', 'events'])
+    key = 'entries'
     absent = rng.random() < 0.08
     # A snapshot breaks once at its second page; one started from the resync
     # hint does not. The response depends on the query alone, so the oracle's
@@ -255,6 +258,7 @@ def events(rng, items, names):
                                    ('2026-11-14T00:00:00Z', '1794614400'), (0, '0')])
     page_sources = [provenance_list(rng) for _ in range(4)]
     extras = rng.random() < 0.4
+    generated = moment(rng, 0, 500)
 
     def respond(query):
         for bound in ('since', 'until'):
@@ -285,10 +289,16 @@ def events(rng, items, names):
         body = {key: page, 'has_more': more, 'next_cursor': f'{family}:{offset + len(page)}' if more else None,
                 'checkpoint': None if more else f'jnrc1:{len(rows)}',
                 'sources': page_sources[(offset // max(1, page_size)) % len(page_sources)]}
-        if extras:
-            body.update(mode='incremental' if 'after' in query else 'snapshot',
-                        counts={'matched': len(rows), 'returned': len(page)}, matched=len(rows), returned=len(page),
-                        filters={'since': int(query.get('since', ['0'])[0])})
+        body.update(available=True, complete=not more, coverage={}, generated_at=generated,
+                    item_matching={'basis': None, 'unresolved_linkless_count': 0, 'unresolved_recorded_names': []},
+                    matched_count=len(rows), returned_count=len(page), mode='snapshot', reason=None,
+                    roster_enrichment={}, schema_version=1, snapshot_at=generated,
+                    snapshot_id='snapshot', source_id='journal', state='available',
+                    filters={'actor': None, 'item': None, 'since': int(query.get('since', ['0'])[0]),
+                             'types': [], 'until': None, 'venue': None})
+        if not extras:
+            body.pop('sources')
+        body['mode'] = 'incremental' if 'after' in query else 'snapshot'
         return 200, body
 
     return respond, rows
@@ -361,14 +371,12 @@ def world(rng):
     cat = catalogue(rng, items)
     routes = {'/': (200, '')}
     roster = [character(rng, name, cat) for name in names]
-    routes['/characters'] = (200, {'characters': roster, 'sources': provenance_list(rng)})
+    routes['/characters'] = (200, {'generated_at': moment(rng, 0, 500), 'characters': roster, 'sources': provenance_list(rng)})
     for row in roster:
         body = {'character': row, 'sources': provenance_list(rng)}
         if rng.random() < 0.7:
             body['generated_at'] = rng.choice([None, moment(rng, 0, 9000)])
-        if rng.random() < 0.15:
-            body = dict(row, sources=provenance_list(rng))
-        for selector in {row['name'], row['name'].split()[0]}:
+        for selector in dict.fromkeys((row['name'], row['name'].split()[0])):
             path = '/characters/' + urllib.parse.quote(selector, safe='')
             routes[path] = (200, body)
             if rng.random() < 0.97:
@@ -580,7 +588,7 @@ def sync_script(rng, cap):
 def sync_case(engine, rng, label, commands):
     routes = {'/': (200, ''), '/characters': (200, {'characters': [], 'sources': []}),
               '/listings': (200, {'listings': [], 'sources': []}),
-              '/events': (200, {'events': [], 'next_cursor': None, 'checkpoint': 'terminal', 'has_more': False, 'sources': []}),
+              '/events': (200, {'entries': [], 'next_cursor': None, 'checkpoint': 'terminal', 'has_more': False, 'sources': []}),
               f'/v1/pricetable/{MARKET}': (200, f'market|version|{int(T0.timestamp())}|2')}
     for prof in CATALOGUE_PAGES:
         routes[f'/professions/{prof}/'] = (200, profession_page(rng, prof))

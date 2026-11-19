@@ -14,7 +14,7 @@ use crate::{Context, Result, catalogue, commands::CommandOutput, http::Payload, 
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let (mut data, lines, mut used) = if let Some(name) = &args.name {
         let snapshot = read_roster::character(context, name)?;
-        let mut used = crate::provenance::sources(snapshot.payload.document())?;
+        let mut used = crate::provenance::sources(snapshot.document())?;
         let cat = if args.profession.is_some() {
             let c = catalogue::load_catalogue(context)?;
             used.push(catalogue::catalogue_source(c, context.clock)?);
@@ -24,7 +24,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         };
         let lines =
             crate::human::char::character(&snapshot, cat, args.profession.as_deref(), args.skill)?;
-        (snapshot.payload.into_document(), lines, used)
+        (snapshot.into_document(), lines, used)
     } else {
         #[derive(serde::Deserialize)]
         struct List {

@@ -48,11 +48,11 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         context,
     )?;
     let data = journal::item_events(params, item.as_ref(), context)?;
-    let rows = journal::event_rows(&data)?;
+    let rows = data.rows()?;
     let mut lines = crate::human::events::event_lines(&rows);
     let mut document = data.document().clone();
     document.remove("events");
-    let proceeds = if data.view().available == Some(false) {
+    let proceeds = if data.view().state.unavailable() {
         None
     } else {
         journal::money_total(rows.iter().map(|r| r.view().proceeds_copper))?
@@ -63,9 +63,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         "sales",
         Document::Array(rows.into_iter().map(|r| r.into_document()).collect()),
     )?;
-    if data.view().available == Some(false) {
-        lines.push(crate::human::events::journal_unavailable(&data));
-    }
+    lines.extend(crate::human::events::unavailable_line(&data.view().state));
     disclose_item_source(&mut document, item.as_ref(), context)?;
     Ok(CommandOutput::new(document, lines))
 }
