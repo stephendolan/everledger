@@ -416,8 +416,7 @@ JSON types of the service capture, and the commands to run over them.
 reference and the candidate, which must exit 0 with identical stdout and send
 the same requests. It also checks listing key order and journal pass-through
 fields. The [journal contract](../docs/journalator-contract.md) distinguishes
-captured structures from fixture-established internals and explains the
-list-professions shape the adapter refuses.
+captured structures from fixture-established internals.
 
 ```sh
 python3 parity/captured_roster.py target/seams/debug/everledger

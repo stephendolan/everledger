@@ -41,6 +41,15 @@ types below. Object contents are unspecified where the capture records only
 an object. The capture contains one first-and-terminal events page with eight
 entries, `has_more: false`, and `next_cursor: null`.
 
+The tables come from a summary of that capture. For a value nested inside a
+list member (a character, a listing, a scan, a source, an entry), the summary
+does not tell a list of objects from an object, so `object` in those rows
+means one or the other. Where the adapter reads such a value (`item`, `price`,
+`pricing`), it reads an object, as the reference does. A character's
+`professions` is established directly: the capture file and a live response
+of the same day both carry it as a list, in `/characters` and in
+`/characters/<name>`.
+
 ### `/characters`
 
 | Location | Keys and captured types |
@@ -48,13 +57,11 @@ entries, `has_more: false`, and `next_cursor: null`.
 | Envelope | `generated_at`: string; `sources`: array; `characters`: array. |
 | Each source | `available`: boolean; `file`, `mtime`: string; `globals`: object; `mtime_ns`, `size_bytes`: integer. |
 | Each character | `class`, `faction`, `name`, `professions_updated_at`, `race`, `realm`, `short_name`: string; `class_id`, `gold_copper`, `level`, `race_id`: integer. |
-| Character structures | `hearth`, `professions`, `sources`: object; `partial_data`: object or array. |
+| Character structures | `professions`: array of profession objects, as in `/characters/<name>`; `hearth`, `sources`: object; `partial_data`: object or array. |
 
-Each character's `professions` is an object. The adapter's character view
-requires a list of professions, so `char` without a name exits 1 on this shape.
-`recipe` catches that roster failure and reports known-by as not checked; a
-matching recipe still returns its catalogue answer. A character list that
-omits profession data can serve commands that only need names.
+Each character carries its `professions` as a list, in the same shape as the
+detail endpoint. `char` without a name lists the characters, and `recipe`
+reads each character's known recipes from that list for its known-by line.
 
 ### `/characters/<name>`
 

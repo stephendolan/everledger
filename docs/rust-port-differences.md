@@ -89,11 +89,12 @@ Character and row views skip unread values rather than buffering them. They
 can accept deep unread structures up to the document parser's limit, described
 below; non-finite unread values still fail with a boundary diagnostic.
 
-The captured `/characters` profession object also differs in the loopback
-replay: `char` exits 1 in the binary and 0 in the reference. For a matching
-`recipe`, the binary returns its catalogue answer with known-by not checked
-and exit 0; the reference exits 1 while reading those professions. No matrix
-instrument sends that list-member profession object. The
+Both character endpoints carry a character's `professions` as a list of
+profession objects, and the binary and the reference read it alike: `char`,
+`recipe` with its known-by line, and `margins --char` agree. The reading was
+tested against the capture file and against the live service on November 19,
+2026; the shape is a list in `/characters` and in `/characters/<name>`.
+`corpus` and `fuzz-read` hold it. The
 [journal contract](journalator-contract.md#characters) describes the shape.
 
 Instrument: `captured-roster` compares the service-shaped successful answers;
