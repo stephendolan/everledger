@@ -34,40 +34,108 @@ UTC timestamps to integer epoch seconds for `since` and exclusive `until`.
 `resync_since` accepts ISO strings, decimal strings, and integer hints, including
 zero; the retry uses the same normalization. `--after` excludes time inputs.
 
-## Response shapes
+## Service capture and adapter readings
 
-Service pages carry rows under `entries`; the command aggregate carries rows
-under its own `events` key before publishing `sales`, `purchases`, or
-`expirations`. An entry's character comes from `character`, and its item comes
-from `item`. Listings use `item_id` and `name` on the row, with recorded prices
-under `price.recorded` and availability under `price.available`. A character
-detail response carries the `character` wrapper. Endpoint `sources` are lists;
-source timestamp and age alternatives inside pricing remain supported.
+The service v1.3.0 capture taken on November 19, 2026 establishes the keys and
+types below. Object contents are unspecified where the capture records only
+an object. The capture contains one first-and-terminal events page with eight
+entries, `has_more: false`, and `next_cursor: null`.
 
-Service counts pass through unchanged, including `matched_count` and
-`returned_count`. They describe the service response, not the locally filtered
-array. An aggregate retains the terminal page's counts, and bootstrap retains
-them even though it prints no entries.
+### `/characters`
 
-## Learnings
+| Location | Keys and captured types |
+| --- | --- |
+| Envelope | `generated_at`: string; `sources`: array; `characters`: array. |
+| Each source | `available`: boolean; `file`, `mtime`: string; `globals`: object; `mtime_ns`, `size_bytes`: integer. |
+| Each character | `class`, `faction`, `name`, `professions_updated_at`, `race`, `realm`, `short_name`: string; `class_id`, `gold_copper`, `level`, `race_id`: integer. |
+| Character structures | `hearth`, `professions`, `sources`: object; `partial_data`: object or array. |
 
-The first live service check on 2026-11-15 exposed fixture assumptions that did
-not match the wire contract: zero limits, ISO query bounds, filtered checkpoint
-reuse, and a terminal cursor in `next_cursor`. Keep fixtures strict about service
-input bounds and separate terminal `checkpoint` from snapshot `next_cursor`.
+Each character's `professions` is an object. The adapter's character view
+requires a list of professions, so `char` without a name exits 1 on this shape.
+`recipe` catches that roster failure and reports known-by as not checked; a
+matching recipe still returns its catalogue answer. A character list that
+omits profession data can serve commands that only need names.
 
-Scope-bound checkpoints cannot implement changeable filters by forwarding those
-filters. Keep the service stream unfiltered and carry local view state through
-snapshot pagination. Never substitute a checkpoint for a page cursor or persist
-a page cursor as a completed watch position.
+### `/characters/<name>`
 
-The fixture suite covers bootstrap, epoch conversion, changed views while new
-entries arrive, multi-page aggregates, terminal checkpoints, two auction
-purchases totaling 2,094 copper, and the two reported listing prices (2,499 and
-4,298 copper). It also checks resync hints and refuses stuck pagination.
-The other six sample event rows are synthetic; these are contract fixtures,
-not a capture of the full live journal.
+| Location | Keys and captured types |
+| --- | --- |
+| Envelope | `generated_at`: string; `sources`: array with the source shape above; `character`: object. |
+| Character scalars | `class`, `faction`, `name`, `professions_updated_at`, `race`, `realm`, `short_name`: string; `class_id`, `gold_copper`, `level`, `race_id`: integer. |
+| Character structures | `hearth`: object containing string `location`; `partial_data`: empty array; `professions`: array; `sources`: object. |
+| Each profession | `max_skill`, `skill`: integer; `name`: string; `recipes`: object; `skill_available`: boolean. |
+| Character sources | `gold_copper`, `hearth`, `level`, `professions`: string. |
 
-No live verification was performed from this checkout. The supplied environment
-evidence reports HTTP 403 “Peer not allowed” from the homeserver host. Muse must
-verify the built CLI against the Mac service after this commit lands.
+The adapter requires the `character` wrapper. Its detail profession list can
+supply skill and recipe knowledge. The capture does not establish the inside
+of `recipes`; the reference fixtures establish `available` and `known` spell
+IDs.
+
+### `/listings`
+
+| Location | Keys and captured types |
+| --- | --- |
+| Envelope | `filters`: empty object; `generated_at`: string; `listings`, `scans`, `sources`: array; `returned_count`: integer. |
+| Each listing | `auctionID`, `count`, `expirationTime`, `item_id`: integer; `character`, `name`, `realm`, `source`: string; `location`, `price`: object; `undercut`: null. |
+| Each scan | `available`: boolean; `character`: string; `pricing`: object. |
+| Each source | `available`, `stale`: boolean; `file`, `mtime`: string; `file_age_seconds`, `max_age_seconds`, `mtime_ns`, `size_bytes`: integer; `globals`: object. |
+
+The adapter reads listing items from `item_id` and `name`. The inside of
+`price` and `pricing` is established by the reference fixtures: recorded
+prices live under `price.recorded`, with availability under `price.available`.
+Scan `pricing.source` takes precedence over row `price.source`, which takes
+precedence over envelope sources when selecting listing freshness sources.
+
+### `/events`
+
+| Location | Keys and captured types |
+| --- | --- |
+| Envelope flags | `available`, `complete`, `has_more`: boolean. |
+| Envelope strings | `checkpoint`, `generated_at`, `mode`, `snapshot_at`, `snapshot_id`, `source_id`, `state`: string. |
+| Envelope counts | `matched_count`, `returned_count`, `schema_version`: integer. |
+| Envelope structures | `coverage`, `filters`, `item_matching`, `roster_enrichment`: object; `entries`: array; `next_cursor`, `reason`: null. There is no top-level `sources`. |
+| Filters | `actor`, `item`, `until`, `venue`: null; `since`: integer; `types`: empty array. |
+| Item matching | `basis`: null; `unresolved_linkless_count`: integer; `unresolved_recorded_names`: empty array. |
+| Entry strings | `cash_basis`, `character`, `id`, `posting_basis`, `price_basis`, `recorded_at`, `type`, `venue`: string. |
+| Entry numbers | `cash_copper`, `count`: integer; `deposit_copper`, `value_copper`: integer or null; `unit_copper`: float, integer, or null. |
+| Entry structures | `actor`, `item`, `provenance`, `quote`, `raw`: object; `barter_items`, `currencies`: array or null. |
+| Other entry fields | `cost_basis_eligible`: boolean; `counterparty`: string or null; `fee_copper`, `item_match_basis`, `payment_confirmed`, `proceeds_copper`: null. |
+
+Service rows come from `entries`; each row's character comes from `character`
+and its item comes from `item`. The outcome aggregate has a separate `events`
+array before publishing `sales`, `purchases`, or `expirations`.
+
+`matched_count` and `returned_count` pass through as sent. They describe the
+service page, not the locally filtered array. An aggregate retains the terminal
+page's counts; bootstrap retains them while printing no entries. In a loopback
+fixture with eight service entries, filtering to three purchases still returns
+both service counts as eight.
+
+The service sends no top-level `sources` on the captured events page. The
+journal save age therefore does not reach the `source:` footer. With no other
+source, human events output ends with `source: unknown (age unknown)`;
+`roster_enrichment` does not substitute for journal provenance.
+
+## Contracts established by fixtures
+
+The capture does not include a 409, any error body, an unavailable journal, or
+inventory. It does not establish the inside of `item`, `price`, or `pricing`.
+The reference fixtures in [test_cli.py](../python/tests/test_cli.py), the Rust
+[outcome tests](../tests/outcomes.rs), and the [harness](../parity/README.md)
+establish these readings:
+
+| Surface | Adapter reading |
+| --- | --- |
+| Recovery | A 409 body with `error_code: cursor_invalid` and `resync_since` announces one resync and retries once. `snapshot_changed` restarts an aggregate once; a page consumer restarts from its committed checkpoint. |
+| Errors | The HTTP boundary retains status and parsed response for recovery. Unrecognized error bodies keep the source failure. |
+| Unavailable journal | `available: false` with optional `state` and `reason` supplies the unavailable result. It is distinct from an available empty page. |
+| Inventory | `bags`, `bank`, `equipped`, and `mail` sections carry availability and item arrays. Rows require flat `item_id` and `count`; an optional nested item supplies the preferred item view. |
+| Item contents | `id`, `name`, and optional `id_basis` support ID matching and name fallback. Missing and null fields remain distinct where the view uses them. |
+| Price contents | `recorded` contains `buyout_copper`, `bid_copper`, `has_bid`, `deposit_copper`, and `expires_at`; `available` controls price availability. |
+| Pricing provenance | Source time alternatives include `saved_at`, `scanned_at`, `mtime`, `updated_at`, and `fetched_at`; age alternatives include `scan_age_seconds`, `file_age_seconds`, and `age_seconds`. |
+
+[Captured-roster verification](../parity/README.md#captured-roster-shapes) covers
+the service-shaped public answers. Corpus and fuzz fixtures cover bootstrap,
+epoch conversion, changing local views, multi-page aggregates, terminal
+checkpoints, recovery hints, and stuck pagination. These are loopback contract
+checks; the synthetic fixture values do not claim to reproduce the live journal.

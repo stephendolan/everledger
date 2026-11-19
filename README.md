@@ -90,7 +90,6 @@ the same settings; the binary does not load that file itself.
 | `EVERLEDGER_FOREVERDB_VIA_CONNECTOR` | Unset | Nonblank connector slug, such as `custom.foreverdb`; takes precedence over key settings. |
 | `EVERLEDGER_DYNAMIC_CREDENTIALS_DIR` | `/opt/muse/skills/custom-connector-setup/bin` | Directory containing the connector's `dynamic_credentials` helper. |
 | `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` | `36` | Positive integer request budget over a rolling 24 hours, shared across refresh attempts and retries. |
-| `EVERLEDGER_SEAM_FOREVERDB_URL` | Unset | Only in `parity-seams` builds: loopback ForeverDB fixture URL; required for their ForeverDB requests. |
 
 One refresh can spend only the budget remaining when its attempt starts.
 Spends become available as they age out of the rolling 24-hour window; repeating

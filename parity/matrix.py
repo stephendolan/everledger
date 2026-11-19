@@ -28,6 +28,7 @@ def instruments(candidate, release, logs):
         ('corpus-fractional', [py, 'parity/run.py', candidate, '--report', str(logs / 'corpus-fractional.json')],
          {'EVERLEDGER_PARITY_ORIGIN': FRACTIONAL}),
         ('self-suite', [py, '-m', 'unittest', 'parity.test_parity'], {}),
+        ('captured-roster', [py, 'parity/captured_roster.py', candidate], {}),
         ('argv-surface', [py, 'parity/argv_surface.py', candidate], {}),
         ('fuzz-read', [py, 'parity/fuzz.py', candidate, '--cases', '60', '--seed', '1',
                        '--report', str(logs / 'fuzz-read.json')], {}),

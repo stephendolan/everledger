@@ -1,169 +1,192 @@
-# Differences between the Rust port and the Python reference
+# Differences between the binary and the Python reference
 
-The Rust binary reproduces the Python reference byte for byte on stdout, exit
-codes, HTTP requests, and cache files, for every command over the fixture
-corpus. This file lists every place where it deliberately does not, and why.
-Anything that differs and is absent from this list is a defect.
+This register describes differences a caller can meet when switching between
+the binary and the [Python fallback](../python/README.md). It also identifies
+the policy a maintainer needs when reading a differential failure. A difference
+outside this register is a defect.
 
-The checks that enforce the list are the differential runner
-(`parity/run.py`), the argument-surface check (`parity/argv_surface.py`), the
-interrupt check (`parity/interrupts.py`), the damaged-cache check
-(`parity/damage.py`), and the oracle probe (`tests/oracle_probe.rs`).
+The [matrix](../parity/README.md) compares each implementation with the
+reference. Its named exemptions are rules, not blanket permission to change
+output. [Build comparison](../parity/README.md#compare-two-builds) checks two
+binaries' candidate transcripts without those exemptions.
 
-## Text on stderr
+## Diagnostics and help
 
-Exit codes and stdout still match in each of these cases.
+| Difference | Boundary and instrument |
+| --- | --- |
+| Parser usage errors | Clap and argparse use different stderr text. `argv-surface` holds acceptance and exit classification; `corpus` also exercises usage failures. |
+| Internal failures | The reference can print a Python exception or traceback; the binary names the failed boundary. `corpus` and `fuzz-read` allow selected stderr differences as `python-internal` or `shape-drift`. |
+| Catalogue download errors | The reference invokes curl and can print its diagnostic. `corpus` permits selected `external-tool` stderr differences. |
+| Help | The parsers produce different help text. `corpus` and `argv-surface` require successful, nonempty help; `tests/command_reference.rs` holds the binary's generated [reference](command-reference.md) byte for byte. |
 
-- **Usage errors.** The argument parser's own wording differs from argparse's.
-- **Internal failure text.** Where Python prints an exception (`error: 'latest'`,
-  a traceback), Rust names the boundary that failed.
-- **External tool text.** The Python reference shells out to curl for the
-  catalogue pages and prints curl's message on failure.
-- **Help.** `--help` output is the Rust parser's; the README command reference
-  is generated from it.
+CLI-defined failure messages, deprecation warnings, resync notices, and the
+catalogue-age advisory remain exact in the corpus and fuzz instruments.
 
-Contract text is exact: failure messages the CLI defines, deprecation
-warnings, resync notices, and the catalogue-age advisory.
+## Transport failures
 
-## Transport failure detail
+Connection failures include the HTTP library's detail in parentheses. For
+example, the reference can print `source unreachable (<urlopen error [Errno 111]
+Connection refused>)` while the binary prints
+`source unreachable (io: Connection refused (os error 111))`. The surrounding
+text, exit status, and other observations still match. `status` can include
+this detail in a source's JSON `state` or human output. The corpus and fuzz
+engine permit only this delimited detail as `transport-detail`.
 
-When a source cannot be reached at all, the message ends with the HTTP
-library's wording in parentheses: Python prints
-`source unreachable (<urlopen error [Errno 111] Connection refused>)` and Rust
-prints `source unreachable (io: Connection refused (os error 111))`. The text
-before the parentheses, the exit code, and everything else match. This is the
-one difference that can reach stdout: `status` reports the message as the
-unreachable source's `state`.
+A response cut off inside its headers has a separate rule in `damage`. The
+reference's HTTP library can accept a complete response with an empty body;
+the binary treats the connection as broken. The reference then fails on the
+empty body, usually with exit 1, or records a ForeverDB mapping failure. The
+binary reports an unreachable source with exit 4, or uses an eligible stale
+cache. `damage` requires each side to behave like its corresponding empty-body
+or broken-connection case. Connector requests agree because both use Python.
+Other malformed status lines, truncated declared bodies, and broken chunks
+remain unreachable-source failures on both sides.
 
-A response that ends inside its headers is a second case. Python's HTTP
-library takes what arrived as a complete response with no body, so the command
-fails on the empty body: exit code 1 from most sources, and from ForeverDB a
-failed sync that reports an API shape mismatch. Rust's HTTP library takes it as
-a connection that broke: the source is unreachable, with all that follows. A
-command that needs the source exits 4, a sync records a failed attempt, and a
-lookup or refresh that holds a cached copy serves it as stale. A sync through
-the connector is the same on both sides, because Python makes its request.
+## Shape drift and cache files
 
-Both implementations report every other malformed response as an unreachable
-source: a status line that is not HTTP, a body or an error body shorter than
-its declared length, a broken chunk.
+Typed views refuse fields whose required type or presence does not fit the
+boundary. The reference can compute an answer from the same payload or fail
+inside a command. `corpus` and the fuzz instruments require matching exits for
+their selected shape-drift cases while permitting a nonempty boundary
+diagnostic. `damage` separately permits the binary to refuse a cache the
+reference accepts: exit 1, empty stdout, no additional request, and the damaged
+file unchanged.
 
-## Shape drift fails at the boundary
+| Cache | Examples held by `damage` |
+| --- | --- |
+| Attempt journal | `spends` must be a list of spends with a timestamp and whole nonnegative request count when sync reads it. `failed` is boolean and `status` is numeric or null. The reference can enlarge its budget with a negative spend or discard an expired spend unread. |
+| Checkpoint | Read offsets and counts must be numeric, and mapped seller rows must satisfy their views. The reference can send a text offset to the service. |
+| Index | Read items, counts, fetch time, and seller rows must satisfy the index view. The reference can answer a lookup that avoids a damaged field or spend requests before failing to rebuild the index. |
+| Ninja cache | Required snapshot and seller fields retain their types and nullable output keys. The reference can print rows without validating every field and replace them on refresh. |
+| Sync identity | Journal, checkpoint, and index `sync_id` values must be strings where decoded; the reference compares the values it finds. |
 
-Where a payload does not have the shape the contract describes, Python limps
-on or raises from deep inside a command. Rust refuses the payload where it is
-decoded, with the exit code Python would have produced. This covers a
-container where a scalar belongs, a number where a string belongs, and a
-missing required field.
+A command cannot replace a cache file it cannot decode. Where the reference
+fails on damaged data, `damage` requires the binary to fail too. The journal
+reader used by lookups does not validate sync-only spend fields; the
+[architecture](architecture.md#the-foreverdb-sync) describes that boundary.
 
-The cache files are such payloads when something other than this program wrote
-them: the ForeverDB journal, checkpoint, and index, and the ninja cache files.
-Each field that every writer writes must be present and hold its type; a field
-a writer may leave null may be null. A command that reads a file failing that
-exits 1 with nothing on stdout, and sends no request Python would not have
-sent. Python computes with what it finds, so the two differ wherever Python
-gets by:
+## Roster readings
 
-- **In the journal**, `spends` that are not a list of spends, each with a
-  `finished_at` and a whole, non-negative `requests`; a `failed` that is not a
-  boolean; a `status` that is not a number. A negative spend enlarges Python's
-  budget, and an expired spend is dropped unread.
-- **In the checkpoint**, a `next_offset` or `total_requests` that is not a
-  number, and a seller row with a field missing or of another type. Python
-  sends text for `next_offset` to the service as the offset.
-- **In the index**, `items` that are not an object, a count or `fetched_at`
-  missing, and a seller row with a field missing or of another type. Python
-  answers the lookups that do not touch the field, and a refresh syncs and
-  replaces the file. A list of items fails only when the next index is built
-  from it, after the requests are spent.
-- **In a ninja cache file**, a field missing or of another type. Python prints
-  the rows as they are, and a refresh fetches the item again and replaces the
-  file.
-- **In the journal, checkpoint, or index**, a `sync_id` that is not text.
-  Python compares whatever it finds.
+The service v1.3.0 capture taken on November 19, 2026 establishes the
+[journal and roster shapes](journalator-contract.md#service-capture-and-adapter-readings).
+Unread keys remain in the ordered document unless the command explicitly
+replaces or removes them.
 
-Rust goes on refusing such a file until it is removed: no command writes over
-a file it cannot read. Rust is never the more lenient of the two. Where Python
-fails on a damaged file, Rust fails too.
-
-## Inputs the port does not accept
-
-- **Non-ASCII digits.** Python reads any Unicode decimal digit as a number, in
-  integer arguments, the daily request cap, numeric item IDs, relative time
-  selectors (`٣d`), epoch strings, vendor price text, and a quantity sent as
-  text. Rust reads ASCII digits.
-- **Integers beyond 64 bits** in integer arguments, the daily request cap, and
-  quantities. Python integers are unbounded.
-- **Unpaired UTF-16 surrogates** in JSON strings. They cannot be Rust strings.
-- **UTF-16 and UTF-32 JSON bodies.** Rust accepts UTF-8, with or without a
-  byte-order mark.
-
-## Roster spellings only the reference reads
-
-The v1.3.0 service capture of November 19, 2026 establishes these spellings.
-The differential fixtures send the service spellings to both implementations.
-Unknown fields still pass through in the ordered document; ignoring a field
-for a decision does not by itself remove it from JSON output.
-
-| Removal | Reference-only input | Rust behavior |
+| Rule | Reference-only reading | Binary behavior |
 | --- | --- | --- |
-| R1 | `sources` as an object keyed by name | Refuses it when sources are read; accepts a list, including on inventory responses. |
-| R2 | An entry's `actor.character` | Ignores it; reads only the optional entry `character`. |
-| R3 | An unwrapped character response | Refuses it at character-response decoding; requires the `character` wrapper. Commands retain their existing failure handling, including recipe's roster fallback. |
-| R4 | Service page rows under `events` | Ignores them as service rows; reads optional `entries`. Command aggregates have their own `events` array. |
-| R5 | `matched`, `returned`, and `counts.matched`/`counts.returned` | Ignores them and does not recount. All service counts, including `matched_count` and `returned_count`, pass through unchanged. |
-| R6 | A listing's `item`, or flattened price/availability inputs | Uses optional `item_id`/`name` and `price.recorded`/`price.available`. Overwrites flattened output fields from the nested price, with the same defaults and insertion order. |
-| R7 | An entry's own `item_id`/`name` | Ignores them for item decisions; reads the optional `item` object. Inventory retains both item readings, nested first. |
-| R8 | A page cursor view's item as text | Refuses the cursor as a usage error (exit 2); item views are objects. |
+| R1 | Endpoint `sources` as an object keyed by name | Requires a list, including on inventory responses. A null, scalar, or other non-list value also fails with `expected array`. |
+| R2 | Entry `actor.character` | Ignores it and reads optional entry `character`. An unread `actor` can be a string without being decoded. |
+| R3 | An unwrapped character detail | Requires the `character` wrapper. `character: null` exits 1 with decoder wording such as `invalid type: null, expected struct Character`. Recipe keeps its roster-failure fallback. |
+| R4 | Page rows under `events` | Reads optional `entries`. An unread `events` value, even of another type, is not decoded as rows. Command aggregates have their own `events` array. |
+| R5 | `matched`, `returned`, and `counts.matched`/`counts.returned` as counts to recompute | Leaves service counts untouched. `net` also retains `matched`, `returned`, and `counts` if the service sends them; the reference removes them there. |
+| R6 | Listing `item` and flattened price or availability inputs | Reads `item_id`/`name` and `price.recorded`/`price.available`. It derives flattened output fields from nested price with the established defaults and insertion order. An unread flat `bid_copper` can be a string; nested recorded prices still require their types. |
+| R7 | Entry-level `item_id`/`name` | Reads the optional `item` object. Unread flat values, including a numeric `name`, do not affect decisions or cause a type error. Inventory retains nested-first and flat item readings. |
+| R8 | Text for a page cursor's item view | Requires an object and refuses a text item as a usage error, exit 2. |
 
-Removing the row aliases and the unwrapped selector response also removes
-those views' serde flattening. Unread row and selected-character values then
-use the skipping decode path: deeply nested values can succeed where the base
-binary rejects them, and invalid non-finite numbers can have different error
-wording. These are side effects of R3, R6, and R7. Page views retain their
-unflattened decode path and failure boundary. Inventory and wrapped character
-details retain their existing decode paths.
+The same unread-key rule applies to malformed values under R2, R4, R6, and R7:
+being present in output does not mean the key supplies a typed decision.
+Character and row views skip unread values rather than buffering them. They
+can accept deep unread structures up to the document parser's limit, described
+below; non-finite unread values still fail with a boundary diagnostic.
 
-The capture does not establish error bodies, 409 recovery, pricing source
-internals, inventory internals, or unavailable journals. Those contracts retain
-their accepted spellings and defaults. In particular, nested `item.id_basis`
-and the pricing source timestamp and age alternatives remain supported.
+The captured `/characters` profession object also differs in the loopback
+replay: `char` exits 1 in the binary and 0 in the reference. For a matching
+`recipe`, the binary returns its catalogue answer with known-by not checked
+and exit 0; the reference exits 1 while reading those professions. No matrix
+instrument sends that list-member profession object. The
+[journal contract](journalator-contract.md#characters) describes the shape.
+
+Instrument: `captured-roster` compares the service-shaped successful answers;
+`corpus` and `fuzz-read` use the retained spellings. No matrix instrument
+exhaustively exercises the rejected aliases or their wrong-type side effects.
+`compare_builds.py` checks those effects byte for byte when its suites reach
+them. The capture does not establish inventory, pricing interiors, unavailable
+journals, or error bodies; their fixture-established readings remain supported.
+
+## Non-finite numbers in successful responses
+
+The reference accepts `NaN`, `Infinity`, and a float literal such as `1e400`
+that overflows a double. The binary refuses them even under a key no command
+reads. Loopback probes place each value in an unread response field:
+
+| Source and command | Reference | Binary |
+| --- | --- | --- |
+| Roster page, `events --since 30d --json` | Exit 0; echoes the extra field. | Exit 1; roster boundary error. |
+| AHledger quote, `price 2604 --json`, unread field inside `sales` | Exit 0; echoes that sales field. | Exit 1; AHledger quote boundary error. |
+| ForeverDB list or vendor detail, `refresh catalogue --json` | Exit 0; completes the sync. Unread list/vendor fields are not copied into the mapped index. | Exit 4; failed sync with a mapping error in `vendor_sync`. |
+
+The reference echoes non-finite values where the command retains the response;
+`1e400` is emitted as `Infinity`. An unread top-level AHledger quote field is
+dropped by `price` in the reference, but still causes the binary to refuse the
+response. A ForeverDB sell's raw fields can survive in the index, while an unread field on the list or vendor itself does not.
+
+Instrument: none for these successful-response cases. No parity instrument
+sends these values in those fields, so the harness does not hold this
+difference. Non-finite `retry_after` values in `corpus` and `interrupts` exercise
+the separate error-body retry contract.
+
+## Deep nesting
+
+The document parser and typed decoder have separate limits. Views that buffer
+unread keys through `#[serde(flatten)]` are limited by the typed decoder's
+nesting counter; enclosing containers count toward it. These views are in
+[src/foreverdb/mapping.rs](../src/foreverdb/mapping.rs). Other views skip unread
+structures without that buffering limit.
+
+Loopback probes use an empty array wrapped in more arrays under an unread
+`extra` key. The reference returns exit 0 for all the depths below.
+
+| Response and command | Binary observation |
+| --- | --- |
+| Roster page, `events --since 30d --json` | 126, 127, 200, and 256 nested arrays succeed with exit 0; 257 exits 1. |
+| AHledger quote, `price 2604 --json` | The same tested depths and exits as the roster page. |
+| ForeverDB list, `refresh catalogue --json` | 126, 127, 200, and 256 nested arrays succeed; 257 is a failed sync, exit 4. |
+| ForeverDB vendor detail, unread field in `data` | 125 nested arrays succeed; 126 or more fail the mapping, exit 4. |
+| ForeverDB sell, unread field inside a sell | 123 nested arrays succeed; 124 or more fail the mapping, exit 4. |
+
+The command for both detail cases is `refresh catalogue --json`. The earlier
+boundary for a sell reflects its enclosing object and `sells` array. The
+reference accepts greater depths while its own recursion limit allows them.
+These results concern unread values; required fields still have their own
+shape rules.
+
+Instrument: none. No parity instrument sends these depths, so the harness does
+not hold either the buffered-view difference or the document-depth difference.
 
 ## Interrupts
 
-Python takes Ctrl-C as an exception in the thread that is syncing. Rust takes
-it on a second thread, which closes the journal and then ends the process as
-SIGINT ends one. Both record what the attempt spent. They differ at the edges:
+Python handles Ctrl-C as an exception in the syncing thread. The binary closes
+the journal on a second thread and ends as SIGINT ends a process. Both preserve
+request spend. Their edge behavior differs:
 
-- **Between a change and its write.** An interrupt can land after the
-  checkpoint changed in memory and before the write that follows. Python
-  writes what it holds in memory; Rust writes the state it last wrote. The
-  next attempt fetches that one page or detail again, inside its budget.
-- **While a failure is being recorded.** An interrupt can land after a request
-  has failed and before the journal and checkpoint that record the failure are
-  both written. Python leaves each file as that moment finds it: the failure in
-  the journal, or the journal still open. Rust records the attempt as
-  interrupted and keeps its checkpoint, which is what both do when the
-  interrupt lands while the request is in flight.
-- **Before the signal thread exists.** An interrupt during the first journal
-  write of an attempt ends the Rust process at once and can leave that write's
-  temporary file behind. Python removes its temporary file as it unwinds.
-- **SIGINT ignored at startup**, as for a background job of a non-interactive
-  shell. Python stays deaf to the signal. Rust closes its journal and ends.
+| Signal timing or state | Binary behavior versus reference | Instrument |
+| --- | --- | --- |
+| Between an in-memory checkpoint change and its write | Saves its last written checkpoint; the reference saves its in-memory change. Resumption can fetch that page or detail again within budget. | None targets this exact gap; `recovery` holds requests and tests both signals and transports. |
+| While recording a failure | Records interruption and retains its checkpoint; the reference leaves the journal and checkpoint at the point the exception lands. | None targets this exact gap. |
+| Before the signal thread exists | Can leave the first journal write's temporary file; the reference unwinds and removes its temporary file. | None targets this exact gap. |
+| SIGINT ignored at startup | Closes the journal and exits; the reference keeps ignoring the signal. | None. |
 
-## CPython artifacts left behind
+`interrupts` holds the shared cases of a lost stderr reader and a signal during
+ninja refresh, and checks large retry delays. `recovery` and `corpus` hold
+request-boundary interruption and subsequent resumption. Their timing coverage
+does not imply coverage of every instruction between writes.
 
-- `datetime.fromisoformat` accepts one stray character between the time and a
-  UTC offset (`2026-11-14T10:30:15 Z`). Rust rejects it.
-- CPython fails to convert a naive date within a day of its minimum or maximum
-  (`0001-01-01`, `9999-12-31`). Rust applies one rule: an instant is valid from
-  `0001-01-01T00:00:00Z` through `9999-12-31T23:59:59.999999Z`.
-- CPython refuses to convert a decimal string of more than 4,300 digits, a guard
-  on its unbounded integers that each interpreter can reconfigure. Rust reads
-  the number when it fits 64 bits, so an integer argument or a daily request cap
-  padded with thousands of leading zeros is accepted.
-- A negative amount that rounds to zero copper prints `0c`; Python prints `-0c`.
-- Python finds a vendor page's `Last-Modified` header only in that exact letter
-  case and otherwise reports no publication time. Rust finds it in any case.
-- Lowercasing follows the Unicode version of the Rust toolchain. It differs
-  from Python 3.13 on 75 letters added to Unicode since version 15.1.
+## Other input and rendering differences
+
+| Difference | Instrument |
+| --- | --- |
+| Integer arguments, numeric item IDs, quantities, relative-time digits, epoch strings, and vendor price text use ASCII digits; Python accepts Unicode decimal digits. | `argv-surface` holds arguments and the daily cap; `tests/oracle_probe.rs` holds relative selectors and epoch strings. No instrument covers every response spelling. |
+| Integer arguments, the daily cap, and quantities are bounded by their Rust integer types; Python integers are unbounded. | `argv-surface` holds argument and cap limits. |
+| Unpaired UTF-16 surrogates cannot be Rust strings. | No differential instrument; the primitive probe skips unrepresentable records. |
+| JSON response bodies use UTF-8, with an optional byte-order mark; Python also accepts UTF-16 and UTF-32. | None. |
+| A negative amount rounding to zero copper prints `0c`; Python prints `-0c`. | `tests/oracle_probe.rs` explicitly normalizes this money expectation. |
+| Vendor page `Last-Modified` lookup is case-insensitive; Python recognizes only that exact case. | None covers the difference; HTTP boundary tests hold case-insensitive lookup. |
+| Case conversion follows the toolchain's Unicode tables and can differ from Python's Unicode version. | The primitive probe holds its recorded characters; no instrument exhausts characters outside that corpus. |
+
+## Historical note
+
+The binary is written against the Python implementation at commit `6f72b44`
+and the differential harness holds it to that reference. It has been the live implementation since
+November 18, 2026. Rare CPython exceptions for an extra date separator,
+naive dates at years 1 and 9999, and interpreter-configurable decimal conversion
+limits remain in the primitive-probe and argument-surface policies.

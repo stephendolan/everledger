@@ -1,3 +1,7 @@
+# Command reference
+
+Generated from `--help`; regenerate with `python3 scripts/update_command_reference.py target/release/everledger`.
+
 ```text
 everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.
 
