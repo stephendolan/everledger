@@ -3,7 +3,7 @@ use crate::{
     catalogue::{self, Catalogue},
     commands::bridge::color_at,
     human::{bridge::color, copper_money, integer, text, value},
-    read_roster::{Character, CharacterSnapshot, Knowledge, known_ids},
+    read_roster::{Character, CharacterResponse, Knowledge, known_ids},
 };
 fn summary(c: &Character) -> String {
     format!(
@@ -25,12 +25,12 @@ pub fn list(chars: &[Character]) -> Vec<String> {
     }
 }
 pub fn character(
-    s: &CharacterSnapshot,
+    s: &crate::http::Payload<CharacterResponse>,
     cat: Option<&Catalogue>,
     profession: Option<&str>,
     skill: Option<i64>,
 ) -> Result<Vec<String>> {
-    let c = &s.character;
+    let c = &s.view().character;
     let mut lines = vec![
         format!(
             "{} | {} {} | gold {} | hearth {}",
@@ -42,7 +42,7 @@ pub fn character(
         ),
         format!(
             "  (roster snapshot generated {}; professions updated {})",
-            text(s.payload.view().generated_at.as_deref()),
+            text(s.view().generated_at.as_deref()),
             text(c.professions_updated_at.as_deref())
         ),
     ];

@@ -1,7 +1,7 @@
 use crate::{
-    catalogue::RecordedItem,
+    catalogue::ItemRef,
     human::{boolean, copper_money, text},
-    journal::{EventRow, Journal, TimeBound},
+    journal::{EventRow, Journal, JournalState, TimeBound},
 };
 
 pub const SNAPSHOT_RESTART: &str = "snapshot_changed: restarting the complete query once";
@@ -12,35 +12,25 @@ pub fn resync_notice(hint: &TimeBound) -> String {
     };
     format!("cursor_invalid: resynchronizing once from {hint}")
 }
-pub fn item_name(item: Option<&RecordedItem>) -> String {
-    item.and_then(|i| i.name.as_ref())
+pub fn item_name(item: ItemRef<'_>) -> String {
+    item.name
         .filter(|s| !s.is_empty())
-        .cloned()
-        .or_else(|| {
-            item.and_then(|i| i.id.as_ref())
-                .filter(|n| **n != 0)
-                .map(ToString::to_string)
-        })
+        .map(str::to_owned)
+        .or_else(|| item.id.filter(|n| *n != 0).map(|n| n.to_string()))
         .unwrap_or_else(|| "unknown".into())
 }
-pub fn journal_unavailable(data: &Journal) -> String {
-    format!(
-        "journal {}: {}",
-        text(data.view().state.as_deref()),
-        text(data.view().reason.as_deref())
-    )
+pub fn journal_unavailable(data: &JournalState<'_>) -> String {
+    format!("journal {}: {}", text(data.state), text(data.reason))
+}
+pub fn unavailable_line(data: &JournalState<'_>) -> Option<String> {
+    data.unavailable().then(|| journal_unavailable(data))
 }
 pub fn event_lines(rows: &[EventRow]) -> Vec<String> {
     let lines = rows
         .iter()
         .map(|row| {
             let e = row.view();
-            let item = e.item.item.as_ref();
-            let by_name = e.match_basis.as_deref() == Some("name")
-                || item.is_some_and(|i| {
-                    i.id_basis.as_deref() == Some("name")
-                        || i.id.as_ref().is_none() && i.name.as_ref().is_some_and(|s| !s.is_empty())
-                });
+            let item = e.item();
             let quantity = e
                 .count
                 .map_or_else(|| "quantity unknown".into(), |n| format!("{n}x"));
@@ -51,7 +41,7 @@ pub fn event_lines(rows: &[EventRow]) -> Vec<String> {
                 e.event_type,
                 item_name(item),
                 copper_money(e.cash_copper),
-                if by_name {
+                if e.matched_by_name() {
                     " | item matched by name"
                 } else {
                     ""
@@ -66,11 +56,8 @@ pub fn event_lines(rows: &[EventRow]) -> Vec<String> {
     }
 }
 pub fn lines(data: &Journal, rows: &[EventRow]) -> Vec<String> {
-    let mut lines = if data.view().available == Some(false) {
-        vec![journal_unavailable(data)]
-    } else {
-        event_lines(rows)
-    };
+    let mut lines = unavailable_line(&data.view().journal_state())
+        .map_or_else(|| event_lines(rows), |line| vec![line]);
     let d = data.view();
     lines.push(format!(
         "next_cursor: {} | has_more: {} | after_cursor: {} | checkpoint: {}",

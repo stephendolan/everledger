@@ -79,8 +79,8 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let mut used = vec![catalogue::catalogue_source(cat, context.clock)?];
     let ch = if let Some(n) = name {
         let s = read_roster::character(context, n)?;
-        used.extend(crate::provenance::sources(s.payload.document())?);
-        Some(s.character)
+        used.extend(crate::provenance::sources(s.document())?);
+        Some(s)
     } else {
         None
     };
@@ -116,7 +116,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     for prof in &profs {
         let mut skill = args.level;
         let mut known = None;
-        if let Some(c) = &ch {
+        if let Some(c) = ch.as_ref().map(|s| &s.view().character) {
             match read_roster::known_ids(c, prof) {
                 Knowledge::Unavailable => {
                     if args.profession.as_ref().is_some_and(|p| !p.is_empty()) {

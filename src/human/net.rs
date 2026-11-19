@@ -1,9 +1,9 @@
 use crate::{
     commands::net::Totals,
     human::{copper_money, integer},
-    journal::Journal,
+    journal::Aggregate,
 };
-pub fn lines(t: &Totals, journal: &Journal, by_name: bool) -> Vec<String> {
+pub fn lines(t: &Totals, journal: &Aggregate, by_name: bool) -> Vec<String> {
     let mut lines = vec![
         t.item
             .name
@@ -34,9 +34,9 @@ pub fn lines(t: &Totals, journal: &Journal, by_name: bool) -> Vec<String> {
         "realized profit unknown; holding/materials basis unknown; real posting cycle unverified"
             .into(),
     ];
-    if journal.view().available == Some(false) {
-        lines.push(crate::human::events::journal_unavailable(journal));
-    }
+    lines.extend(crate::human::events::unavailable_line(
+        &journal.view().journal_state(),
+    ));
     if by_name {
         lines.push("item match basis: name (linkless journal rows)".into());
     }

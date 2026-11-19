@@ -193,28 +193,22 @@ pub struct Item {
     pub id: i64,
     pub name: Option<String>,
 }
-pub fn resolve_item(query: &str, cat: &Catalogue) -> Result<Item> {
-    if !query.is_empty() && query.bytes().all(|b| b.is_ascii_digit()) {
-        let n = query;
-        return Ok(Item {
-            id: n
-                .parse()
-                .map_err(|_| Failure::error("item ID out of range"))?,
-            name: None,
-        });
-    }
+fn recipe_items(cat: &Catalogue) -> Result<impl Iterator<Item = &RecipeItem>> {
+    Ok(recipes(cat)?
+        .into_iter()
+        .flat_map(|r| std::iter::once(&r.recipe.result).chain(&r.recipe.reagents)))
+}
+fn resolve_name(query: &str, cat: &Catalogue) -> Result<Item> {
     let mut hits = vec![];
-    for r in recipes(cat)? {
-        for item in std::iter::once(&r.recipe.result).chain(&r.recipe.reagents) {
-            if item.item_id.is_some_and(|id| id != 0) && casefold(&item.name) == casefold(query) {
-                let Some(id) = item.item_id else {
-                    continue;
-                };
-                if let Some((_, name)) = hits.iter_mut().find(|(i, _)| *i == id) {
-                    *name = item.name.clone();
-                } else {
-                    hits.push((id, item.name.clone()));
-                }
+    let query = casefold(query);
+    for item in recipe_items(cat)? {
+        if let Some(id) = item.item_id.filter(|id| *id != 0)
+            && casefold(&item.name) == query
+        {
+            if let Some((_, name)) = hits.iter_mut().find(|(i, _)| *i == id) {
+                *name = item.name.clone();
+            } else {
+                hits.push((id, item.name.clone()));
             }
         }
     }
@@ -242,9 +236,7 @@ pub fn item_for(query: &str, context: &Context<'_>) -> Result<Item> {
             .ok()
             .ok_or_else(|| Failure::error("invalid integer item ID"))?;
         let name = if let Ok(cat) = load_catalogue(context) {
-            recipes(cat)?
-                .into_iter()
-                .flat_map(|r| std::iter::once(&r.recipe.result).chain(&r.recipe.reagents))
+            recipe_items(cat)?
                 .find(|r| r.item_id == Some(id))
                 .map(|r| r.name.clone())
         } else {
@@ -252,7 +244,7 @@ pub fn item_for(query: &str, context: &Context<'_>) -> Result<Item> {
         };
         Ok(Item { id, name })
     } else {
-        resolve_item(query, load_catalogue(context)?)
+        resolve_name(query, load_catalogue(context)?)
     }
 }
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -263,29 +255,32 @@ pub struct RecordedItem {
     pub name: crate::provenance::Field<String>,
     pub id_basis: Option<String>,
 }
-#[derive(Clone, Debug, Deserialize)]
-pub struct ItemRow {
-    pub item: Option<RecordedItem>,
-    pub item_id: Option<i64>,
-    pub name: Option<String>,
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ItemRef<'a> {
+    pub id: Option<i64>,
+    pub name: Option<&'a str>,
+    pub id_basis: Option<&'a str>,
 }
-pub fn item_matches(row: &ItemRow, item: &Item) -> bool {
-    use crate::provenance::Field;
-    let id = match row.item.as_ref().map(|i| &i.id) {
-        None | Some(Field::Missing) => row.item_id,
-        Some(Field::Null) => None,
-        Some(Field::Value(id)) => Some(*id),
-    };
-    if let Some(id) = id {
+impl RecordedItem {
+    pub fn reference(&self) -> ItemRef<'_> {
+        ItemRef {
+            id: self.id.as_ref().copied(),
+            name: self.name.as_ref().map(String::as_str),
+            id_basis: self.id_basis.as_deref(),
+        }
+    }
+}
+impl ItemRef<'_> {
+    pub fn matched_by_name(self) -> bool {
+        self.id_basis == Some("name")
+            || self.id.is_none() && self.name.is_some_and(|s| !s.is_empty())
+    }
+}
+pub fn item_matches(row: ItemRef<'_>, item: &Item) -> bool {
+    if let Some(id) = row.id {
         return id == item.id;
     }
-    let name = match row.item.as_ref().map(|i| &i.name) {
-        None | Some(Field::Missing) => row.name.as_deref(),
-        Some(Field::Null) => None,
-        Some(Field::Value(name)) => Some(name.as_str()),
-    };
-
-    match (name, item.name.as_deref()) {
+    match (row.name, item.name.as_deref()) {
         (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => casefold(a) == casefold(b),
         _ => false,
     }
@@ -295,12 +290,11 @@ pub enum MatchBasis {
     Id,
     Name,
 }
-pub fn item_basis(row: &ItemRow) -> MatchBasis {
-    match &row.item {
-        Some(i) if i.id.as_ref().is_some() && i.id_basis.as_deref() != Some("name") => {
-            MatchBasis::Id
-        }
-        _ => MatchBasis::Name,
+pub fn item_basis(row: ItemRef<'_>) -> MatchBasis {
+    if row.id.is_some() && row.id_basis != Some("name") {
+        MatchBasis::Id
+    } else {
+        MatchBasis::Name
     }
 }
 pub fn disclose_item_source(

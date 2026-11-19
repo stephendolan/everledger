@@ -82,19 +82,19 @@ fn virtual_clock_uses_one_elapsed_value() {
 }
 #[test]
 fn items_respect_explicit_nulls_and_python_equality() {
-    use everledger::catalogue::{Item, ItemRow, item_matches};
+    use everledger::catalogue::{Item, RecordedItem, item_matches};
     let item = Item {
         id: 42,
         name: Some("STRASSE".into()),
     };
     for (payload, expected) in [
-        (r#"{"item":{"id":null},"item_id":42}"#, false),
-        (r#"{"item":{},"item_id":42}"#, true),
-        (r#"{"item":{"name":"Straße"}}"#, true),
-        (r#"{"item":{"name":null},"name":"Straße"}"#, false),
+        (r#"{"id":null}"#, false),
+        (r#"{"id":42}"#, true),
+        (r#"{"name":"Straße"}"#, true),
+        (r#"{"name":null}"#, false),
     ] {
-        let row: ItemRow = document::parse(payload).unwrap().decode("test").unwrap();
-        assert_eq!(item_matches(&row, &item), expected);
+        let row: RecordedItem = document::parse(payload).unwrap().decode("test").unwrap();
+        assert_eq!(item_matches(row.reference(), &item), expected);
     }
     assert_eq!(
         document::parse("0").unwrap(),

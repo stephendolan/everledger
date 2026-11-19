@@ -899,3 +899,91 @@ fn vendor_footer_uses_fetch_time_when_publication_and_age_are_null() {
             .contains("wowforever.ninja pins (saved/data 2026-11-15T12:00:00Z; age 0s)")
     );
 }
+
+#[test]
+fn captured_roster_shapes_match_reference_stdout_and_exit_codes() {
+    let result = std::process::Command::new("python3")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/parity/captured_roster.py"
+        ))
+        .arg(env!("CARGO_BIN_EXE_everledger"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "captured roster: 18 stdout byte comparisons; both exit codes 0; listing key order preserved\n"
+    );
+    print!("{stdout}");
+}
+
+#[test]
+fn inventory_item_fallback_distinguishes_absent_and_null_fields() {
+    for (item, selected) in [
+        (r#"{"id":null}"#, false),
+        (r#"{}"#, true),
+        (r#"{"id":null,"name":"rEd DyE"}"#, true),
+        (r#"{"id":null,"name":null}"#, false),
+    ] {
+        let f = Fixture::new();
+        f.market("88");
+        f.raw("/characters", r#"{"characters":[{"name":"Slade"}]}"#);
+        f.raw("/events?limit=500&since=1794139200", r#"{"entries":[]}"#);
+        f.raw("/listings?item=2604", r#"{"listings":[]}"#);
+        f.raw("/characters/Slade/inventory", &format!(
+            r#"{{"bags":{{"available":true,"items":[{{"item_id":2604,"count":4,"item":{item}}}]}}}}"#
+        ));
+        let output = f
+            .command(&["positions", "--item", "2604", "--json"])
+            .unwrap();
+        assert_eq!(
+            output
+                .data
+                .get("positions")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            usize::from(selected),
+            "{item}"
+        );
+    }
+}
+
+#[test]
+fn unread_page_values_use_the_service_decode_path() {
+    for (value, succeeds) in [
+        ("[".repeat(200) + &"]".repeat(200), true),
+        ("NaN".into(), false),
+        ("[Infinity]".into(), false),
+        ("1e400".into(), false),
+    ] {
+        let f = Fixture::new();
+        f.raw(
+            "/events?cursor=page",
+            &format!(r#"{{"entries":[],"extra":{value}}}"#),
+        );
+        match f.command(&["events", "--cursor", "page", "--json"]) {
+            Ok(output) => {
+                assert!(succeeds);
+                assert_eq!(
+                    output.data.get("extra"),
+                    Some(&document::parse(&value).unwrap())
+                );
+            }
+            Err(error) => {
+                assert!(!succeeds);
+                assert_eq!(
+                    error.message,
+                    "roster: invalid response shape (expected value)"
+                );
+            }
+        }
+    }
+}

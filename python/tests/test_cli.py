@@ -72,7 +72,7 @@ class CLI(unittest.TestCase):
         Handler.routes = {
             '/items/2604.json': (200, json.loads((FIX / '2604.json').read_text())),
             '/items/2604.pins.json': (200, json.loads((FIX / '2604.pins.json').read_text())),
-            '/events': (200, {'events': [], 'next_cursor':None, 'checkpoint':'opaque+/=', 'has_more':False,
+            '/events': (200, {'entries': [], 'next_cursor':None, 'checkpoint':'opaque+/=', 'has_more':False,
                                'sources':[{'file':'Journalator.lua','mtime':'2020-01-01T00:00:00Z','stale':True}]}),
             '/listings': (200, {'listings':[], 'sources':[]}),
             '/characters': (200, {'characters':[], 'sources':[]}),
@@ -127,8 +127,8 @@ class CLI(unittest.TestCase):
         self.live_contract()
         self.market()
         Handler.routes['/listings'] = (200, {'listings':[
-            {'item':{'id':100,'name':'Red Woolen Boots'}, 'count':1, 'buyout_copper':2499},
-            {'item':{'id':101,'name':'Hands of Darkness'}, 'count':1, 'buyout_copper':4298}], 'sources':[]})
+            {'item_id':100,'name':'Red Woolen Boots', 'count':1, 'price':{'recorded':{'buyout_copper':2499}}},
+            {'item_id':101,'name':'Hands of Darkness', 'count':1, 'price':{'recorded':{'buyout_copper':4298}}}], 'sources':[]})
         d = json.loads(self.run_cli('events','--since','2026-11-08T00:00:00Z','--json').stdout)
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(Handler.requests[0]).query)
         self.assertEqual(query['since'], ['1794096000'])
@@ -232,7 +232,7 @@ class CLI(unittest.TestCase):
         Handler.routes['/listings'] = (200, {'listings':[
             {'item_id':2604, 'name':'Red Dye', 'character':'Slade', 'count':2},
             {'item_id':100, 'name':'Red Woolen Boots', 'character':'Slade', 'count':1}],
-            'scans':scans, 'counts':{'matched':99,'returned':99},
+            'scans':scans, 'matched_count':99,'returned_count':99,
             'sources':[s['pricing']['source'] for s in scans]})
         Handler.routes['/events'] = (200, {'entries':[
             self.event(t, None, None, character=None, recorded_at=None)
@@ -262,7 +262,7 @@ class CLI(unittest.TestCase):
         data = json.loads(self.run_cli('listings','--json').stdout)
         self.assertIsNone(data['listings'][0]['undercut'])
         self.assertIsNone(data['listings'][0]['expires_at'])
-        self.assertEqual(data['counts'], {'matched':2,'returned':2})
+        self.assertEqual((data['matched_count'],data['returned_count']), (99,99))
 
     def test_human_has_one_trailing_source_summary(self):
         for args in self.output_fixture():
@@ -280,23 +280,21 @@ class CLI(unittest.TestCase):
         rows = [self.event(t, 1, -10, id=str(i)) for i, t in enumerate(
             ['purchase'] * 4 + ['sale'] * 2 + ['expiration'] * 2)]
         Handler.routes['/events'] = (200, {'entries':rows[:5], 'has_more':True,
-            'next_cursor':'second', 'counts':{'matched':8, 'returned':5},
-            'matched':8, 'returned':5, 'sources':[]})
+            'next_cursor':'second', 'matched_count':8, 'returned_count':5, 'sources':[]})
         Handler.routes['/events?limit=500&cursor=second'] = (200, {
             'entries':rows[5:], 'has_more':False, 'checkpoint':'terminal',
-            'counts':{'matched':8, 'returned':3}, 'matched':8, 'returned':3, 'sources':[]})
+            'matched_count':8, 'returned_count':3, 'sources':[]})
         for command, expected in [('purchases',4), ('sales',2), ('expirations',2)]:
             with self.subTest(command=command):
                 if command == 'expirations':
                     self.market()
                 data = json.loads(self.run_cli(command,'--json').stdout)
                 self.assertEqual(len(data[command]), expected)
-                self.assertEqual(data['counts'], {'matched':expected, 'returned':expected})
-                self.assertEqual((data['matched'],data['returned']), (expected,expected))
+                self.assertEqual((data['matched_count'],data['returned_count']), (8,3))
         data = json.loads(self.run_cli('events','--type','sale','--json').stdout)
-        self.assertEqual(data['counts'], {'matched':1, 'returned':1})
+        self.assertEqual((data['matched_count'],data['returned_count']), (8,5))
         data = json.loads(self.run_cli('events','--limit','0','--json').stdout)
-        self.assertEqual(data['counts'], {'matched':0, 'returned':0})
+        self.assertEqual((data['matched_count'],data['returned_count']), (8,3))
 
     def test_stale_notice_and_exit_code_follow_the_same_freshness_decision(self):
         commands = self.output_fixture()
@@ -565,7 +563,7 @@ class CLI(unittest.TestCase):
     def test_sales_proceeds_and_linkless_basis(self):
         sale=self.event('sale',4,38400,value_copper=40000,proceeds_copper=38000,
                         item={'id':None,'name':'rEd dYe'})
-        Handler.routes['/events']=(200,{'events':[sale],'sources':[{'file':'Journalator.lua','mtime':'2020-01-01T00:00:00Z','stale':True}]})
+        Handler.routes['/events']=(200,{'entries':[sale],'sources':[{'file':'Journalator.lua','mtime':'2020-01-01T00:00:00Z','stale':True}]})
         d=json.loads(self.run_cli('sales','--item','2604','--json').stdout)
         self.assertEqual(d['proceeds_copper'],38000)
         self.assertEqual(d['sales'][0]['match_basis'],'name')
@@ -602,7 +600,7 @@ class CLI(unittest.TestCase):
         Handler.routes['/v1/prices/forever.pvp.alliance.us/2604'][1]['latest']['quantity'] = 709.0
         self.assertIn('listed 709 in', self.run_cli('price','2604').stdout)
         self.assertIs(type(json.loads(self.run_cli('price','2604','--json').stdout)['latest']['quantity']), int)
-        Handler.routes['/events'][1]['events'] = [self.event('expiration', 1, 0)]
+        Handler.routes['/events'][1]['entries'] = [self.event('expiration', 1, 0)]
         self.assertIn('listed 709 |', self.run_cli('expirations').stdout)
         self.assertIs(type(json.loads(self.run_cli('expirations','--json').stdout)['expirations'][0]['market']['quantity']), int)
         d=json.loads(self.run_cli('margins','tailoring','--level','5','--json').stdout)
@@ -770,18 +768,18 @@ with patch.object(db, 'BASE', os.environ['EVERLEDGER_VENDOR_URL']), patch.object
 
     def test_net_signed_counts_and_unknown_profit(self):
         rows=[self.event('posting',6,-600),self.event('sale',4,38400,proceeds_copper=38000),self.event('expiration',2,0)]
-        Handler.routes['/events']=(200,{'events':rows,'available':True,'sources':[]})
+        Handler.routes['/events']=(200,{'entries':rows,'available':True,'sources':[]})
         d=json.loads(self.run_cli('net','Red Dye','--json').stdout)
         self.assertEqual((d['unaccounted'],d['cash_copper'],d['proceeds_copper']),(0,37800,38000))
         self.assertIsNone(d['realized_profit_copper'])
         self.assertIsNone(d['deposits_lost_copper'])
         self.assertNotIn('deposits lost', self.run_cli('net','Red Dye').stdout)
-        Handler.routes['/events']=(200,{'events':rows[1:],'sources':[]})
+        Handler.routes['/events']=(200,{'entries':rows[1:],'sources':[]})
         r=self.run_cli('net','Red Dye')
         self.assertIn('posted unknown',r.stdout)
         self.assertNotIn('deposits lost',r.stdout)
         rows[0]['count']=2
-        Handler.routes['/events']=(200,{'events':rows,'sources':[]})
+        Handler.routes['/events']=(200,{'entries':rows,'sources':[]})
         d=json.loads(self.run_cli('net','2604','--json').stdout)
         self.assertEqual(d['unaccounted'],-4)
 
@@ -1063,7 +1061,7 @@ with patch.object(db, 'request', side_effect=Failure('secret-fixture', 4, {'stat
     def test_usage_errors_and_page_scope(self):
         Handler.routes['/events']=(400,{'error_code':'invalid_query'})
         self.run_cli('events','--type','invalid','--json',code=2)
-        Handler.routes['/events']=(200,{'events':[],'next_cursor':None,'has_more':False,'sources':[]})
+        Handler.routes['/events']=(200,{'entries':[],'next_cursor':None,'has_more':False,'sources':[]})
         self.run_cli('events','--cursor','opaque','--json')
         self.assertEqual(Handler.requests[-1],'/events?cursor=opaque')
         self.run_cli('events','--cursor','',code=2)
@@ -1090,12 +1088,12 @@ with patch.object(db, 'request', side_effect=Failure('secret-fixture', 4, {'stat
 
     def test_id_listing_queries_keep_nameless_inventory_rows(self):
         self.market()
-        row={'item_id':2604,'name':None,'count':2,'available':True,'buyout_copper':200}
+        row={'item_id':2604,'name':None,'count':2,'price':{'available':True,'recorded':{'buyout_copper':200}}}
         Handler.routes['/listings']=(200,{'listings':[],'sources':[]})
         Handler.routes['/listings?item=2604']=(200,{'listings':[row],'sources':[]})
         d=json.loads(self.run_cli('listings','--item','2604','--json').stdout)
         self.assertEqual(len(d['listings']),1)
-        Handler.routes['/events']=(200,{'events':[self.event('posting',2,-20)],'sources':[]})
+        Handler.routes['/events']=(200,{'entries':[self.event('posting',2,-20)],'sources':[]})
         d=json.loads(self.run_cli('net','2604','--json').stdout)
         self.assertEqual(d['listed'],2)
         self.assertEqual(d['unaccounted'],0)
@@ -1104,10 +1102,10 @@ with patch.object(db, 'request', side_effect=Failure('secret-fixture', 4, {'stat
 
     def test_aggregate_resync_discards_prior_pages_and_keeps_filters(self):
         sale=self.event('sale',1,90,proceeds_copper=90)
-        Handler.routes['/events']=(200,{'events':[sale],'has_more':True,'next_cursor':'bad-page','sources':[{'file':'discarded.lua','file_age_seconds':999}]})
+        Handler.routes['/events']=(200,{'entries':[sale],'has_more':True,'next_cursor':'bad-page','sources':[{'file':'discarded.lua','file_age_seconds':999}]})
         Handler.routes['/events?limit=500&cursor=bad-page']=(409,{'error_code':'cursor_invalid','resync_since':'2026-11-14T00:00:00Z'})
         Handler.routes['/events?limit=500&since=1794614400']=(200,{
-            'events':[dict(sale,id='restart')],'has_more':False,'next_cursor':'new-terminal','sources':[]})
+            'entries':[dict(sale,id='restart')],'has_more':False,'next_cursor':'new-terminal','sources':[]})
         r=self.run_cli('sales','--char','Slade','--item','2604','--json')
         d=json.loads(r.stdout)
         self.assertEqual(d['proceeds_copper'],90)
@@ -1117,7 +1115,7 @@ with patch.object(db, 'request', side_effect=Failure('secret-fixture', 4, {'stat
 
     def test_absent_journal_is_unknown_instead_of_zero_sales(self):
         Handler.routes['/events']=(200,{'available':False,'state':'absent','reason':'Journalator.lua has not been saved',
-            'events':[],'sources':[{'file':'Journalator.lua','mtime':None}],'next_cursor':None,'has_more':False})
+            'entries':[],'sources':[{'file':'Journalator.lua','mtime':None}],'next_cursor':None,'has_more':False})
         d=json.loads(self.run_cli('sales','--json').stdout)
         self.assertIsNone(d['proceeds_copper'])
         self.assertFalse(d['available'])
