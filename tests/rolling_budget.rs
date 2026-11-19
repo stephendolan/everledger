@@ -882,7 +882,7 @@ fn refresh_reports_sync_failure_without_stale_notice_or_stderr() -> Result<()> {
             };
             let command = everledger::cli::Command::Refresh(everledger::commands::refresh::Args {
                 target: everledger::commands::refresh::Target::Catalogue,
-                json,
+                output: everledger::cli::OutputArgs { json },
             });
             let mut stdout = Vec::new();
             assert_eq!(
@@ -923,7 +923,7 @@ fn refresh_stale_decision_uses_vendor_sources_after_successful_partial_sync() ->
     };
     let args = everledger::commands::refresh::Args {
         target: everledger::commands::refresh::Target::Catalogue,
-        json: false,
+        output: everledger::cli::OutputArgs { json: false },
     };
     let output = everledger::commands::refresh::run(&args, &context)?;
     assert_eq!(output.code, everledger::ExitCode::Stale);

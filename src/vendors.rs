@@ -18,7 +18,7 @@ pub use foreverdb_answer::ForeverdbAnswer;
 pub mod status;
 pub const BACKEND: &str = "wowforever.ninja";
 pub fn ninja_request(url: impl Into<String>) -> Request {
-    Request::get(url).header("User-Agent", "Mozilla/5.0 (compatible; everledger)")
+    Request::get(url).header("User-Agent", crate::http::VENDOR_USER_AGENT)
 }
 #[derive(Clone, Copy)]
 pub(crate) struct CacheAge(i64);

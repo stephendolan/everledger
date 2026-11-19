@@ -16,8 +16,8 @@ pub struct Args {
         default_value = "auction"
     )]
     pub venue: Option<crate::types::Venue>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Result,

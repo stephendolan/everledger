@@ -10,7 +10,7 @@ from unittest.mock import patch
 import everledger_core as core
 import everledger_foreverdb as db
 
-FIXTURE = Path(__file__).parent / 'fixtures/foreverdb.json'
+FIXTURE = Path(__file__).resolve().parents[2] / 'tests/fixtures/foreverdb.json'
 
 
 def configured_db():

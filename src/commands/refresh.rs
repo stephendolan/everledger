@@ -3,8 +3,8 @@
 pub struct Args {
     #[arg(allow_negative_numbers = true, value_enum)]
     pub target: Target,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {

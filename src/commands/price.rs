@@ -3,8 +3,8 @@
 pub struct Args {
     #[arg(allow_negative_numbers=true,required=true,num_args=1..)]
     pub item: Vec<String>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Copper, Result,
@@ -75,7 +75,8 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     )?;
     source.set(
         "stale",
-        crate::time::age(latest.observed_at.as_deref(), context.clock).is_none_or(|a| a > 900),
+        crate::time::age(latest.observed_at.as_deref(), context.clock)
+            .is_none_or(|a| a > crate::market::FRESHNESS_SECONDS),
     )?;
     let field = |key| {
         data.document()

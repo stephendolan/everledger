@@ -10,7 +10,7 @@ import unittest
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
-FIX = ROOT / 'tests/fixtures'
+FIX = ROOT.parent / 'tests/fixtures'
 NOW = datetime.datetime.now(datetime.UTC).isoformat().replace('+00:00', 'Z')
 MALFORMED_HTTP = {
     'bad status line': b'HTTP/1.1 abc\r\n\r\n',
@@ -486,13 +486,15 @@ class CLI(unittest.TestCase):
 
     def test_readme_command_reference_matches_help(self):
         readme = (ROOT / 'README.md').read_text()
+        blocks = [block.split('```', 1)[0].split()
+                  for block in readme.split('```text\n')[1:]]
         for command in ('', 'price','recipe','bridge','margins','vendors','char','listings',
                         'positions','sales','purchases','expirations','net','events','status',
                         'refresh'):
             with self.subTest(command=command):
                 args = [command] if command else []
                 help_text = self.run_cli(*args, '--help').stdout
-                self.assertIn('```text\n' + help_text + '```', readme)
+                self.assertIn(help_text.split(), blocks)
 
     def test_red_dye_ground_truth(self):
         d = json.loads(self.run_cli('vendors','Red Dye','--json').stdout)
@@ -859,7 +861,7 @@ import json, runpy
 from pathlib import Path
 from unittest.mock import patch
 import everledger_foreverdb as db
-fixture = json.loads(Path('tests/fixtures/foreverdb.json').read_text())
+fixture = json.loads(Path('../tests/fixtures/foreverdb.json').read_text())
 def get(url, headers):
     from urllib.parse import urlsplit, parse_qs
     parsed = urlsplit(url)

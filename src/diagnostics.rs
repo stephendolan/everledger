@@ -15,9 +15,6 @@ impl<W: Write> WriterDiagnostics<W> {
             writer: RefCell::new(writer),
         }
     }
-    pub fn into_inner(self) -> W {
-        self.writer.into_inner()
-    }
 }
 impl<W: Write> Diagnostics for WriterDiagnostics<W> {
     fn write(&self, text: &str) -> Result<()> {

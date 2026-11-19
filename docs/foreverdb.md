@@ -118,7 +118,7 @@ those do not count toward the ForeverDB cap.
 ## Offline verification
 
 ```bash
-python3 -m unittest discover -s tests
+PYTHONPATH=python python3 -m unittest discover -s python/tests
 ```
 
 Fixtures reconstruct the supplied real wire shapes rather than claiming full
@@ -144,10 +144,10 @@ cd /home/devbox/repos/everledger
 export EVERLEDGER_DATA_DIR="${EVERLEDGER_DATA_DIR:-$HOME/.everledger}"
 export EVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb
 export EVERLEDGER_DYNAMIC_CREDENTIALS_DIR=/opt/muse/skills/custom-connector-setup/bin
-python3 -m unittest discover -s tests
-./everledger status --json
-./everledger refresh catalogue --json
-./everledger status --json
+PYTHONPATH=python python3 -m unittest discover -s python/tests
+./python/everledger status --json
+./python/everledger refresh catalogue --json
+./python/everledger status --json
 ```
 
 Before completion, status should name connector-surrogate and ninja active.
@@ -165,11 +165,11 @@ Preserve the attempt and checkpoint files. No raw key export is needed.
 After completion:
 
 ```bash
-./everledger vendors 2604 --in IF
-./everledger vendors 2604 --in IF --json
-./everledger vendors 2488
-./everledger price 2604
-./everledger status --json
+./python/everledger vendors 2604 --in IF
+./python/everledger vendors 2604 --in IF --json
+./python/everledger vendors 2488
+./python/everledger price 2604
+./python/everledger status --json
 ```
 
 Inspect the sell labels and fallback coverage against the retained ninja cache.

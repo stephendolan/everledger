@@ -1,14 +1,16 @@
 """Generate the reviewer-owned oracle probe corpus for the Rust primitives.
 
 Run from the repository root:
-    python3 scripts/gen_oracle_probe.py rust-tests/probe/probe.jsonl
+    python3 scripts/gen_oracle_probe.py tests/probe/probe.jsonl
 
 Every expected value comes from the live Python oracle or from the standard
-library function the oracle calls. rust-tests/oracle_probe.rs replays the corpus.
+library function the oracle calls. tests/oracle_probe.rs replays the corpus.
 """
+from pathlib import Path
+
 import base64, binascii, datetime as dt, json, math, os, random, struct, sys, time, urllib.parse
 
-sys.path.insert(0, os.getcwd())
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'python'))
 import everledger_core as core
 
 rng = random.Random(20261115)
