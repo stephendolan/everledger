@@ -627,33 +627,7 @@ fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRu
         previous.as_ref(),
         old_attempt.as_ref(),
     )?;
-    let attempt: Payload<Attempt> = Payload::decode(
-        Document::object([
-            ("attempted_at", iso(context.clock.now()).into()),
-            ("requests", 0i64.into()),
-            ("sync_id", pending.view().sync_id.clone().into()),
-            (
-                "spends",
-                old_record
-                    .as_ref()
-                    .and_then(|d| d.get("spends").cloned())
-                    .unwrap_or(Document::Array(vec![])),
-            ),
-            (
-                "failed",
-                old_attempt.as_ref().is_some_and(|a| a.failed).into(),
-            ),
-            (
-                "status",
-                old_attempt
-                    .as_ref()
-                    .and_then(|a| a.status)
-                    .map(i64::from)
-                    .into(),
-            ),
-        ]),
-        "ForeverDB attempt",
-    )?;
+    let attempt = open_attempt(context, &pending, old_record.as_ref(), old_attempt.as_ref())?;
     result.total_requests = pending.view().total_requests;
     Ok(SyncPlan::Attempt(Box::new(PlannedAttempt {
         previous,
@@ -661,6 +635,32 @@ fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRu
         attempt,
         budget,
     })))
+}
+fn open_attempt(
+    context: &Context<'_>,
+    pending: &Payload<Pending>,
+    old_record: Option<&Document>,
+    old_attempt: Option<&PreviousAttempt>,
+) -> Result<Payload<Attempt>> {
+    Payload::decode(
+        Document::object([
+            ("attempted_at", iso(context.clock.now()).into()),
+            ("requests", 0i64.into()),
+            ("sync_id", pending.view().sync_id.clone().into()),
+            (
+                "spends",
+                old_record
+                    .and_then(|d| d.get("spends").cloned())
+                    .unwrap_or(Document::Array(vec![])),
+            ),
+            ("failed", old_attempt.is_some_and(|a| a.failed).into()),
+            (
+                "status",
+                old_attempt.and_then(|a| a.status).map(i64::from).into(),
+            ),
+        ]),
+        "ForeverDB attempt",
+    )
 }
 fn prepare_checkpoint(
     context: &Context<'_>,
