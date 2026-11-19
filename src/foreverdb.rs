@@ -518,48 +518,10 @@ fn sync_locked(
         deferred: None,
     };
     engine.checkpoint_interrupt()?;
-    let mut obsolete = false;
+    let mut checkpoint = CheckpointState::Resumable;
     let outcome = (|| {
         transport.validate(context)?;
-        while let Some(offset) = engine.pending.view().next_offset {
-            if engine.attempt.view().requests >= engine.budget.0 {
-                break;
-            }
-            let Some(doc) = engine.get(&format!(
-                "/api/v1/vendors?limit={}&offset={offset}",
-                mapping::PAGE_SIZE
-            ))?
-            else {
-                break;
-            };
-            let page = mapping::page(doc, offset)?;
-            if engine
-                .pending
-                .view()
-                .metadata
-                .as_ref()
-                .is_some_and(|m| *m != page.metadata)
-            {
-                obsolete = true;
-                return Err(mapping::invalid().into());
-            }
-            if page
-                .ids
-                .iter()
-                .any(|id| engine.pending.view().vendor_ids.contains(id))
-            {
-                return Err(mapping::invalid().into());
-            }
-            engine.pending.set("metadata", page.metadata.document())?;
-            let mut ids = engine.pending.view().vendor_ids.clone();
-            ids.extend(page.ids);
-            engine.pending.set(
-                "vendor_ids",
-                Document::Array(ids.into_iter().map(Document::from).collect()),
-            )?;
-            engine.pending.set("next_offset", page.next)?;
-            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-        }
+        engine.walk_pages(&mut checkpoint)?;
         if engine.pending.view().next_offset.is_none() {
             for id in engine.pending.view().vendor_ids.clone() {
                 if engine.pending.view().details.get(&id).is_some() {
@@ -618,13 +580,13 @@ fn sync_locked(
         )?;
         engine.attempt.set("error", e.message.clone())?;
         interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
-        if obsolete {
+        if checkpoint == CheckpointState::Obsolete {
             interrupt.remove("pending.json")?;
         } else {
             interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
         engine.result.failed = true;
-        engine.result.pending = !obsolete;
+        engine.result.pending = checkpoint == CheckpointState::Resumable;
         engine.result.status = engine.attempt.view().status;
         engine.result.error = engine.attempt.view().error.clone();
     }
@@ -789,6 +751,11 @@ fn report_spent_budget(
     result.error = old_attempt.and_then(|a| a.error.clone());
     Ok(())
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckpointState {
+    Resumable,
+    Obsolete,
+}
 struct Engine<'a, 'b> {
     context: &'a Context<'b>,
     transport: &'a transport::Transport,
@@ -801,6 +768,49 @@ struct Engine<'a, 'b> {
     deferred: Option<Deferred>,
 }
 impl Engine<'_, '_> {
+    fn walk_pages(&mut self, checkpoint: &mut CheckpointState) -> SyncRun<()> {
+        while let Some(offset) = self.pending.view().next_offset {
+            if self.attempt.view().requests >= self.budget.0 {
+                break;
+            }
+            let Some(doc) = self.get(&format!(
+                "/api/v1/vendors?limit={}&offset={offset}",
+                mapping::PAGE_SIZE
+            ))?
+            else {
+                break;
+            };
+            let page = mapping::page(doc, offset)?;
+            if self
+                .pending
+                .view()
+                .metadata
+                .as_ref()
+                .is_some_and(|m| *m != page.metadata)
+            {
+                *checkpoint = CheckpointState::Obsolete;
+                return Err(mapping::invalid().into());
+            }
+            if page
+                .ids
+                .iter()
+                .any(|id| self.pending.view().vendor_ids.contains(id))
+            {
+                return Err(mapping::invalid().into());
+            }
+            self.pending.set("metadata", page.metadata.document())?;
+            let mut ids = self.pending.view().vendor_ids.clone();
+            ids.extend(page.ids);
+            self.pending.set(
+                "vendor_ids",
+                Document::Array(ids.into_iter().map(Document::from).collect()),
+            )?;
+            self.pending.set("next_offset", page.next)?;
+            self.interrupt
+                .write("pending.json", self.pending.document(), self.context.clock)?;
+        }
+        Ok(())
+    }
     fn finish(&mut self) -> Result<()> {
         let mut doc = self.attempt.document().clone();
         finish_attempt(&mut doc, self.context.clock.now())?;
