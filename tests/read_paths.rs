@@ -963,3 +963,35 @@ fn inventory_item_fallback_distinguishes_absent_and_null_fields() {
         );
     }
 }
+
+#[test]
+fn unread_page_values_use_the_service_decode_path() {
+    for (value, succeeds) in [
+        ("[".repeat(200) + &"]".repeat(200), true),
+        ("NaN".into(), false),
+        ("[Infinity]".into(), false),
+        ("1e400".into(), false),
+    ] {
+        let f = Fixture::new();
+        f.raw(
+            "/events?cursor=page",
+            &format!(r#"{{"entries":[],"extra":{value}}}"#),
+        );
+        match f.command(&["events", "--cursor", "page", "--json"]) {
+            Ok(output) => {
+                assert!(succeeds);
+                assert_eq!(
+                    output.data.get("extra"),
+                    Some(&document::parse(&value).unwrap())
+                );
+            }
+            Err(error) => {
+                assert!(!succeeds);
+                assert_eq!(
+                    error.message,
+                    "roster: invalid response shape (expected value)"
+                );
+            }
+        }
+    }
+}

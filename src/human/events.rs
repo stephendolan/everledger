@@ -19,14 +19,10 @@ pub fn item_name(item: ItemRef<'_>) -> String {
         .or_else(|| item.id.filter(|n| *n != 0).map(|n| n.to_string()))
         .unwrap_or_else(|| "unknown".into())
 }
-pub fn journal_unavailable(data: &JournalState) -> String {
-    format!(
-        "journal {}: {}",
-        text(data.state.as_deref()),
-        text(data.reason.as_deref())
-    )
+pub fn journal_unavailable(data: &JournalState<'_>) -> String {
+    format!("journal {}: {}", text(data.state), text(data.reason))
 }
-pub fn unavailable_line(data: &JournalState) -> Option<String> {
+pub fn unavailable_line(data: &JournalState<'_>) -> Option<String> {
     data.unavailable().then(|| journal_unavailable(data))
 }
 pub fn event_lines(rows: &[EventRow]) -> Vec<String> {
@@ -60,9 +56,9 @@ pub fn event_lines(rows: &[EventRow]) -> Vec<String> {
     }
 }
 pub fn lines(data: &Journal, rows: &[EventRow]) -> Vec<String> {
-    let mut lines =
-        unavailable_line(&data.view().state).map_or_else(|| event_lines(rows), |line| vec![line]);
-    let d = &data.view().state;
+    let mut lines = unavailable_line(&data.view().journal_state())
+        .map_or_else(|| event_lines(rows), |line| vec![line]);
+    let d = data.view();
     lines.push(format!(
         "next_cursor: {} | has_more: {} | after_cursor: {} | checkpoint: {}",
         text(d.next_cursor.as_deref()),

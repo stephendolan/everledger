@@ -116,6 +116,14 @@ for a decision does not by itself remove it from JSON output.
 | R7 | An entry's own `item_id`/`name` | Ignores them for item decisions; reads the optional `item` object. Inventory retains both item readings, nested first. |
 | R8 | A page cursor view's item as text | Refuses the cursor as a usage error (exit 2); item views are objects. |
 
+Removing the row aliases and the unwrapped selector response also removes
+those views' serde flattening. Unread row and selected-character values then
+use the skipping decode path: deeply nested values can succeed where the base
+binary rejects them, and invalid non-finite numbers can have different error
+wording. These are side effects of R3, R6, and R7. Page views retain their
+unflattened decode path and failure boundary. Inventory and wrapped character
+details retain their existing decode paths.
+
 The capture does not establish error bodies, 409 recovery, pricing source
 internals, inventory internals, or unavailable journals. Those contracts retain
 their accepted spellings and defaults. In particular, nested `item.id_basis`

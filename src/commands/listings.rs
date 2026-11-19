@@ -63,14 +63,25 @@ impl ListingRecord {
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Listing {
-    #[serde(flatten)]
-    pub row: ListingRecord,
+    pub item_id: Option<i64>,
+    pub name: Option<String>,
+    pub character: Option<String>,
+    pub count: Option<i64>,
     pub buyout_copper: Option<Copper>,
     pub expires_at: Option<String>,
     #[serde(default)]
     pub available: Field<bool>,
     pub floor_copper: Option<Copper>,
     pub undercut: Option<bool>,
+}
+impl Listing {
+    pub fn item(&self) -> ItemRef<'_> {
+        ItemRef {
+            id: self.item_id,
+            name: self.name.as_deref(),
+            id_basis: None,
+        }
+    }
 }
 pub type ListingRow = Payload<Listing>;
 #[derive(Clone, Debug, Deserialize)]

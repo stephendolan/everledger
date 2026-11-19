@@ -65,7 +65,9 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         "expirations",
         Document::Array(rows.into_iter().map(|r| r.into_document()).collect()),
     )?;
-    lines.extend(crate::human::events::unavailable_line(&data.view().state));
+    lines.extend(crate::human::events::unavailable_line(
+        &data.view().journal_state(),
+    ));
     disclose_item_source(&mut document, item.as_ref(), context)?;
     let mut output = CommandOutput::new(document, lines);
     output.stale = stale;

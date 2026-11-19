@@ -37,28 +37,44 @@ impl Event {
     }
 }
 pub type EventRow = Payload<Event>;
-#[derive(Clone, Debug, Deserialize)]
-pub struct JournalState {
-    pub has_more: Option<bool>,
-    pub next_cursor: Option<String>,
-    pub checkpoint: Option<String>,
-    pub after_cursor: Option<String>,
+#[derive(Clone, Copy, Debug)]
+pub struct JournalState<'a> {
     pub available: Option<bool>,
-    pub state: Option<String>,
-    pub reason: Option<String>,
+    pub state: Option<&'a str>,
+    pub reason: Option<&'a str>,
 }
-impl JournalState {
+impl JournalState<'_> {
     pub fn unavailable(&self) -> bool {
         self.available == Some(false)
     }
 }
-#[derive(Clone, Debug, Deserialize)]
-pub struct EventData {
-    #[serde(rename = "entries")]
-    _entries: Option<Vec<Event>>,
-    #[serde(flatten)]
-    pub state: JournalState,
+// Page fields skip unread values; flattening changes that decode path.
+macro_rules! journal_data {
+    ($name:ident, $key:literal, $rows:ty) => {
+        #[derive(Clone, Debug, Deserialize)]
+        pub struct $name {
+            #[serde(rename = $key)]
+            _rows: $rows,
+            pub has_more: Option<bool>,
+            pub next_cursor: Option<String>,
+            pub checkpoint: Option<String>,
+            pub after_cursor: Option<String>,
+            pub available: Option<bool>,
+            pub state: Option<String>,
+            pub reason: Option<String>,
+        }
+        impl $name {
+            pub fn journal_state(&self) -> JournalState<'_> {
+                JournalState {
+                    available: self.available,
+                    state: self.state.as_deref(),
+                    reason: self.reason.as_deref(),
+                }
+            }
+        }
+    };
 }
+journal_data!(EventData, "entries", Option<Vec<Event>>);
 pub type Journal = Payload<EventData>;
 impl Journal {
     pub fn rows(&self) -> Result<Option<Vec<EventRow>>> {
@@ -68,13 +84,7 @@ impl Journal {
             .transpose()
     }
 }
-#[derive(Clone, Debug, Deserialize)]
-pub struct AggregateData {
-    #[serde(rename = "events")]
-    _events: Vec<Event>,
-    #[serde(flatten)]
-    pub state: JournalState,
-}
+journal_data!(AggregateData, "events", Vec<Event>);
 pub type Aggregate = Payload<AggregateData>;
 impl Aggregate {
     pub fn rows(&self) -> Result<Vec<EventRow>> {
@@ -476,20 +486,15 @@ pub fn event_page(params: &EventQuery, context: &Context<'_>) -> Result<EventPag
             ),
         )?;
     }
-    let end = if data.view().state.has_more == Some(true) {
-        let cursor = data
-            .view()
-            .state
-            .next_cursor
-            .as_deref()
-            .filter(|s| !s.is_empty());
+    let end = if data.view().has_more == Some(true) {
+        let cursor = data.view().next_cursor.as_deref().filter(|s| !s.is_empty());
         let cursor = pagination_progress(cursor, &[])?;
         let cursor = page_cursor(cursor, &params.view, params.until())?;
         data.set("next_cursor", cursor.as_str())?;
         data.set("after_cursor", Document::Null)?;
         PageEnd::More(cursor)
     } else {
-        let checkpoint = data.view().state.checkpoint.clone();
+        let checkpoint = data.view().checkpoint.clone();
         data.set("next_cursor", Document::Null)?;
         data.set("after_cursor", Document::from(checkpoint.clone()))?;
         PageEnd::Complete(checkpoint.map(WatchPosition))
@@ -575,10 +580,9 @@ pub fn fetch_events(params: EventQuery, context: &Context<'_>) -> Result<Journal
         data.remove("events");
         data.set("entries", Document::Array(vec![]))?;
         let journal: Journal = Payload::decode(data, "events")?;
-        if !journal.view().state.unavailable()
+        if !journal.view().journal_state().unavailable()
             && journal
                 .view()
-                .state
                 .checkpoint
                 .as_deref()
                 .is_none_or(str::is_empty)

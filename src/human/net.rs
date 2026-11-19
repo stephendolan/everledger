@@ -35,7 +35,7 @@ pub fn lines(t: &Totals, journal: &Aggregate, by_name: bool) -> Vec<String> {
             .into(),
     ];
     lines.extend(crate::human::events::unavailable_line(
-        &journal.view().state,
+        &journal.view().journal_state(),
     ));
     if by_name {
         lines.push("item match basis: name (linkless journal rows)".into());

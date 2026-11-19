@@ -273,11 +273,11 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     for r in listings::listing_rows(&current)? {
         if item
             .as_ref()
-            .is_some_and(|item| !item_matches(r.view().row.item(), item))
+            .is_some_and(|item| !item_matches(r.view().item(), item))
         {
             continue;
         }
-        let item = r.view().row.item();
+        let item = r.view().item();
         let item = PositionItem {
             id: item.id,
             name: item.name.map(str::to_owned),
@@ -286,7 +286,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         let row = position(&mut rows, item);
         row.listed = row
             .listed
-            .checked_add(r.view().row.count.unwrap_or(0))
+            .checked_add(r.view().count.unwrap_or(0))
             .ok_or_else(|| Failure::error("listed count out of range"))?;
     }
     let purchases = journal.rows()?;
@@ -338,11 +338,11 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         ("stale", Document::from(stale)),
         (
             "journal_available",
-            Document::from(journal.view().state.available),
+            Document::from(journal.view().available),
         ),
         (
             "journal_state",
-            Document::from(journal.view().state.state.clone()),
+            Document::from(journal.view().state.clone()),
         ),
         ("sources", journal::source_documents(used)),
     ]);

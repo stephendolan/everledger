@@ -51,7 +51,9 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         "purchases",
         Document::Array(rows.into_iter().map(|r| r.into_document()).collect()),
     )?;
-    lines.extend(crate::human::events::unavailable_line(&data.view().state));
+    lines.extend(crate::human::events::unavailable_line(
+        &data.view().journal_state(),
+    ));
     disclose_item_source(&mut document, item.as_ref(), context)?;
     Ok(CommandOutput::new(document, lines))
 }
