@@ -453,7 +453,7 @@ impl EventQuery {
 #[derive(Clone, Debug)]
 pub enum PageEnd {
     More(PageCursor),
-    Complete(Option<WatchPosition>),
+    Complete,
 }
 pub struct EventPage {
     pub data: Journal,
@@ -496,8 +496,8 @@ pub fn event_page(params: &EventQuery, context: &Context<'_>) -> Result<EventPag
     } else {
         let checkpoint = data.view().checkpoint.clone();
         data.set("next_cursor", Document::Null)?;
-        data.set("after_cursor", Document::from(checkpoint.clone()))?;
-        PageEnd::Complete(checkpoint.map(WatchPosition))
+        data.set("after_cursor", Document::from(checkpoint))?;
+        PageEnd::Complete
     };
     Ok(EventPage { data, end })
 }
@@ -634,7 +634,7 @@ fn collect_snapshot(
             }
         }
         match page.end {
-            PageEnd::Complete(_) => break,
+            PageEnd::Complete => break,
             PageEnd::More(cursor) => {
                 let cursor = pagination_progress(Some(cursor), &seen)?;
                 let next = page_params(cursor.as_str(), Some(500), PageOrder::LimitCursor)?;
