@@ -17,7 +17,6 @@ use crate::{
 use mapping::{Basis, Identifier, Metadata};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     fs::{File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
@@ -367,14 +366,7 @@ fn random_id() -> Result<String> {
         .map_err(sync_io)?;
     Ok(bytes.iter().map(|n| format!("{n:02x}")).collect())
 }
-pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock) -> Result<()> {
-    let doc = if name == "attempt.json" {
-        let mut attempt = doc.clone();
-        prune_spends(&mut attempt, clock)?;
-        Cow::Owned(attempt)
-    } else {
-        Cow::Borrowed(doc)
-    };
+pub(super) fn write_at(dir: &Path, name: &str, doc: &Document) -> Result<()> {
     let path = dir.join(format!(
         "{name}.{}.tmp",
         random_id()?.chars().take(8).collect::<String>()
@@ -388,7 +380,7 @@ pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock
             .open(&path)
             .map_err(sync_io)?;
         stream
-            .write_all(dumps(&doc, JsonMode::Stdout).as_bytes())
+            .write_all(dumps(doc, JsonMode::Stdout).as_bytes())
             .map_err(sync_io)?;
         stream.sync_all().map_err(sync_io)?;
         std::fs::rename(&path, dir.join(name)).map_err(sync_io)?;
@@ -504,7 +496,7 @@ fn sync_locked(
         mut attempt,
         budget,
     } = *plan;
-    write_at(dir, "attempt.json", attempt.document(), context.clock)?;
+    save_attempt(dir, attempt.document(), context.clock)?;
     let interrupt = interrupt::Guard::new(dir)?;
     let mut engine = Engine {
         context,
@@ -528,7 +520,7 @@ fn sync_locked(
         if complete {
             let mut data = snapshot(engine.pending, previous.as_ref(), context)?;
             data.set("sync_id", engine.pending.view().sync_id.clone())?;
-            interrupt.write("index.json", &data, context.clock)?;
+            interrupt.write("index.json", &data)?;
             interrupt.remove("pending.json")?;
         }
         engine.close_attempt(if complete {
@@ -547,6 +539,11 @@ fn sync_locked(
     }
     interrupt.clear();
     Ok(())
+}
+pub(super) fn save_attempt(dir: &Path, attempt: &Document, clock: &dyn Clock) -> Result<()> {
+    let mut pruned = attempt.clone();
+    prune_spends(&mut pruned, clock)?;
+    write_at(dir, "attempt.json", &pruned)
 }
 enum SyncPlan {
     BudgetSpent,
@@ -768,7 +765,7 @@ impl Engine<'_, '_> {
             )?;
             self.pending.set("next_offset", page.next)?;
             self.interrupt
-                .write("pending.json", self.pending.document(), self.context.clock)?;
+                .write("pending.json", self.pending.document())?;
         }
         Ok(())
     }
@@ -790,11 +787,8 @@ impl Engine<'_, '_> {
                 let data = mapping::vendor(doc, expected)?;
                 self.pending
                     .set_path(&["details", &id], Document::object([("data", data)]))?;
-                self.interrupt.write(
-                    "pending.json",
-                    self.pending.document(),
-                    self.context.clock,
-                )?;
+                self.interrupt
+                    .write("pending.json", self.pending.document())?;
             }
         }
         Ok(())
@@ -806,10 +800,9 @@ impl Engine<'_, '_> {
                 self.attempt.set("status", Document::Null)?;
                 self.attempt.set("error", Document::Null)?;
             }
-            AttemptEnd::Pending => {
-                self.interrupt
-                    .write("pending.json", self.pending.document(), self.context.clock)?
-            }
+            AttemptEnd::Pending => self
+                .interrupt
+                .write("pending.json", self.pending.document())?,
             AttemptEnd::Failed(_, _) => {}
         }
         self.finish()?;
@@ -827,7 +820,7 @@ impl Engine<'_, '_> {
             self.attempt.set("error", error.message.clone())?;
         }
         self.interrupt
-            .write("attempt.json", self.attempt.document(), self.context.clock)?;
+            .save_attempt(self.attempt.document(), self.context.clock)?;
         match end {
             AttemptEnd::Complete | AttemptEnd::Pending => {
                 let complete = matches!(end, AttemptEnd::Complete);
@@ -838,11 +831,9 @@ impl Engine<'_, '_> {
             AttemptEnd::Failed(_, checkpoint) => {
                 match checkpoint {
                     CheckpointState::Obsolete => self.interrupt.remove("pending.json")?,
-                    CheckpointState::Resumable => self.interrupt.write(
-                        "pending.json",
-                        self.pending.document(),
-                        self.context.clock,
-                    )?,
+                    CheckpointState::Resumable => self
+                        .interrupt
+                        .write("pending.json", self.pending.document())?,
                 }
                 self.result.failed = true;
                 self.result.pending = checkpoint == CheckpointState::Resumable;
@@ -920,7 +911,7 @@ impl Engine<'_, '_> {
             reservation.set("total_requests", Document::from_typed(&total)?)?;
             reservation.set("last_request_at", iso(self.context.clock.now()))?;
             self.interrupt
-                .write("attempt.json", reservation.document(), self.context.clock)?;
+                .save_attempt(reservation.document(), self.context.clock)?;
             *self.attempt = reservation;
             self.pending
                 .set("total_requests", Document::from_typed(&total)?)?;
@@ -953,11 +944,8 @@ impl Engine<'_, '_> {
                             "retry",
                             Document::object([("not_before", retry_iso(not_before).into())]),
                         )?;
-                        self.interrupt.write(
-                            "pending.json",
-                            self.pending.document(),
-                            self.context.clock,
-                        )?;
+                        self.interrupt
+                            .write("pending.json", self.pending.document())?;
                         if not_before.microseconds() - timestamp.microseconds() > 300_000_000 {
                             self.deferred = Some(Deferred::RetryWait);
                             return Ok(None);

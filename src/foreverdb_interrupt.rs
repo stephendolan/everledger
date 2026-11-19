@@ -1,4 +1,4 @@
-use super::write_at;
+use super::{save_attempt, write_at};
 use crate::{
     Failure, Result,
     clock::{Clock, SystemClock, VirtualClock},
@@ -84,8 +84,8 @@ impl Guard {
                     let _ = s
                         .attempt
                         .set("error", crate::human::refresh::sync_failed(None));
-                    let _ = write_at(&dir, "attempt.json", &s.attempt, &clock);
-                    let _ = write_at(&dir, "pending.json", &s.pending, &clock);
+                    let _ = save_attempt(&dir, &s.attempt, &clock);
+                    let _ = write_at(&dir, "pending.json", &s.pending);
                 }
                 let _ = writeln!(
                     std::io::stderr().lock(),
@@ -123,15 +123,21 @@ impl Guard {
             drop(state);
         }
     }
-    pub fn write(&self, name: &str, doc: &Document, clock: &dyn Clock) -> Result<()> {
+    pub fn write(&self, name: &str, doc: &Document) -> Result<()> {
         let mut state = self.lock_snapshot()?;
-        write_at(&self.dir, name, doc, clock)?;
+        write_at(&self.dir, name, doc)?;
+        if name == "pending.json"
+            && let Some(state) = state.as_mut()
+        {
+            state.pending = doc.clone();
+        }
+        Ok(())
+    }
+    pub fn save_attempt(&self, doc: &Document, clock: &dyn Clock) -> Result<()> {
+        let mut state = self.lock_snapshot()?;
+        save_attempt(&self.dir, doc, clock)?;
         if let Some(state) = state.as_mut() {
-            match name {
-                "attempt.json" => state.attempt = doc.clone(),
-                "pending.json" => state.pending = doc.clone(),
-                _ => {}
-            }
+            state.attempt = doc.clone();
         }
         Ok(())
     }
@@ -300,7 +306,7 @@ mod tests {
             let mut overwrite = attempt;
             overwrite.set("requests", 9i64).unwrap();
             queued.send(()).unwrap();
-            let _ = writer.write("attempt.json", &overwrite, &clock);
+            let _ = writer.save_attempt(&overwrite, &clock);
         });
         waiting.recv().unwrap();
         std::thread::sleep(Duration::from_millis(20));
