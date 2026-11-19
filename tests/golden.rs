@@ -6,7 +6,7 @@ use everledger::{
 fn vectors(name: &str) -> Vec<serde_json::Value> {
     serde_json::from_str(
         &std::fs::read_to_string(format!(
-            "{}/rust-tests/golden/{name}.json",
+            "{}/tests/golden/{name}.json",
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap(),

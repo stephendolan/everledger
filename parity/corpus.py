@@ -17,31 +17,13 @@ from parity.fixture import Fixture
 
 ORACLE_COMMIT = '6f72b44'
 CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
-_reference = None
-
-
-def reference_root():
-    """A directory holding the README the oracle's help is checked against.
-
-    The working tree's README documents the Rust binary. The replayed test
-    compares the oracle's own help with the README of the oracle's commit.
-    """
-    global _reference
-    if _reference is None:
-        _reference = tempfile.TemporaryDirectory(prefix='everledger-parity-reference-')
-        readme = subprocess.run(['git', 'show', ORACLE_COMMIT + ':README.md'], cwd=ROOT,
-                                capture_output=True, check=True).stdout
-        Path(_reference.name, 'README.md').write_bytes(readme)
-    return Path(_reference.name)
 
 
 def load_cli():
-    spec = importlib.util.spec_from_file_location('parity_reference_cli', ROOT / 'tests/test_cli.py')
+    spec = importlib.util.spec_from_file_location('parity_reference_cli', ROOT / 'python/tests/test_cli.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.NOW = ORIGIN
-    # The fixture directory is already resolved; only the README check reads ROOT now.
-    module.ROOT = reference_root()
     real = datetime.datetime
 
     class Fixed(real):
@@ -112,7 +94,7 @@ def accounting(module):
     rows = [{'test': 'CLI.test_' + name, 'scenarios': ['cli/' + name], 'not_cli_observable': None} for name in names]
     # Detect both additions and removals, rather than silently printing 96.
     import ast
-    tree = ast.parse((ROOT / 'tests/test_foreverdb.py').read_text())
+    tree = ast.parse((ROOT / 'python/tests/test_foreverdb.py').read_text())
     owners = {node.name[5:]: owner.name for owner in tree.body if isinstance(owner, ast.ClassDef)
               for node in owner.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
     if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 96:
@@ -432,7 +414,7 @@ def replay_db(engine, module, name):
             sentinel = 'secret-fixture-surrogate'
             for code in [f"raise RuntimeError('{sentinel}')\n",
                          f"def add_surrogate_to_request(*args, **kwargs):\n    raise RuntimeError('{sentinel}')\n",
-                         f"from everledger_core import Failure\ndef add_surrogate_to_request(*args, **kwargs):\n    raise Failure('{sentinel}', 4, {{'response': '{sentinel}'}})\n"]:
+                         f"import sys\nsys.path.insert(0, {str(ROOT / 'python')!r})\nfrom everledger_core import Failure\ndef add_surrogate_to_request(*args, **kwargs):\n    raise Failure('{sentinel}', 4, {{'response': '{sentinel}'}})\n"]:
                 s.connector(code)
                 (s.cache / 'attempt.json').unlink(missing_ok=True)
                 s.sync(forbidden=(sentinel,)); s.status()

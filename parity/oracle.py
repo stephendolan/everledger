@@ -10,6 +10,11 @@ import time
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
+ORACLE_FILES = (
+    'everledger', 'everledger_core.py', 'everledger_catalogue.py',
+    'everledger_outcomes.py', 'everledger_vendors.py', 'everledger_foreverdb.py',
+    'everledger_foreverdb_mapping.py', 'build_catalogue.py', 'refresh.sh',
+)
 REAL_DATETIME = datetime.datetime
 _INSTALLED = False
 
@@ -69,12 +74,12 @@ def install():
 
 def main():
     os.environ['EVERLEDGER_PARITY_ORACLE'] = '1'
-    paths = [str(ROOT / 'parity/oracle_hook'), str(ROOT)]
+    paths = [str(ROOT / 'parity/oracle_hook'), str(ROOT), str(ROOT / 'python')]
     os.environ['PYTHONPATH'] = os.pathsep.join(paths)
-    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / 'python'))
     install()
-    sys.argv = [str(ROOT / 'everledger'), *sys.argv[1:]]
-    runpy.run_path(str(ROOT / 'everledger'), run_name='__main__')
+    sys.argv = [str(ROOT / 'python/everledger'), *sys.argv[1:]]
+    runpy.run_path(str(ROOT / 'python/everledger'), run_name='__main__')
 
 
 if __name__ == '__main__':

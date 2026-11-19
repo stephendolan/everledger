@@ -28,7 +28,7 @@ function takes and returns, read the code.
 **Output is written by `document::dumps`, never by serde_json.** The contract is
 byte parity with the Python reference, whose output is defined by `json.dumps`,
 float `repr`, and dict insertion order. `document.rs` and `primitives.rs`
-reproduce those, and `rust-tests/oracle_probe.rs` holds them to the reference.
+reproduce those, and `tests/oracle_probe.rs` holds them to the reference.
 
 **A payload is a document and a view.** `Payload<T>` keeps the ordered document
 that arrived and a typed view decoded from it. Logic reads the view; output

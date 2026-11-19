@@ -73,7 +73,7 @@ def dataset():
 
 def oracle_state(forever, ids):
     """index.json for a finished sync and pending.json for one four details short, as Python writes them."""
-    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / 'python'))
     import everledger_core as core
     import everledger_foreverdb as db
     import everledger_foreverdb_mapping as mapping

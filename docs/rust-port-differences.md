@@ -8,7 +8,7 @@ Anything that differs and is absent from this list is a defect.
 The checks that enforce the list are the differential runner
 (`parity/run.py`), the argument-surface check (`parity/argv_surface.py`), the
 interrupt check (`parity/interrupts.py`), the damaged-cache check
-(`parity/damage.py`), and the oracle probe (`rust-tests/oracle_probe.rs`).
+(`parity/damage.py`), and the oracle probe (`tests/oracle_probe.rs`).
 
 ## Text on stderr
 

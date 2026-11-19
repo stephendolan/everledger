@@ -1,6 +1,6 @@
 //! Reviewer-owned probe of the Python-fidelity primitives.
 //!
-//! `rust-tests/probe/probe.jsonl` is generated from the live oracle by
+//! `tests/probe/probe.jsonl` is generated from the live oracle by
 //! `scripts/gen_oracle_probe.py`, independently of the implementation's own
 //! golden vectors. `EVERLEDGER_PROBE` selects another corpus file.
 
@@ -52,12 +52,8 @@ fn hex(bytes: &[u8]) -> String {
 
 #[test]
 fn primitives_match_the_live_oracle() {
-    let path = std::env::var("EVERLEDGER_PROBE").unwrap_or_else(|_| {
-        format!(
-            "{}/rust-tests/probe/probe.jsonl",
-            env!("CARGO_MANIFEST_DIR")
-        )
-    });
+    let path = std::env::var("EVERLEDGER_PROBE")
+        .unwrap_or_else(|_| format!("{}/tests/probe/probe.jsonl", env!("CARGO_MANIFEST_DIR")));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let clock = VirtualClock::new(time::instant_in(PROBE_NOW, Some("UTC")).unwrap());
     let mut tallies: BTreeMap<String, Tally> = BTreeMap::new();
