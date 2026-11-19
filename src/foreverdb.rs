@@ -664,23 +664,12 @@ fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRu
         old_attempt.as_ref().map_or(&[], |attempt| &attempt.spends),
     );
     if budget.0 == 0 {
-        result.configured = true;
-        result.complete = previous.is_some() && pending.is_none();
-        result.pending = pending.is_some();
-        result.total_requests = match pending.as_ref().filter(|d| d.truthy()) {
-            Some(doc) => {
-                cache_object(doc, "ForeverDB checkpoint total")
-                    .map_err(SyncFailure::InvalidCache)?;
-                doc.decode::<CheckpointTotal>("ForeverDB checkpoint total")
-                    .map_err(SyncFailure::InvalidCache)?
-                    .total_requests
-            }
-            None => old_attempt.as_ref().map_or(0, |a| a.total_requests),
-        };
-        result.deferred = Some(Deferred::DailyLimit);
-        result.failed = old_attempt.as_ref().is_some_and(|a| a.failed);
-        result.status = old_attempt.as_ref().and_then(|a| a.status);
-        result.error = old_attempt.as_ref().and_then(|a| a.error.clone());
+        report_spent_budget(
+            previous.as_ref(),
+            pending.as_ref(),
+            old_attempt.as_ref(),
+            result,
+        )?;
         return Ok(SyncPlan::BudgetSpent);
     }
 
@@ -775,6 +764,30 @@ fn prepare_checkpoint(
         pending.set("total_requests", Document::from_typed(&total)?)?;
     }
     Ok(pending)
+}
+fn report_spent_budget(
+    previous: Option<&Index>,
+    pending: Option<&Document>,
+    old_attempt: Option<&PreviousAttempt>,
+    result: &mut SyncData,
+) -> SyncRun<()> {
+    result.configured = true;
+    result.complete = previous.is_some() && pending.is_none();
+    result.pending = pending.is_some();
+    result.total_requests = match pending.filter(|d| d.truthy()) {
+        Some(doc) => {
+            cache_object(doc, "ForeverDB checkpoint total").map_err(SyncFailure::InvalidCache)?;
+            doc.decode::<CheckpointTotal>("ForeverDB checkpoint total")
+                .map_err(SyncFailure::InvalidCache)?
+                .total_requests
+        }
+        None => old_attempt.map_or(0, |a| a.total_requests),
+    };
+    result.deferred = Some(Deferred::DailyLimit);
+    result.failed = old_attempt.is_some_and(|a| a.failed);
+    result.status = old_attempt.and_then(|a| a.status);
+    result.error = old_attempt.and_then(|a| a.error.clone());
+    Ok(())
 }
 struct Engine<'a, 'b> {
     context: &'a Context<'b>,
