@@ -182,11 +182,7 @@ pub fn execute(command: &Command, context: &Context<'_>, stdout: &mut dyn Write)
             context.clock,
         )?;
         stdout.write_all(rendered.as_bytes())?;
-        Ok(if output.stale {
-            ExitCode::Stale
-        } else {
-            output.code
-        })
+        Ok(output.exit_code())
     });
     match result {
         Ok(code) => code,

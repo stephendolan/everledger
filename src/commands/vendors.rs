@@ -12,35 +12,18 @@ pub struct Args {
     #[command(flatten)]
     pub output: crate::cli::OutputArgs,
 }
-use crate::{
-    Context, Result,
-    commands::CommandOutput,
-    vendors::{self, VendorAnswer},
-};
+use crate::{Context, Result, commands::CommandOutput, vendors};
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let item = crate::catalogue::item_for(&args.item.join(" "), context)?;
     let mut answer = vendors::lookup(item.id, context)?;
-    match &mut answer {
-        VendorAnswer::Ninja(a) => {
-            if let Some(q) = args.zone.as_deref().filter(|s| !s.is_empty()) {
-                a.select_zone(q)?;
-            }
-        }
-        VendorAnswer::Foreverdb(a) => {
-            if let Some(q) = args.zone.as_deref().filter(|s| !s.is_empty()) {
-                a.select_zone(q)?;
-            }
-        }
+    if let Some(q) = args.zone.as_deref().filter(|s| !s.is_empty()) {
+        answer.select_zone(q)?;
     }
-    let mut data = match &answer {
-        VendorAnswer::Ninja(a) => a.public(),
-        VendorAnswer::Foreverdb(a) => a.public(),
-    };
+    let mut data = answer.public();
     crate::catalogue::disclose_item_source(&mut data, Some(&item), context)?;
     let lines = crate::human::vendors::render(&answer);
-    let code = crate::provenance::stale_code(&crate::provenance::sources(&data)?);
+    let stale = crate::provenance::is_stale(&crate::provenance::sources(&data)?);
     let mut out = CommandOutput::new(data, lines);
-    out.code = code;
-    out.stale = code == crate::ExitCode::Stale;
+    out.stale = stale;
     Ok(out)
 }

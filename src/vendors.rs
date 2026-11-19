@@ -1,4 +1,6 @@
-use crate::foreverdb::{CacheError, CacheResult, Item};
+use crate::foreverdb::{
+    AttemptSummary, CacheError, CacheResult, Index, Item, transport::Transport,
+};
 use crate::{
     Context, Copper, Failure, Result,
     catalogue::{OrderedMap, nullable},
@@ -15,6 +17,108 @@ pub use foreverdb_answer::ForeverdbAnswer;
 #[path = "vendor_status.rs"]
 pub mod status;
 pub const BACKEND: &str = "wowforever.ninja";
+const USER_AGENT: &str = "Mozilla/5.0 (compatible; everledger)";
+pub fn ninja_request(url: impl Into<String>) -> Request {
+    Request::get(url).header("User-Agent", USER_AGENT)
+}
+#[derive(Clone, Copy)]
+pub(crate) struct CacheAge(i64);
+impl CacheAge {
+    pub(crate) fn fetched_at(value: &str, boundary: &str, context: &Context<'_>) -> Result<Self> {
+        crate::time::age(Some(value), context.clock)
+            .map(Self)
+            .ok_or_else(|| Failure::shape(boundary, "invalid fetched_at"))
+    }
+    pub(crate) fn stale(self) -> bool {
+        self.0 > 86400
+    }
+    pub(crate) fn within_failure_window(self) -> bool {
+        self.0 <= 7 * 86400
+    }
+}
+pub(crate) fn retryable_status(status: Option<i64>) -> bool {
+    status.is_none_or(|s| s >= 500)
+}
+enum Journal {
+    Unread,
+    Loaded(Option<AttemptSummary>),
+}
+pub(crate) struct BackendState {
+    transport: Option<Transport>,
+    pub(crate) completed: Option<Index>,
+    journal: Journal,
+}
+impl BackendState {
+    pub(crate) fn load(context: &Context<'_>) -> CacheResult<Self> {
+        let transport = Transport::select(context.config).map_err(CacheError::Failure)?;
+        let completed = if transport.is_some() {
+            crate::foreverdb::cached_index(context)?
+        } else {
+            None
+        };
+        Ok(Self {
+            transport,
+            completed,
+            journal: Journal::Unread,
+        })
+    }
+    fn attempt(&self) -> Option<&AttemptSummary> {
+        match &self.journal {
+            Journal::Unread => None,
+            Journal::Loaded(attempt) => attempt.as_ref(),
+        }
+    }
+    fn failed(&mut self, context: &Context<'_>) -> CacheResult<bool> {
+        if let Journal::Unread = self.journal {
+            self.journal = Journal::Loaded(if self.transport.is_some() {
+                crate::foreverdb::cached_attempt(context)?
+            } else {
+                None
+            });
+        }
+        Ok(self.attempt().is_some_and(|a| a.failed))
+    }
+    fn state(&mut self, context: &Context<'_>) -> CacheResult<status::ForeverdbState> {
+        use status::ForeverdbState;
+        let failed = self.failed(context)?;
+        let usable = match (&self.completed, self.attempt().filter(|a| a.failed)) {
+            (Some(index), Some(attempt)) => {
+                crate::foreverdb::index_age(index, context)?.within_failure_window()
+                    && retryable_status(attempt.status.map(i64::from))
+            }
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        Ok(match (self.transport.is_some(), failed, usable) {
+            (_, true, true) => ForeverdbState::ServingPrevious,
+            (_, true, false) => ForeverdbState::NinjaFallback,
+            (false, false, _) => ForeverdbState::NotConfigured,
+            (true, false, true) => ForeverdbState::Synced,
+            (true, false, false) => ForeverdbState::Awaiting,
+        })
+    }
+    fn serving_index(&self, state: status::ForeverdbState) -> Option<&Index> {
+        use status::ForeverdbState;
+        match state {
+            ForeverdbState::Synced | ForeverdbState::ServingPrevious => self.completed.as_ref(),
+            ForeverdbState::NotConfigured
+            | ForeverdbState::Awaiting
+            | ForeverdbState::NinjaFallback => None,
+        }
+    }
+    fn active_index(
+        &mut self,
+        context: &Context<'_>,
+    ) -> CacheResult<Option<(&Index, Option<&AttemptSummary>)>> {
+        if self.completed.is_none() {
+            return Ok(None);
+        }
+        let state = self.state(context)?;
+        Ok(self
+            .serving_index(state)
+            .map(|index| (index, self.attempt())))
+    }
+}
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -24,12 +128,34 @@ pub enum Status {
     Baseline,
     Unverified,
 }
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Basis {
-    Seen,
-    Baseline,
-    Unverified,
+pub use crate::foreverdb::mapping::Basis;
+impl Serialize for Basis {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+pub(crate) fn index_bases(index: &Index) -> impl Iterator<Item = Basis> {
+    index
+        .view()
+        .items
+        .0
+        .iter()
+        .flat_map(|(_, entry)| &entry.vendors)
+        .map(|row| row.basis)
+}
+pub(crate) fn basis_counts(bases: impl IntoIterator<Item = Basis>) -> [usize; 3] {
+    let mut counts = [0; 3];
+    for basis in bases {
+        counts[match basis {
+            Basis::Seen => 0,
+            Basis::Baseline => 1,
+            Basis::Unverified => 2,
+        }] += 1;
+    }
+    counts
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Seller {
@@ -115,15 +241,7 @@ pub struct Snapshot {
 pub enum Coverage {
     ItemAbsent,
     PinsAbsent,
-    Sellers(Vec<Seller>),
-}
-impl Coverage {
-    pub fn rows(&self) -> &[Seller] {
-        match self {
-            Self::ItemAbsent | Self::PinsAbsent => &[],
-            Self::Sellers(rows) => rows,
-        }
-    }
+    Sellers,
 }
 #[derive(Clone, Debug)]
 pub struct NinjaAnswer {
@@ -131,8 +249,14 @@ pub struct NinjaAnswer {
     coverage: Coverage,
 }
 impl NinjaAnswer {
+    fn age(&self, context: &Context<'_>) -> Result<CacheAge> {
+        CacheAge::fetched_at(&self.payload.view().fetched_at, "ninja cache", context)
+    }
     pub fn payload(&self) -> &Payload<Snapshot> {
         &self.payload
+    }
+    pub fn rows(&self) -> &[Seller] {
+        self.payload.view().vendors.as_deref().unwrap_or(&[])
     }
     pub fn coverage(&self) -> &Coverage {
         &self.coverage
@@ -142,7 +266,7 @@ impl NinjaAnswer {
         let coverage = match (&payload.view().vendors, payload.view().reason.as_deref()) {
             (None, Some("item not in dataset")) => Coverage::ItemAbsent,
             (None, Some("no pins published")) => Coverage::PinsAbsent,
-            (Some(rows), None) => Coverage::Sellers(rows.clone()),
+            (Some(_), None) => Coverage::Sellers,
             _ => {
                 return Err(Failure::shape(
                     "ninja snapshot",
@@ -154,63 +278,31 @@ impl NinjaAnswer {
     }
     pub fn select_zone(&mut self, query: &str) -> Result<()> {
         let zones = self
-            .coverage
             .rows()
             .iter()
             .map(|r| r.zone.clone())
             .collect::<BTreeSet<_>>();
         let query = crate::primitives::casefold(query);
         let q = zone_query(&query);
-        let docs = self
-            .payload
-            .document()
-            .get("vendors")
-            .and_then(Document::as_array);
-        if let Coverage::Sellers(rows) = &self.coverage {
-            let docs =
-                docs.ok_or_else(|| Failure::shape("ninja snapshot", "missing seller documents"))?;
-            let filtered = rows
+        if let Coverage::Sellers = self.coverage {
+            let docs = self
+                .payload
+                .document()
+                .get("vendors")
+                .and_then(Document::as_array)
+                .ok_or_else(|| Failure::shape("ninja snapshot", "missing seller documents"))?;
+            let filtered = self
+                .rows()
                 .iter()
                 .zip(docs)
-                .filter(|(r, _)| {
-                    crate::primitives::casefold(&r.zone).contains(q)
-                        || crate::primitives::casefold(&r.zone_slug).contains(q)
-                })
+                .filter(|(r, _)| matches_zone(&r.zone, &r.zone_slug, q))
                 .map(|(_, d)| d.clone())
                 .collect();
             self.payload.set("vendors", Document::Array(filtered))?;
-            self.coverage = Coverage::Sellers(
-                self.payload
-                    .view()
-                    .vendors
-                    .clone()
-                    .ok_or_else(|| Failure::shape("ninja snapshot", "missing sellers"))?,
-            );
         }
         self.payload
             .set("known_zones", Document::from_typed(&zones)?)?;
         Ok(())
-    }
-    pub fn public(&self) -> Document {
-        let mut d = self.payload.document().clone();
-        for key in ["raw_item", "raw_pins", "backend_url", "_fallback_vendors"] {
-            d.remove(key);
-        }
-        d
-    }
-    pub fn sellers_document(&self) -> Result<Document> {
-        self.payload
-            .document()
-            .get("vendors")
-            .cloned()
-            .ok_or_else(|| Failure::shape("ninja snapshot", "missing vendors"))
-    }
-    pub fn reason(&self) -> Option<&'static str> {
-        match self.coverage {
-            Coverage::ItemAbsent => Some("item not in dataset"),
-            Coverage::PinsAbsent => Some("no pins published"),
-            Coverage::Sellers(_) => None,
-        }
     }
 }
 #[derive(Clone, Debug)]
@@ -218,16 +310,63 @@ pub enum VendorAnswer {
     Ninja(NinjaAnswer),
     Foreverdb(ForeverdbAnswer),
 }
+impl VendorAnswer {
+    pub fn select_zone(&mut self, query: &str) -> Result<()> {
+        match self {
+            Self::Ninja(a) => a.select_zone(query),
+            Self::Foreverdb(a) => a.select_zone(query),
+        }
+    }
+    fn document(&self) -> &Document {
+        match self {
+            Self::Ninja(a) => a.payload.document(),
+            Self::Foreverdb(a) => a.payload().document(),
+        }
+    }
+    pub fn public(&self) -> Document {
+        let mut data = self.document().clone();
+        let private: &[&str] = match self {
+            Self::Ninja(_) => &["raw_item", "raw_pins", "backend_url", "_fallback_vendors"],
+            Self::Foreverdb(_) => &["_fallback_vendors"],
+        };
+        for key in private {
+            data.remove(key);
+        }
+        data
+    }
+    pub fn sellers_document(&self) -> Result<Document> {
+        self.document().get("vendors").cloned().ok_or_else(|| {
+            Failure::shape(
+                match self {
+                    Self::Ninja(_) => "ninja snapshot",
+                    Self::Foreverdb(_) => "ForeverDB answer",
+                },
+                "missing vendors",
+            )
+        })
+    }
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Ninja(a) => a.payload.view().reason.as_deref(),
+            Self::Foreverdb(a) => a.payload().view().reason.as_deref(),
+        }
+    }
+    pub fn sources(&self) -> Result<Vec<Source>> {
+        crate::provenance::sources(self.document())
+    }
+}
 pub fn lookup(item_id: i64, context: &Context<'_>) -> Result<VendorAnswer> {
-    if let Some(index) = crate::foreverdb::active_index(context)? {
+    let mut backend = BackendState::load(context).map_err(CacheError::into_failure)?;
+    if let Some((index, attempt)) = backend
+        .active_index(context)
+        .map_err(CacheError::into_failure)?
+    {
         return Ok(VendorAnswer::Foreverdb(ForeverdbAnswer::lookup(
-            item_id, &index, context,
+            item_id, index, attempt, context,
         )?));
     }
     let mut answer = ninja_lookup(item_id, false, context)?;
-    if crate::foreverdb::transport::Transport::select(context.config)?.is_some()
-        && crate::foreverdb::attempt(context)?.is_some_and(|a| a.failed)
-    {
+    if backend.failed(context).map_err(CacheError::into_failure)? {
         ninja_fallback(&mut answer, context).map_err(CacheError::into_failure)?;
     }
     Ok(VendorAnswer::Ninja(answer))
@@ -378,13 +517,10 @@ fn status(e: &Failure) -> Result<Option<i64>> {
 }
 fn fetch(item_id: i64, context: &Context<'_>) -> CacheResult<NinjaAnswer> {
     let get = |suffix: &str| -> CacheResult<Option<(Document, Option<String>)>> {
-        match context.http.request(
-            &Request::get(format!(
-                "{}/items/{item_id}.{suffix}",
-                context.config.vendor_url
-            ))
-            .header("User-Agent", crate::http::VENDOR_USER_AGENT),
-        ) {
+        match context.http.request(&ninja_request(format!(
+            "{}/items/{item_id}.{suffix}",
+            context.config.vendor_url
+        ))) {
             Ok(r) => Ok(Some((
                 crate::http::decode_body(&r.body)?,
                 r.header("Last-Modified").map(str::to_owned),
@@ -497,70 +633,37 @@ fn cached_ninja_lookup(
     refresh: bool,
     context: &Context<'_>,
 ) -> CacheResult<NinjaAnswer> {
-    let path = context
-        .config
-        .data_dir
-        .join("vendors")
-        .join(BACKEND)
-        .join(format!("{item_id}.json"));
-    let cached = match std::fs::read(&path) {
-        Ok(bytes) => {
-            let text =
-                String::from_utf8(bytes).map_err(|e| Failure::shape("ninja cache text", e))?;
-            let d = crate::document::parse(&text)?;
-            if d.truthy() {
-                if cache_matches(&d, context)? {
-                    Some(NinjaAnswer::decode(d)?)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+    let path = ninja_cache_path(item_id, context);
+    let cached = read_ninja_cache(&path, NinjaRead::Lookup, context)?
+        .map(NinjaAnswer::decode)
+        .transpose()?;
+    let (mut answer, stale) = match (refresh, cached) {
+        (false, Some(c)) => {
+            let stale = c.age(context)?.stale();
+            (c, stale)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e.into()),
-    };
-    let mut stale = false;
-    let mut answer = if !refresh && cached.is_some() {
-        let c = cached.ok_or_else(|| Failure::error("missing cache"))?;
-        stale = crate::time::age(Some(&c.payload.view().fetched_at), context.clock)
-            .ok_or_else(|| Failure::shape("ninja cache", "invalid fetched_at"))?
-            > 86400;
-        c
-    } else {
-        match fetch(item_id, context) {
+        (_, cached) => match fetch(item_id, context) {
             Ok(a) => {
                 write_cache(&path, a.payload.document())?;
-                a
+                (a, false)
             }
             Err(CacheError::Failure(error)) => match cached {
                 Some(c) => {
-                    let age = crate::time::age(Some(&c.payload.view().fetched_at), context.clock)
-                        .ok_or_else(|| Failure::shape("ninja cache", "invalid fetched_at"))?;
-                    if age > 7 * 86400 || status(&error)?.is_some_and(|s| s < 500) {
+                    if !c.age(context)?.within_failure_window()
+                        || !retryable_status(status(&error)?)
+                    {
                         return Err(CacheError::Failure(error));
                     }
-                    stale = true;
-                    c
+                    (c, true)
                 }
                 None => return Err(CacheError::Failure(error)),
             },
             Err(error) => return Err(error),
-        }
+        },
     };
-    let mut seen = 0;
-    let mut baseline = 0;
-    let mut unverified = 0;
-    let mut pins = 0;
-    for r in answer.coverage.rows() {
-        match r.basis {
-            Basis::Seen => seen += 1,
-            Basis::Baseline => baseline += 1,
-            Basis::Unverified => unverified += 1,
-        };
-        pins += r.coords.len();
-    }
+    let rows = answer.rows();
+    let [seen, baseline, unverified] = basis_counts(rows.iter().map(|r| r.basis));
+    let pins: usize = rows.iter().map(|r| r.coords.len()).sum();
     answer.payload.set("stale", stale)?;
     let mut source = crate::provenance::source(
         &format!("{BACKEND} pins"),
@@ -569,24 +672,56 @@ fn cached_ninja_lookup(
     )?;
     source.set("fetched_at", answer.payload.view().fetched_at.clone())?;
     source.set("stale", stale)?;
-    source.set("detail",format!("1.12 baseline sale/price; {seen} vendor seen in Forever, {baseline} baseline, {unverified} unverified; {} vendors, {pins} pins; faction unavailable",answer.coverage.rows().len()))?;
+    source.set("detail",format!("1.12 baseline sale/price; {seen} vendor seen in Forever, {baseline} baseline, {unverified} unverified; {} vendors, {pins} pins; faction unavailable",answer.rows().len()))?;
     answer
         .payload
         .set("sources", Document::Array(vec![source.into_document()]))?;
     Ok(answer)
 }
-pub fn sources(answer: &NinjaAnswer) -> Result<Vec<Source>> {
-    crate::provenance::sources(answer.payload.document())
+#[derive(Clone, Copy)]
+enum NinjaRead {
+    Lookup,
+    Comparison,
+    Status,
+}
+fn ninja_cache_dir(context: &Context<'_>) -> std::path::PathBuf {
+    context.config.data_dir.join("vendors").join(BACKEND)
+}
+fn ninja_cache_path(item_id: i64, context: &Context<'_>) -> std::path::PathBuf {
+    ninja_cache_dir(context).join(format!("{item_id}.json"))
+}
+fn read_ninja_cache(
+    path: &std::path::Path,
+    mode: NinjaRead,
+    context: &Context<'_>,
+) -> CacheResult<Option<Document>> {
+    let text = match mode {
+        NinjaRead::Lookup => std::fs::read(path).map(|bytes| {
+            String::from_utf8(bytes).map_err(|e| Failure::shape("ninja cache text", e))
+        }),
+        NinjaRead::Comparison | NinjaRead::Status => std::fs::read_to_string(path).map(Ok),
+    };
+    let text = match text {
+        Ok(text) => text?,
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound && !matches!(mode, NinjaRead::Status) =>
+        {
+            return Ok(None);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let doc = crate::document::parse(&text)?;
+    if matches!(mode, NinjaRead::Lookup) && !doc.truthy() {
+        return Ok(None);
+    }
+    crate::foreverdb::cache_object(&doc, "ninja cache origin")?;
+    let origin: CacheOrigin = doc.decode("ninja cache origin")?;
+    Ok((origin.backend_url.as_deref() == Some(&context.config.vendor_url)).then_some(doc))
 }
 
 #[derive(Deserialize)]
 struct CacheOrigin {
     backend_url: Option<String>,
-}
-fn cache_matches(document: &Document, context: &Context<'_>) -> Result<bool> {
-    crate::foreverdb::cache_object(document, "ninja cache origin")?;
-    let origin: CacheOrigin = document.decode("ninja cache origin")?;
-    Ok(origin.backend_url.as_deref() == Some(&context.config.vendor_url))
 }
 #[derive(Deserialize)]
 struct CachedCoverage {
@@ -594,7 +729,7 @@ struct CachedCoverage {
     published_at: Option<String>,
 }
 fn cache_paths(context: &Context<'_>) -> Result<Vec<std::path::PathBuf>> {
-    let dir = context.config.data_dir.join("vendors").join(BACKEND);
+    let dir = ninja_cache_dir(context);
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
@@ -611,10 +746,7 @@ fn cache_paths(context: &Context<'_>) -> Result<Vec<std::path::PathBuf>> {
     Ok(paths)
 }
 fn ninja_fallback(answer: &mut NinjaAnswer, context: &Context<'_>) -> CacheResult<()> {
-    if crate::time::age(Some(&answer.payload.view().fetched_at), context.clock)
-        .ok_or_else(|| Failure::shape("ninja cache", "invalid fetched_at"))?
-        > 7 * 86400
-    {
+    if !answer.age(context)?.within_failure_window() {
         return Err(CacheError::Failure(Failure::unreachable(
             "ForeverDB sync failed; ninja fallback cache is older than 7d",
         )));
@@ -641,8 +773,13 @@ pub fn refresh_cached(
 ) -> Result<(Vec<Source>, crate::foreverdb::SyncResult)> {
     let synced = crate::foreverdb::sync(context)?;
     let index_sources = (|| {
-        crate::foreverdb::cached_active_index(context)?
-            .map(|index| crate::foreverdb::cached_index_sources(&index, context))
+        let mut backend = BackendState::load(context)?;
+        backend
+            .active_index(context)?
+            .map(|(index, attempt)| {
+                crate::foreverdb::index_sources(index, attempt, context)
+                    .map_err(CacheError::Invalid)
+            })
             .transpose()
     })();
     match index_sources {
@@ -664,7 +801,7 @@ pub fn refresh_cached(
             if synced.view().failed {
                 ninja_fallback(&mut answer, context)?;
             }
-            sources(&answer).map_err(CacheError::Invalid)
+            crate::provenance::sources(answer.payload.document()).map_err(CacheError::Invalid)
         })();
         match refreshed {
             Ok(sources) => used.extend(sources),
@@ -685,4 +822,9 @@ fn zone_query(query: &str) -> &str {
         "uc" => "undercity",
         _ => query,
     }
+}
+
+fn matches_zone(zone: &str, slug: &str, query: &str) -> bool {
+    crate::primitives::casefold(zone).contains(query)
+        || crate::primitives::casefold(slug).contains(query)
 }

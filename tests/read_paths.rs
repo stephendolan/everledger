@@ -179,18 +179,10 @@ fn red_dye_preserves_all_sellers_pins_and_known_zones() {
     let f = Fixture::new();
     f.dye();
     let a = f.snapshot();
-    assert_eq!(a.coverage().rows().len(), 89);
+    assert_eq!(a.rows().len(), 89);
+    assert_eq!(a.rows().iter().map(|r| r.coords.len()).sum::<usize>(), 91);
     assert_eq!(
-        a.coverage()
-            .rows()
-            .iter()
-            .map(|r| r.coords.len())
-            .sum::<usize>(),
-        91
-    );
-    assert_eq!(
-        a.coverage()
-            .rows()
+        a.rows()
             .iter()
             .find(|r| r.name == "Felika")
             .unwrap()
@@ -271,7 +263,7 @@ fn cache_bytes_precede_runtime_metadata_and_cache_is_served_without_refetch() {
     f.age_cache("2026-11-13T12:00:00Z");
     assert_eq!(f.snapshot().payload().view().stale, Some(true));
     assert_eq!(
-        f.command(&["vendors", "2604"]).unwrap().code,
+        f.command(&["vendors", "2604"]).unwrap().exit_code(),
         ExitCode::Stale
     );
 }
@@ -669,7 +661,7 @@ fn cache_from_another_backend_url_is_discarded_before_decoding_snapshot() {
     f.dye();
     std::fs::create_dir_all(f.cache().parent().unwrap()).unwrap();
     std::fs::write(f.cache(), r#"{"backend_url":"http://127.0.0.1:9"}"#).unwrap();
-    assert_eq!(f.snapshot().coverage().rows().len(), 89);
+    assert_eq!(f.snapshot().rows().len(), 89);
 }
 #[test]
 fn margin_order_uses_profit_times_sales_but_negative_margins_ignore_sales() {

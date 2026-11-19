@@ -350,7 +350,7 @@ pub(super) fn finish_attempt(attempt: &mut Document, now: UtcInstant) -> Result<
 pub fn attempt(context: &Context<'_>) -> Result<Option<AttemptSummary>> {
     cached_attempt(context).map_err(CacheError::into_failure)
 }
-fn cached_attempt(context: &Context<'_>) -> CacheResult<Option<AttemptSummary>> {
+pub(crate) fn cached_attempt(context: &Context<'_>) -> CacheResult<Option<AttemptSummary>> {
     cached_read(context, "attempt.json")?
         .filter(Document::truthy)
         .map(|d| {
@@ -405,15 +405,11 @@ fn remove(dir: &Path, name: &str) -> Result<()> {
     }
 }
 pub fn index(context: &Context<'_>) -> Result<Option<Index>> {
-    cached_index(context).map_err(CacheError::into_failure)
+    crate::vendors::BackendState::load(context)
+        .map(|state| state.completed)
+        .map_err(CacheError::into_failure)
 }
-fn cached_index(context: &Context<'_>) -> CacheResult<Option<Index>> {
-    if transport::Transport::select(context.config)
-        .map_err(CacheError::Failure)?
-        .is_none()
-    {
-        return Ok(None);
-    }
+pub(crate) fn cached_index(context: &Context<'_>) -> CacheResult<Option<Index>> {
     Ok(decode_index(cached_read(context, "index.json")?)?)
 }
 pub(crate) fn cache_object(doc: &Document, boundary: &str) -> Result<()> {
@@ -436,29 +432,8 @@ fn decode_index(doc: Option<Document>) -> Result<Option<Index>> {
     }
     Payload::decode(doc, "ForeverDB index").map(Some)
 }
-pub fn usable_index(
-    index: &Index,
-    attempt: Option<&AttemptSummary>,
-    context: &Context<'_>,
-) -> Result<bool> {
-    match attempt.filter(|a| a.failed) {
-        Some(a) => Ok(index_age(index, context)? <= 7 * 86400 && a.status.is_none_or(|s| s >= 500)),
-        None => Ok(true),
-    }
-}
-fn index_age(index: &Index, context: &Context<'_>) -> Result<i64> {
-    age(Some(&index.view().fetched_at), context.clock)
-        .ok_or_else(|| Failure::shape("ForeverDB index", "invalid fetched_at"))
-}
-pub fn active_index(context: &Context<'_>) -> Result<Option<Index>> {
-    cached_active_index(context).map_err(CacheError::into_failure)
-}
-pub(crate) fn cached_active_index(context: &Context<'_>) -> CacheResult<Option<Index>> {
-    let Some(index) = cached_index(context)? else {
-        return Ok(None);
-    };
-    let attempt = cached_attempt(context)?;
-    Ok(usable_index(&index, attempt.as_ref(), context)?.then_some(index))
+pub(crate) fn index_age(index: &Index, context: &Context<'_>) -> Result<crate::vendors::CacheAge> {
+    crate::vendors::CacheAge::fetched_at(&index.view().fetched_at, "ForeverDB index", context)
 }
 pub fn sync(context: &Context<'_>) -> Result<SyncResult> {
     let mut result = SyncData::default();
@@ -959,12 +934,10 @@ fn snapshot(
 }
 pub fn provenance(
     index: &Index,
-    rows: &[Seller],
+    counts: [usize; 3],
     stale: bool,
     context: &Context<'_>,
 ) -> Result<Vec<Source>> {
-    let counts = [Basis::Seen, Basis::Baseline, Basis::Unverified]
-        .map(|basis| rows.iter().filter(|r| r.basis == basis).count());
     let mut s = source(
         "foreverdb.net vendors",
         index.view().published_at.as_deref(),
@@ -975,38 +948,39 @@ pub fn provenance(
     s.set("detail", crate::human::refresh::credit(counts))?;
     Ok(vec![s])
 }
-pub fn index_sources(index: &Index, context: &Context<'_>) -> Result<Vec<Source>> {
-    cached_index_sources(index, context).map_err(CacheError::into_failure)
-}
-pub(crate) fn cached_index_sources(
+pub fn index_sources(
     index: &Index,
+    attempt: Option<&AttemptSummary>,
     context: &Context<'_>,
-) -> CacheResult<Vec<Source>> {
-    let rows = index
-        .view()
-        .items
-        .0
-        .iter()
-        .flat_map(|(_, e)| e.vendors.clone())
-        .collect::<Vec<_>>();
-    Ok(provenance(
+) -> Result<Vec<Source>> {
+    let counts = crate::vendors::basis_counts(crate::vendors::index_bases(index));
+    provenance(
         index,
-        &rows,
-        cached_stale(index, context)?,
+        counts,
+        cached_stale(index, attempt, context)?,
         context,
-    )?)
+    )
 }
-fn cached_stale(index: &Index, context: &Context<'_>) -> CacheResult<bool> {
-    Ok(index_age(index, context)? > 86400 || cached_attempt(context)?.is_some_and(|a| a.failed))
+fn cached_stale(
+    index: &Index,
+    attempt: Option<&AttemptSummary>,
+    context: &Context<'_>,
+) -> Result<bool> {
+    Ok(index_age(index, context)?.stale() || attempt.is_some_and(|a| a.failed))
 }
-pub fn lookup(item_id: i64, index: &Index, context: &Context<'_>) -> Result<Document> {
+pub fn lookup(
+    item_id: i64,
+    index: &Index,
+    attempt: Option<&AttemptSummary>,
+    context: &Context<'_>,
+) -> Result<Document> {
     let key = item_id.to_string();
     let entry = index.view().items.get(&key);
     let docs = index.document().get("items").and_then(|d| d.get(&key));
-    let stale = cached_stale(index, context).map_err(CacheError::into_failure)?;
+    let stale = cached_stale(index, attempt, context)?;
     let sources = provenance(
         index,
-        entry.map_or(&[], |e| e.vendors.as_slice()),
+        crate::vendors::basis_counts(entry.into_iter().flat_map(|e| &e.vendors).map(|r| r.basis)),
         stale,
         context,
     )?;

@@ -5,8 +5,6 @@ use crate::{
 };
 use std::{collections::HashMap, time::Duration};
 
-pub const VENDOR_USER_AGENT: &str = "Mozilla/5.0 (compatible; everledger)";
-
 #[derive(Clone, Debug)]
 pub struct Request {
     pub url: String,

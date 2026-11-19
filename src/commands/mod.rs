@@ -32,4 +32,11 @@ impl CommandOutput {
             source_families: vec![],
         }
     }
+    pub fn exit_code(&self) -> ExitCode {
+        if self.stale {
+            ExitCode::Stale
+        } else {
+            self.code
+        }
+    }
 }
