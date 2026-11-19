@@ -14,7 +14,6 @@ pub mod refresh;
 pub mod sales;
 pub mod status;
 pub mod vendors;
-pub mod verify;
 
 pub struct CommandOutput {
     pub data: Document,

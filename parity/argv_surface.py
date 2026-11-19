@@ -174,7 +174,7 @@ def sanctioned(argv):
 
 results, mismatches, exempt = [], [], []
 for argv in unique:
-    code, out, err = run(str(ROOT / 'everledger'), argv)
+    code, out, err = run(str(ROOT / 'python/everledger'), argv)
     ccode, cout, cerr = run(CANDIDATE, argv)
     row = {'argv': argv, 'oracle': classify_oracle(code, out, err), 'oracle_code': code,
            'candidate': classify_candidate(ccode, cout, cerr), 'candidate_code': ccode}
@@ -221,7 +221,7 @@ def cap_sanctioned(value):
 
 cap_rows, cap_exempt, cap_mismatches = [], [], []
 for value in CAP_VALUES:
-    row = {'value': value, 'oracle': cap_class(run(str(ROOT / 'everledger'), ['--help'], {CAP: value})),
+    row = {'value': value, 'oracle': cap_class(run(str(ROOT / 'python/everledger'), ['--help'], {CAP: value})),
            'candidate': cap_class(run(CANDIDATE, ['--help'], {CAP: value}))}
     cap_rows.append(row)
     if row['oracle'] == row['candidate'] != 'other':
@@ -240,7 +240,7 @@ refused_everywhere = 0
 for value in ('invalid', '0', ''):
     for argv in unique[:18] + unique[18::12]:
         refused_everywhere += 1
-        outcomes = {'oracle': run(str(ROOT / 'everledger'), argv, {CAP: value}), 'candidate': run(CANDIDATE, argv, {CAP: value})}
+        outcomes = {'oracle': run(str(ROOT / 'python/everledger'), argv, {CAP: value}), 'candidate': run(CANDIDATE, argv, {CAP: value})}
         if not outcomes['oracle'] == outcomes['candidate'] == REFUSAL:
             cap_mismatches.append({'value': value, 'argv': argv, **{side: list(result) for side, result in outcomes.items()}})
 shutil.rmtree(tmp, ignore_errors=True)

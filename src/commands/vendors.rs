@@ -9,8 +9,8 @@ pub struct Args {
         help = "zone/city substring; aliases IF, SW, Darn, Org, TB, UC"
     )]
     pub zone: Option<String>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Result,

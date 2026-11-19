@@ -51,7 +51,7 @@ at the default `parity/report.json` location.
 
 ## Replay and isolation
 
-`corpus.py` loads `tests/test_cli.py` as a fixture vocabulary and executes its
+`corpus.py` loads `python/tests/test_cli.py` as a fixture vocabulary and executes its
 55 test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
 subprocess runs. Original assertions still run against the oracle result;
 assertion failures fail the harness independently of parity. This preserves
@@ -148,7 +148,7 @@ The oracle wrapper patches `datetime.datetime.now`, `time.monotonic`, and
 refuses its configuration as it loads, the wrapper leaves the report to the
 CLI. No oracle source file is edited. The private oracle elapsed-state file shares the clock with Python
 children through `oracle_hook/sitecustomize.py`; this includes
-`refresh.sh -> build_catalogue.py`, so generated catalogues use the same clock.
+`python/refresh.sh -> python/build_catalogue.py`, so generated catalogues use the same clock.
 Startup-hook failure exits 125 and fails the harness. These private wrapper
 variables are not additional candidate seams.
 
@@ -182,7 +182,7 @@ The self-suite checks two consecutive full oracle-versus-oracle runs with zero
 sanctioned entries, plus deliberately wrong executables for one stdout byte,
 exit status, contract stderr, request order, query strings, one cache byte,
 and the sleep log. A further wrong candidate dates a killed attempt's spend
-from the attempt's start instead of its last request and must be rejected. The suite also compares the wrapper with plain `./everledger` on
+from the attempt's start instead of its last request and must be rejected. The suite also compares the wrapper with plain `./python/everledger` on
 three scenarios without time-dependent observations, tests clock inheritance
 in a real Python child, exercises exact-query routing and redirect refusal,
 and checks normalization and allowlist boundaries.

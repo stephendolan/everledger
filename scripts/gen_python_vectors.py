@@ -11,9 +11,9 @@ import unicodedata
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / 'python'))
 import everledger_core as core
-OUT = ROOT / 'rust-tests/golden'
+OUT = ROOT / 'tests/golden'
 OUT.mkdir(parents=True, exist_ok=True)
 
 def write(name, data):
@@ -107,7 +107,7 @@ write('emit',vec)
 print('generated randomized float and provenance vectors')
 import runpy
 import tempfile
-ns=runpy.run_path(str(ROOT/'everledger'))
+ns=runpy.run_path(str(ROOT/'python/everledger'))
 fixture=json.loads((ROOT/'tests/fixtures/catalogue-fixture.json').read_text())
 null=json.loads(json.dumps(fixture));r=null['professions']['tailoring']['recipes'][0]
 r['bands'].update(yellow=None,green=None,grey=None);r['source_type']=None

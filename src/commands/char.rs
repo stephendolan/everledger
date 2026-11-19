@@ -7,8 +7,8 @@ pub struct Args {
     pub profession: Option<String>,
     #[arg(long="skill",value_parser=crate::cli::parse_integer,allow_negative_numbers=true)]
     pub skill: Option<i64>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{Context, Result, catalogue, commands::CommandOutput, http::Payload, read_roster};
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {

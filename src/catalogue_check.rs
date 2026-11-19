@@ -1,5 +1,5 @@
 use crate::human;
-pub const ANCHORS: [(&str, &str, i64, Option<&str>); 7] = [
+const ANCHORS: [(&str, &str, i64, Option<&str>); 7] = [
     (
         "tailoring",
         "White Swashbuckler's Shirt",
@@ -38,7 +38,7 @@ impl Check<'_> {
         }
     }
 }
-pub fn check_catalogue(cat: &crate::catalogue::Catalogue) -> (bool, Vec<String>) {
+pub fn check(cat: &crate::catalogue::Catalogue) -> (bool, Vec<String>) {
     let mut checks = vec![];
     for (prof, block) in &cat.view().professions.0 {
         checks.push(Check::Count {
@@ -60,6 +60,6 @@ pub fn check_catalogue(cat: &crate::catalogue::Catalogue) -> (bool, Vec<String>)
         checks.push(Check::Anchor { good, name, recipe });
     }
     let ok = checks.iter().all(Check::good);
-    let lines = human::verify::render(&checks, cat);
+    let lines = human::catalogue_check::render(&checks, cat);
     (ok, lines)
 }

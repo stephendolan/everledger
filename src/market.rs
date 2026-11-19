@@ -7,6 +7,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+pub const FRESHNESS_SECONDS: i64 = 15 * 60;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Price {
     pub median_copper: Option<Copper>,
@@ -66,7 +68,8 @@ pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
         Some(&timestamp),
         context.clock,
     )?;
-    let stale = crate::time::age(Some(&timestamp), context.clock).is_some_and(|s| s > 900);
+    let stale =
+        crate::time::age(Some(&timestamp), context.clock).is_some_and(|s| s > FRESHNESS_SECONDS);
     s.set("stale", stale)?;
     Ok((prices, s))
 }

@@ -11,8 +11,8 @@ pub struct Args {
     pub until: Option<String>,
     #[arg(long = "venue", allow_negative_numbers = true, value_enum)]
     pub venue: Option<crate::types::Venue>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Result,

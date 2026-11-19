@@ -9,8 +9,8 @@ pub struct Args {
     pub since: Option<String>,
     #[arg(long = "until", allow_negative_numbers = true)]
     pub until: Option<String>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Result,

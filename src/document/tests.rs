@@ -101,7 +101,7 @@ fn typed_decoding_preserves_json_boundary_acceptance_and_values() {
 
 #[test]
 fn typed_json_values_match_the_oracle_probe_documents() {
-    for line in include_str!("../rust-tests/probe/probe.jsonl").lines() {
+    for line in include_str!("../../tests/probe/probe.jsonl").lines() {
         let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };

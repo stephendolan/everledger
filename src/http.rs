@@ -1,10 +1,11 @@
-#[path = "http_forward.rs"]
 mod forward;
 use crate::{
     ExitCode, Failure, Result,
     document::{Document, parse},
 };
 use std::{collections::HashMap, time::Duration};
+
+pub const VENDOR_USER_AGENT: &str = "Mozilla/5.0 (compatible; everledger)";
 
 #[derive(Clone, Debug)]
 pub struct Request {

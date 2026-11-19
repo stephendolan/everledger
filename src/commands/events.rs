@@ -34,8 +34,8 @@ pub struct Args {
     pub after: Option<String>,
     #[arg(long="limit",value_parser=crate::cli::parse_integer,allow_negative_numbers=true,help="0 bootstraps a watch; default 50 human, 500 JSON")]
     pub limit: Option<i64>,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, Failure, Result,
@@ -58,7 +58,7 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         .or(if args.cursor.as_deref().is_some_and(|s| !s.is_empty()) {
             None
         } else {
-            Some(if args.json { 500 } else { 50 })
+            Some(if args.output.json { 500 } else { 50 })
         });
     let item = args
         .item
