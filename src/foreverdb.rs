@@ -714,6 +714,10 @@ enum AttemptEnd<'a> {
     Pending,
     Failed(&'a Failure, CheckpointState),
 }
+enum RequestRetry {
+    Again,
+    Deferred,
+}
 struct Engine<'a, 'b> {
     context: &'a Context<'b>,
     transport: &'a transport::Transport,
@@ -885,6 +889,39 @@ impl Engine<'_, '_> {
         self.checkpoint_interrupt()?;
         Ok(())
     }
+    fn request_failure(&mut self, error: Failure, retry: Option<&Retry>) -> SyncRun<RequestRetry> {
+        let body = error.body.as_ref();
+        let status = body
+            .and_then(|d| d.get("status"))
+            .and_then(Document::as_i64);
+        let response = body.and_then(|d| d.get("response"));
+        if status == Some(502)
+            && retry.is_none()
+            && response.and_then(|d| d.get("retryable")) == Some(&Document::Bool(true))
+        {
+            let timestamp = self.context.clock.now();
+            let not_before = retry_at(response.and_then(|d| d.get("retry_after")), timestamp)?;
+            self.pending.set(
+                "retry",
+                Document::object([("not_before", retry_iso(not_before).into())]),
+            )?;
+            self.interrupt
+                .write("pending.json", self.pending.document())?;
+            if not_before.microseconds() - timestamp.microseconds() > 300_000_000 {
+                self.deferred = Some(Deferred::RetryWait);
+                return Ok(RequestRetry::Deferred);
+            }
+            return Ok(RequestRetry::Again);
+        }
+        self.interrupt
+            .clear_retry(self.pending, self.context.clock)?;
+        Err(Failure {
+            message: crate::human::refresh::sync_failed(status),
+            code: crate::ExitCode::Unreachable,
+            body: Some(Document::object([("status", status.into())])),
+        }
+        .into())
+    }
     fn get(&mut self, path: &str) -> SyncRun<Option<Document>> {
         loop {
             if self.attempt.view().requests >= self.budget.0 {
@@ -931,40 +968,10 @@ impl Engine<'_, '_> {
                         .map(Some)
                         .map_err(|_| SyncFailure::Failed(mapping::invalid()));
                 }
-                Err(error) => {
-                    let body = error.body.as_ref();
-                    let status = body
-                        .and_then(|d| d.get("status"))
-                        .and_then(Document::as_i64);
-                    let response = body.and_then(|d| d.get("response"));
-                    if status == Some(502)
-                        && retry.is_none()
-                        && response.and_then(|d| d.get("retryable")) == Some(&Document::Bool(true))
-                    {
-                        let timestamp = self.context.clock.now();
-                        let not_before =
-                            retry_at(response.and_then(|d| d.get("retry_after")), timestamp)?;
-                        self.pending.set(
-                            "retry",
-                            Document::object([("not_before", retry_iso(not_before).into())]),
-                        )?;
-                        self.interrupt
-                            .write("pending.json", self.pending.document())?;
-                        if not_before.microseconds() - timestamp.microseconds() > 300_000_000 {
-                            self.deferred = Some(Deferred::RetryWait);
-                            return Ok(None);
-                        }
-                        continue;
-                    }
-                    self.interrupt
-                        .clear_retry(self.pending, self.context.clock)?;
-                    return Err(Failure {
-                        message: crate::human::refresh::sync_failed(status),
-                        code: crate::ExitCode::Unreachable,
-                        body: Some(Document::object([("status", status.into())])),
-                    }
-                    .into());
-                }
+                Err(error) => match self.request_failure(error, retry.as_ref())? {
+                    RequestRetry::Again => continue,
+                    RequestRetry::Deferred => return Ok(None),
+                },
             }
         }
     }
