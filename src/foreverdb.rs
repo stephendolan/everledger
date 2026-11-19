@@ -548,6 +548,54 @@ pub(super) fn save_attempt(dir: &Path, attempt: &Document, clock: &dyn Clock) ->
 fn failure_status(error: &Failure) -> Option<&Document> {
     error.body.as_ref().and_then(|body| body.get("status"))
 }
+fn snapshot_entries(
+    pending: &Payload<Pending>,
+    previous: Option<&Index>,
+) -> Result<Vec<SnapshotItem>> {
+    let mut entries: Vec<SnapshotItem> = vec![];
+    if let Some(index) = previous {
+        for (id, _) in &index.view().items.0 {
+            let item = index
+                .document()
+                .get("items")
+                .and_then(|d| d.get(id))
+                .and_then(|d| d.get("item"))
+                .cloned()
+                .ok_or_else(mapping::invalid)?;
+            entries.push((id.clone(), item, vec![]));
+        }
+    }
+    let detail_docs = pending
+        .document()
+        .get("details")
+        .ok_or_else(mapping::invalid)?;
+    for (id, d) in &pending.view().details.0 {
+        let docs = detail_docs
+            .get(id)
+            .and_then(|d| d.get("data"))
+            .and_then(|d| d.get("sells"))
+            .and_then(Document::as_array)
+            .ok_or_else(mapping::invalid)?;
+        for (sale, doc) in d.data.sells.iter().zip(docs) {
+            let key = sale.item.id.to_string();
+            let pos = if let Some(pos) = entries.iter().position(|(k, _, _)| *k == key) {
+                pos
+            } else {
+                entries.push((
+                    key,
+                    doc.get("item").cloned().ok_or_else(mapping::invalid)?,
+                    vec![],
+                ));
+                entries.len() - 1
+            };
+            entries[pos].2.push((
+                sale.row.clone(),
+                doc.get("row").cloned().ok_or_else(mapping::invalid)?,
+            ));
+        }
+    }
+    Ok(entries)
+}
 enum SyncPlan {
     BudgetSpent,
     Attempt(Box<PlannedAttempt>),
@@ -977,48 +1025,7 @@ fn snapshot(
     previous: Option<&Index>,
     context: &Context<'_>,
 ) -> Result<Document> {
-    let mut entries: Vec<SnapshotItem> = vec![];
-    if let Some(index) = previous {
-        for (id, _) in &index.view().items.0 {
-            let item = index
-                .document()
-                .get("items")
-                .and_then(|d| d.get(id))
-                .and_then(|d| d.get("item"))
-                .cloned()
-                .ok_or_else(mapping::invalid)?;
-            entries.push((id.clone(), item, vec![]));
-        }
-    }
-    let detail_docs = pending
-        .document()
-        .get("details")
-        .ok_or_else(mapping::invalid)?;
-    for (id, d) in &pending.view().details.0 {
-        let docs = detail_docs
-            .get(id)
-            .and_then(|d| d.get("data"))
-            .and_then(|d| d.get("sells"))
-            .and_then(Document::as_array)
-            .ok_or_else(mapping::invalid)?;
-        for (sale, doc) in d.data.sells.iter().zip(docs) {
-            let key = sale.item.id.to_string();
-            let pos = if let Some(pos) = entries.iter().position(|(k, _, _)| *k == key) {
-                pos
-            } else {
-                entries.push((
-                    key,
-                    doc.get("item").cloned().ok_or_else(mapping::invalid)?,
-                    vec![],
-                ));
-                entries.len() - 1
-            };
-            entries[pos].2.push((
-                sale.row.clone(),
-                doc.get("row").cloned().ok_or_else(mapping::invalid)?,
-            ));
-        }
-    }
+    let mut entries = snapshot_entries(pending, previous)?;
     for (_, _, rows) in &mut entries {
         rows.sort_by_cached_key(|(r, _)| {
             (
