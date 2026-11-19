@@ -545,6 +545,9 @@ pub(super) fn save_attempt(dir: &Path, attempt: &Document, clock: &dyn Clock) ->
     prune_spends(&mut pruned, clock)?;
     write_at(dir, "attempt.json", &pruned)
 }
+fn failure_status(error: &Failure) -> Option<&Document> {
+    error.body.as_ref().and_then(|body| body.get("status"))
+}
 enum SyncPlan {
     BudgetSpent,
     Attempt(Box<PlannedAttempt>),
@@ -814,12 +817,7 @@ impl Engine<'_, '_> {
             self.attempt.set("failed", true)?;
             self.attempt.set(
                 "status",
-                error
-                    .body
-                    .as_ref()
-                    .and_then(|d| d.get("status"))
-                    .cloned()
-                    .unwrap_or(Document::Null),
+                failure_status(error).cloned().unwrap_or(Document::Null),
             )?;
             self.attempt.set("error", error.message.clone())?;
         }
@@ -890,9 +888,7 @@ impl Engine<'_, '_> {
     }
     fn request_failure(&mut self, error: Failure, retry: Option<&Retry>) -> SyncRun<RequestRetry> {
         let body = error.body.as_ref();
-        let status = body
-            .and_then(|d| d.get("status"))
-            .and_then(Document::as_i64);
+        let status = failure_status(&error).and_then(Document::as_i64);
         let response = body.and_then(|d| d.get("response"));
         if status == Some(502)
             && retry.is_none()
