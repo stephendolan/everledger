@@ -1,6 +1,15 @@
 use crate::{Failure, Result};
 use std::{collections::HashMap, num::NonZeroU64, path::PathBuf};
 
+pub const DATA_DIR_NAME: &str = ".everledger";
+pub const DEFAULT_ROSTER_URL: &str = "http://localhost:8765";
+pub const DEFAULT_AHLEDGER_URL: &str = "https://api.ahledger.com";
+pub const DEFAULT_MARKET: &str = "forever.pvp.alliance.us";
+pub const DEFAULT_VENDOR_URL: &str = "https://wowforever.ninja";
+pub const DEFAULT_DAILY_REQUESTS: &str = "36";
+pub const DEFAULT_KEY_FILE: &str = "foreverdb-api-key";
+pub const DEFAULT_DYNAMIC_CREDENTIALS_DIR: &str = "/opt/muse/skills/custom-connector-setup/bin";
+
 /// A credential as configured. Formatting it never shows the value; `expose`
 /// is the one way to read it.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -85,21 +94,21 @@ impl Config {
         let get = |k: &str, d: &str| env.get(k).cloned().unwrap_or_else(|| d.into());
         let data_dir = PathBuf::from(get(
             "EVERLEDGER_DATA_DIR",
-            &format!("{}/.everledger", get("HOME", ".")),
+            &format!("{}/{DATA_DIR_NAME}", get("HOME", ".")),
         ));
         Ok(Self {
             foreverdb_daily_requests: DailyRequestCap::parse(&get(
                 "EVERLEDGER_FOREVERDB_DAILY_REQUESTS",
-                "36",
+                DEFAULT_DAILY_REQUESTS,
             ))?,
-            roster_url: get("EVERLEDGER_ROSTER_URL", "http://localhost:8765")
+            roster_url: get("EVERLEDGER_ROSTER_URL", DEFAULT_ROSTER_URL)
                 .trim_end_matches('/')
                 .into(),
-            ahledger_url: get("EVERLEDGER_AHLEDGER_URL", "https://api.ahledger.com")
+            ahledger_url: get("EVERLEDGER_AHLEDGER_URL", DEFAULT_AHLEDGER_URL)
                 .trim_end_matches('/')
                 .into(),
-            market: get("EVERLEDGER_MARKET", "forever.pvp.alliance.us"),
-            vendor_url: get("EVERLEDGER_VENDOR_URL", "https://wowforever.ninja")
+            market: get("EVERLEDGER_MARKET", DEFAULT_MARKET),
+            vendor_url: get("EVERLEDGER_VENDOR_URL", DEFAULT_VENDOR_URL)
                 .trim_end_matches('/')
                 .into(),
             roster_token: get("EVERLEDGER_ROSTER_TOKEN", "").trim().into(),
@@ -112,11 +121,11 @@ impl Config {
                 .get("EVERLEDGER_FOREVERDB_API_KEY_FILE")
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| data_dir.join("foreverdb-api-key")),
+                .unwrap_or_else(|| data_dir.join(DEFAULT_KEY_FILE)),
             foreverdb_connector: get("EVERLEDGER_FOREVERDB_VIA_CONNECTOR", "").trim().into(),
             dynamic_credentials_dir: PathBuf::from(get(
                 "EVERLEDGER_DYNAMIC_CREDENTIALS_DIR",
-                "/opt/muse/skills/custom-connector-setup/bin",
+                DEFAULT_DYNAMIC_CREDENTIALS_DIR,
             )),
             data_dir,
             #[cfg(feature = "parity-seams")]

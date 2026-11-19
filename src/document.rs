@@ -1,4 +1,3 @@
-#[path = "document_decode.rs"]
 mod decode;
 use crate::{Failure, Result};
 use decode::Deserializer;
@@ -570,5 +569,4 @@ pub fn parse(text: &str) -> Result<Document> {
 }
 
 #[cfg(test)]
-#[path = "document_tests.rs"]
 mod tests;
