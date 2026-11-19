@@ -509,7 +509,7 @@ fn sync_locked(
         result,
         deferred: None,
     };
-    engine.checkpoint_interrupt()?;
+    engine.checkpoint_interrupt();
     let mut checkpoint = CheckpointState::Resumable;
     let outcome = (|| {
         transport.validate(context)?;
@@ -853,13 +853,12 @@ impl Engine<'_, '_> {
         *self.attempt = Payload::decode(doc, "ForeverDB attempt")?;
         Ok(())
     }
-    fn checkpoint_interrupt(&self) -> Result<()> {
+    fn checkpoint_interrupt(&self) {
         self.interrupt.update(
             self.attempt.document(),
             self.pending.document(),
             self.context.clock.now(),
         );
-        Ok(())
     }
     fn reserve_request(&mut self) -> SyncRun<()> {
         let mut reservation = self.attempt.clone();
@@ -886,7 +885,7 @@ impl Engine<'_, '_> {
         self.result.requests = requests;
         self.result.total_requests = total;
         self.last_start = Some(self.context.clock.monotonic());
-        self.checkpoint_interrupt()?;
+        self.checkpoint_interrupt();
         Ok(())
     }
     fn request_failure(&mut self, error: Failure, retry: Option<&Retry>) -> SyncRun<RequestRetry> {
@@ -939,7 +938,7 @@ impl Engine<'_, '_> {
                         .map_err(SyncFailure::InvalidCache)
                 })
                 .transpose()?;
-            self.checkpoint_interrupt()?;
+            self.checkpoint_interrupt();
             if let Some(retry) = &retry {
                 let delay = (instant(&retry.not_before)
                     .map_err(SyncFailure::InvalidCache)?
