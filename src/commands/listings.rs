@@ -66,9 +66,6 @@ pub struct Listing {
     #[serde(flatten)]
     pub row: ListingRecord,
     pub buyout_copper: Option<Copper>,
-    pub bid_copper: Option<Copper>,
-    pub has_bid: Option<bool>,
-    pub deposit_copper: Option<Copper>,
     pub expires_at: Option<String>,
     #[serde(default)]
     pub available: Field<bool>,
