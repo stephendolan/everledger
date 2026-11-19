@@ -522,27 +522,7 @@ fn sync_locked(
     let outcome = (|| {
         transport.validate(context)?;
         engine.walk_pages(&mut checkpoint)?;
-        if engine.pending.view().next_offset.is_none() {
-            for id in engine.pending.view().vendor_ids.clone() {
-                if engine.pending.view().details.get(&id).is_some() {
-                    continue;
-                }
-                if engine.attempt.view().requests >= engine.budget.0 {
-                    break;
-                }
-                let Some(doc) = engine.get(&format!("/api/v1/vendors/{id}"))? else {
-                    break;
-                };
-                let expected =
-                    Identifier::try_from(id.parse::<i64>().map_err(|_| mapping::invalid())?)
-                        .map_err(|_| mapping::invalid())?;
-                let data = mapping::vendor(doc, expected)?;
-                engine
-                    .pending
-                    .set_path(&["details", &id], Document::object([("data", data)]))?;
-                interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-            }
-        }
+        engine.walk_details()?;
         let complete = engine.pending.view().next_offset.is_none()
             && engine.pending.view().details.0.len() == engine.pending.view().vendor_ids.len();
         if complete {
@@ -808,6 +788,33 @@ impl Engine<'_, '_> {
             self.pending.set("next_offset", page.next)?;
             self.interrupt
                 .write("pending.json", self.pending.document(), self.context.clock)?;
+        }
+        Ok(())
+    }
+    fn walk_details(&mut self) -> SyncRun<()> {
+        if self.pending.view().next_offset.is_none() {
+            for id in self.pending.view().vendor_ids.clone() {
+                if self.pending.view().details.get(&id).is_some() {
+                    continue;
+                }
+                if self.attempt.view().requests >= self.budget.0 {
+                    break;
+                }
+                let Some(doc) = self.get(&format!("/api/v1/vendors/{id}"))? else {
+                    break;
+                };
+                let expected =
+                    Identifier::try_from(id.parse::<i64>().map_err(|_| mapping::invalid())?)
+                        .map_err(|_| mapping::invalid())?;
+                let data = mapping::vendor(doc, expected)?;
+                self.pending
+                    .set_path(&["details", &id], Document::object([("data", data)]))?;
+                self.interrupt.write(
+                    "pending.json",
+                    self.pending.document(),
+                    self.context.clock,
+                )?;
+            }
         }
         Ok(())
     }
