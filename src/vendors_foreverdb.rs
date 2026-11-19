@@ -2,7 +2,7 @@ use crate::{
     Context, Failure, Result,
     catalogue::nullable,
     document::Document,
-    foreverdb::{Index, Item, Seller},
+    foreverdb::{AttemptSummary, Index, Item, Seller},
     http::Payload,
 };
 use serde::Deserialize;
@@ -30,33 +30,29 @@ impl ForeverdbAnswer {
     pub fn rows(&self) -> &[Seller] {
         self.payload.view().vendors.as_deref().unwrap_or(&[])
     }
-    pub(super) fn lookup(item_id: i64, index: &Index, context: &Context<'_>) -> Result<Self> {
-        let mut data = crate::foreverdb::lookup(item_id, index, context)?;
-        let path = context
-            .config
-            .data_dir
-            .join("vendors")
-            .join(super::BACKEND)
-            .join(format!("{item_id}.json"));
-        let fallback = match std::fs::read_to_string(path) {
-            Ok(text) => {
-                let cached = crate::document::parse(&text)?;
-                if super::cache_matches(&cached, context)? {
-                    let view: super::CachedCoverage = cached.decode("ninja comparison cache")?;
-                    if view.vendors.is_some() {
-                        cached
-                            .get("vendors")
-                            .cloned()
-                            .ok_or_else(|| Failure::shape("ninja cache", "missing vendors"))?
-                    } else {
-                        Document::Array(vec![])
-                    }
-                } else {
-                    Document::Array(vec![])
-                }
+    pub(super) fn lookup(
+        item_id: i64,
+        index: &Index,
+        attempt: Option<&AttemptSummary>,
+        context: &Context<'_>,
+    ) -> Result<Self> {
+        let mut data = crate::foreverdb::lookup(item_id, index, attempt, context)?;
+        let fallback = match super::read_ninja_cache(
+            &super::ninja_cache_path(item_id, context),
+            super::NinjaRead::Comparison,
+            context,
+        )
+        .map_err(crate::foreverdb::CacheError::into_failure)?
+        {
+            Some(cached) => {
+                let view: super::CachedCoverage = cached.decode("ninja comparison cache")?;
+                cached
+                    .get("vendors")
+                    .filter(|_| view.vendors.is_some())
+                    .cloned()
+                    .unwrap_or_else(|| Document::Array(vec![]))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Document::Array(vec![]),
-            Err(e) => return Err(e.into()),
+            None => Document::Array(vec![]),
         };
         data.set("_fallback_vendors", fallback)?;
         data.set("fallback_additional_sellers", 0usize)?;
@@ -102,7 +98,7 @@ impl ForeverdbAnswer {
             let filtered = rows
                 .iter()
                 .zip(docs)
-                .filter(|(r, _)| matches_zone(&r.zone, &r.zone_slug, q))
+                .filter(|(r, _)| super::matches_zone(&r.zone, &r.zone_slug, q))
                 .map(|(_, d)| d.clone())
                 .collect();
             self.payload.set("vendors", Document::Array(filtered))?;
@@ -119,7 +115,7 @@ impl ForeverdbAnswer {
             .fallback
             .iter()
             .zip(docs)
-            .filter(|(r, _)| matches_zone(&r.zone, &r.zone_slug, q))
+            .filter(|(r, _)| super::matches_zone(&r.zone, &r.zone_slug, q))
             .map(|(_, d)| d.clone())
             .collect();
         self.payload
@@ -129,25 +125,4 @@ impl ForeverdbAnswer {
             .set("known_zones", Document::from_typed(&zones)?)?;
         Ok(())
     }
-    pub fn public(&self) -> Document {
-        let mut data = self.payload.document().clone();
-        data.remove("_fallback_vendors");
-        data
-    }
-    pub fn sellers_document(&self) -> Result<Document> {
-        self.payload
-            .document()
-            .get("vendors")
-            .cloned()
-            .ok_or_else(|| Failure::shape("ForeverDB answer", "missing vendors"))
-    }
-    pub fn reason(&self) -> Option<&str> {
-        self.payload.view().reason.as_deref()
-    }
-    pub fn sources(&self) -> Result<Vec<crate::provenance::Source>> {
-        crate::provenance::sources(self.payload.document())
-    }
-}
-fn matches_zone(zone: &str, slug: &str, q: &str) -> bool {
-    crate::primitives::casefold(zone).contains(q) || crate::primitives::casefold(slug).contains(q)
 }

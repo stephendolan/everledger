@@ -291,11 +291,16 @@ fn raised_cap_resumes_inside_window_with_remaining_budget() -> Result<()> {
     assert_eq!(world.http.requests.borrow().len(), 6);
     let index = foreverdb::index(&world.context())?.unwrap();
     assert_eq!(
-        foreverdb::lookup(2604, &index, &world.context())?
-            .get("vendors")
-            .and_then(Document::as_array)
-            .unwrap()
-            .len(),
+        foreverdb::lookup(
+            2604,
+            &index,
+            foreverdb::attempt(&world.context())?.as_ref(),
+            &world.context()
+        )?
+        .get("vendors")
+        .and_then(Document::as_array)
+        .unwrap()
+        .len(),
         3
     );
     Ok(())

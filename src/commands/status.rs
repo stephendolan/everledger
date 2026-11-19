@@ -8,7 +8,6 @@ use crate::{
     Context, ExitCode, Result,
     commands::CommandOutput,
     document::Document,
-    http::Request,
     provenance::{Field, Source, is_stale, sources},
     vendors::status::Backend,
 };
@@ -171,10 +170,10 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     match vendor.view().backend {
         Backend::Foreverdb => {}
         Backend::Ninja => {
-            let state = match context.http.request(
-                &Request::get(&context.config.vendor_url)
-                    .header("User-Agent", "Mozilla/5.0 (compatible; everledger)"),
-            ) {
+            let state = match context
+                .http
+                .request(&crate::vendors::ninja_request(&context.config.vendor_url))
+            {
                 Ok(_) => "reachable".into(),
                 Err(e) => {
                     accumulate(&mut code, e.code);

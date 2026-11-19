@@ -19,8 +19,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         context.clock,
     )?];
     let (vendor_sources, synced) = crate::vendors::refresh_cached(context)?;
-    let stale =
-        !synced.view().failed && vendor_sources.iter().any(|s| s.view().stale == Some(true));
+    let stale = !synced.view().failed && crate::provenance::is_stale(&vendor_sources);
     used.extend(vendor_sources);
     let lines = crate::human::refresh::lines(synced.view());
     let code = if synced.view().failed {

@@ -6,38 +6,22 @@ pub fn render(answer: &VendorAnswer) -> Vec<String> {
     match answer {
         VendorAnswer::Foreverdb(a) => foreverdb(a),
         VendorAnswer::Ninja(a) => {
-            let rows = match a.coverage() {
-                Coverage::ItemAbsent | Coverage::PinsAbsent => &[][..],
-                Coverage::Sellers(rows) => rows.as_slice(),
-            };
+            let rows = a.rows();
             if rows.is_empty() {
                 let mut lines = vec![
                     match a.coverage() {
                         Coverage::PinsAbsent => "vendor coverage unknown on wowforever.ninja",
-                        Coverage::ItemAbsent | Coverage::Sellers(_) => {
+                        Coverage::ItemAbsent | Coverage::Sellers => {
                             "no known sellers in the vendor index"
                         }
                     }
                     .into(),
                 ];
-                if let Some(zones) = a
-                    .payload()
-                    .view()
-                    .known_zones
-                    .as_ref()
-                    .filter(|z| !z.is_empty())
-                {
-                    lines.push(format!("known zones: {}", zones.join(", ")));
-                }
+                append_known_zones(&mut lines, a.payload().view().known_zones.as_deref());
                 return lines;
             }
             let item = &a.payload().view().item;
-            let name = item
-                .name
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .unwrap_or_else(|| item.id.to_string());
+            let name = item_name(item);
             let mut lines = vec![format!(
                 "{name} — vendor listed prices (sale and price: 1.12 baseline; faction unavailable)"
             )];
@@ -103,23 +87,10 @@ fn foreverdb(answer: &crate::vendors::ForeverdbAnswer) -> Vec<String> {
     let mut lines = vec![];
     if rows.is_empty() {
         lines.push("no known sellers in the vendor index".into());
-        if let Some(zones) = answer
-            .payload()
-            .view()
-            .known_zones
-            .as_ref()
-            .filter(|z| !z.is_empty())
-        {
-            lines.push(format!("known zones: {}", zones.join(", ")));
-        }
+        append_known_zones(&mut lines, answer.payload().view().known_zones.as_deref());
     } else {
         let item = &answer.payload().view().item;
-        let name = item
-            .name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| item.id.to_string());
+        let name = item_name(item);
         lines.push(format!(
             "{name} — vendor listed prices (sale/price from ForeverDB sell-row labels)"
         ));
@@ -155,4 +126,17 @@ fn foreverdb(answer: &crate::vendors::ForeverdbAnswer) -> Vec<String> {
         ));
     }
     lines
+}
+
+fn item_name(item: &crate::foreverdb::Item) -> String {
+    item.name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| item.id.to_string())
+}
+fn append_known_zones(lines: &mut Vec<String>, zones: Option<&[String]>) {
+    if let Some(zones) = zones.filter(|z| !z.is_empty()) {
+        lines.push(format!("known zones: {}", zones.join(", ")));
+    }
 }

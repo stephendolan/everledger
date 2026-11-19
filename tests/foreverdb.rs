@@ -153,7 +153,7 @@ fn journal_precedes_transport_and_budgeted_traversal_resumes() -> Result<()> {
     assert!(resumed.view().complete);
     assert_eq!(resumed.view().requests, 5);
     let idx = foreverdb::index(&context)?.expect("complete index");
-    let answer = foreverdb::lookup(2604, &idx, &context)?;
+    let answer = foreverdb::lookup(2604, &idx, foreverdb::attempt(&context)?.as_ref(), &context)?;
     let rows = answer
         .get("vendors")
         .and_then(Document::as_array)
@@ -438,7 +438,12 @@ fn index_omits_checkpoint_payload_and_ignores_legacy_fields() -> Result<()> {
         edit(index.as_object_mut().expect("index is an object"));
         std::fs::write(&path, index.to_string()).expect("rewrite index");
     };
-    let expected = foreverdb::lookup(2604, &foreverdb::index(&context)?.unwrap(), &context)?;
+    let expected = foreverdb::lookup(
+        2604,
+        &foreverdb::index(&context)?.unwrap(),
+        foreverdb::attempt(&context)?.as_ref(),
+        &context,
+    )?;
     let records = |context: &Context<'_>| -> Result<Option<usize>> {
         Ok(foreverdb::index(context)?.map(|index| index.view().record_count))
     };
@@ -463,7 +468,12 @@ fn index_omits_checkpoint_payload_and_ignores_legacy_fields() -> Result<()> {
     });
     assert_eq!(records(&context)?, Some(3));
     assert_eq!(
-        foreverdb::lookup(2604, &foreverdb::index(&context)?.unwrap(), &context)?,
+        foreverdb::lookup(
+            2604,
+            &foreverdb::index(&context)?.unwrap(),
+            foreverdb::attempt(&context)?.as_ref(),
+            &context
+        )?,
         expected
     );
     rewrite(&|index| {
