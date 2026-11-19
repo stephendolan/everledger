@@ -900,27 +900,57 @@ fn vendor_footer_uses_fetch_time_when_publication_and_age_are_null() {
     );
 }
 
+#[derive(serde::Deserialize)]
+struct CapturedCase {
+    argv: Vec<String>,
+    exit_code: i32,
+    stdout: String,
+    requests: Vec<String>,
+}
+
+/// `tests/golden/captured-roster.json` is what the Python reference prints for the roster
+/// responses in `tests/fixtures/captured-roster.json`, which have the keys and types the
+/// service sends. `parity/captured_roster.py` writes it and fails when it goes stale.
 #[test]
-fn captured_roster_shapes_match_reference_stdout_and_exit_codes() {
-    let result = std::process::Command::new("python3")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/parity/captured_roster.py"
-        ))
-        .arg(env!("CARGO_BIN_EXE_everledger"))
-        .output()
+fn captured_roster_shapes_replay_the_reference() {
+    let world = document::parse(include_str!("fixtures/captured-roster.json")).unwrap();
+    let now = world.get("now").and_then(Document::as_str).unwrap();
+    let routes = world.get("routes").unwrap();
+    let cases: Vec<CapturedCase> =
+        serde_json::from_str(include_str!("golden/captured-roster.json")).unwrap();
+    assert_eq!(cases.len(), 18);
+    for case in cases {
+        let mut f = Fixture::new();
+        f.clock = VirtualClock::new(time::instant(now).unwrap());
+        for request in &case.requests {
+            let path = request.split('?').next().unwrap();
+            let body = routes.get(path).unwrap();
+            let text = match body.as_str() {
+                Some(text) => text.to_owned(),
+                None => document::dumps(body, document::JsonMode::Stdout),
+            };
+            f.raw(request, &text);
+        }
+        let command = everledger::cli::parse_from(
+            std::iter::once("everledger").chain(case.argv.iter().map(String::as_str)),
+        )
         .unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    assert_eq!(
-        stdout,
-        "captured roster: 18 stdout byte comparisons; both exit codes 0; listing key order preserved\n"
-    );
-    print!("{stdout}");
+        let mut stdout = Vec::new();
+        let code = everledger::cli::execute(&command, &f.context(), &mut stdout);
+        assert_eq!(code as i32, case.exit_code, "{:?}", case.argv);
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            case.stdout,
+            "{:?}",
+            case.argv
+        );
+        let sent = case
+            .requests
+            .iter()
+            .map(|request| format!("http://127.0.0.1{request}"))
+            .collect::<Vec<_>>();
+        assert_eq!(*f.http.requests.borrow(), sent, "{:?}", case.argv);
+    }
 }
 
 #[test]

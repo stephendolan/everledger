@@ -410,12 +410,25 @@ sleeps, files, and file modes. A difference or failed suite exits nonzero.
 
 ## Captured roster shapes
 
-`captured_roster.py` compares public commands over the service capture's keys
-and JSON types, including listing key order, journal pass-through fields, and
-wrapped character details. The [journal contract](../docs/journalator-contract.md)
-distinguishes captured structures from fixture-established internals and
-explains the list-professions shape the adapter refuses.
+`tests/fixtures/captured-roster.json` holds roster responses with the keys and
+JSON types of the service capture, and the commands to run over them.
+`captured_roster.py` runs each command in both renderings through the
+reference and the candidate, which must exit 0 with identical stdout and send
+the same requests. It also checks listing key order and journal pass-through
+fields. The [journal contract](../docs/journalator-contract.md) distinguishes
+captured structures from fixture-established internals and explains the
+list-professions shape the adapter refuses.
 
 ```sh
 python3 parity/captured_roster.py target/seams/debug/everledger
+```
+
+`tests/golden/captured-roster.json` records what the reference did with each
+command: its exit code, stdout, and requests. `tests/read_paths.rs` replays
+that file in-process, so `cargo test` holds the binary to the reference on
+these shapes without running Python. The instrument fails when the file does
+not match the reference. After changing the fixture, regenerate it:
+
+```sh
+python3 parity/captured_roster.py target/seams/debug/everledger --write
 ```

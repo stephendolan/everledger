@@ -1,0 +1,213 @@
+[
+ {
+  "argv": [
+   "char",
+   "Slade"
+  ],
+  "exit_code": 0,
+  "stdout": "Slade Undertow | level 60 Human Mage | Alliance Forever | gold 1s | hearth Ironforge\n  (roster snapshot generated 2026-11-15T12:00:00Z; professions updated 2026-11-15T12:00:00Z)\n  Tailoring: 5/75\n    known recipes: unavailable from roster (never read as 'knows nothing')\nsource: DataStore.lua (saved/data 2026-11-15T12:00:00Z; age 0s)\n",
+  "requests": [
+   "/characters/Slade"
+  ]
+ },
+ {
+  "argv": [
+   "char",
+   "Slade",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"generated_at\": \"2026-11-15T12:00:00Z\", \"sources\": [{\"available\": true, \"file\": \"DataStore.lua\", \"globals\": {}, \"mtime\": \"2026-11-15T12:00:00Z\", \"mtime_ns\": 1794744000000000000, \"size_bytes\": 100}], \"character\": {\"class\": \"Mage\", \"class_id\": 8, \"faction\": \"Alliance\", \"gold_copper\": 100, \"hearth\": {\"location\": \"Ironforge\"}, \"level\": 60, \"name\": \"Slade Undertow\", \"partial_data\": [], \"professions\": [{\"max_skill\": 75, \"name\": \"Tailoring\", \"recipes\": {}, \"skill\": 5, \"skill_available\": true}], \"professions_updated_at\": \"2026-11-15T12:00:00Z\", \"race\": \"Human\", \"race_id\": 1, \"realm\": \"Forever\", \"short_name\": \"Slade\", \"sources\": {\"gold_copper\": \"DataStore.lua\", \"hearth\": \"DataStore.lua\", \"level\": \"DataStore.lua\", \"professions\": \"DataStore.lua\"}}}\n",
+  "requests": [
+   "/characters/Slade"
+  ]
+ },
+ {
+  "argv": [
+   "events"
+  ],
+  "exit_code": 0,
+  "stdout": "Slade Undertow | 2026-11-15T12:00:00Z | purchase | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | sale | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | posting | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | expiration | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | purchase | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | sale | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | posting | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | expiration | 1x Red Dye | cash 90c\nnext_cursor: unknown | has_more: no | after_cursor: terminal | checkpoint: terminal\nsource: unknown (age unknown)\n",
+  "requests": [
+   "/events?limit=50&since=1794657600"
+  ]
+ },
+ {
+  "argv": [
+   "events",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"available\": true, \"checkpoint\": \"terminal\", \"complete\": true, \"coverage\": {}, \"entries\": [{\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"0\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"purchase\", \"unit_copper\": 1.5, \"value_copper\": null, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"1\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"sale\", \"unit_copper\": 1, \"value_copper\": 100, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"2\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"posting\", \"unit_copper\": null, \"value_copper\": null, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"3\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"expiration\", \"unit_copper\": 1.5, \"value_copper\": 100, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"4\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"purchase\", \"unit_copper\": 1, \"value_copper\": null, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"5\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"sale\", \"unit_copper\": null, \"value_copper\": 100, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"6\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"posting\", \"unit_copper\": 1.5, \"value_copper\": null, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"7\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"expiration\", \"unit_copper\": 1, \"value_copper\": 100, \"venue\": \"auction\"}], \"filters\": {\"actor\": null, \"item\": null, \"since\": 1794657600, \"types\": [], \"until\": null, \"venue\": null}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"has_more\": false, \"item_matching\": {\"basis\": null, \"unresolved_linkless_count\": 0, \"unresolved_recorded_names\": []}, \"matched_count\": 8, \"mode\": \"snapshot\", \"next_cursor\": null, \"reason\": null, \"returned_count\": 8, \"roster_enrichment\": {}, \"schema_version\": 1, \"snapshot_at\": \"2026-11-15T12:00:00Z\", \"snapshot_id\": \"snapshot\", \"source_id\": \"journal\", \"state\": \"available\", \"after_cursor\": \"terminal\"}\n",
+  "requests": [
+   "/events?limit=500&since=1794657600"
+  ]
+ },
+ {
+  "argv": [
+   "events",
+   "--limit",
+   "0"
+  ],
+  "exit_code": 0,
+  "stdout": "none recorded\nnext_cursor: unknown | has_more: no | after_cursor: terminal | checkpoint: terminal\nsource: unknown (age unknown)\n",
+  "requests": [
+   "/events?limit=500"
+  ]
+ },
+ {
+  "argv": [
+   "events",
+   "--limit",
+   "0",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"available\": true, \"checkpoint\": \"terminal\", \"complete\": true, \"coverage\": {}, \"filters\": {\"actor\": null, \"item\": null, \"since\": 1794657600, \"types\": [], \"until\": null, \"venue\": null}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"has_more\": false, \"item_matching\": {\"basis\": null, \"unresolved_linkless_count\": 0, \"unresolved_recorded_names\": []}, \"matched_count\": 8, \"mode\": \"snapshot\", \"next_cursor\": null, \"reason\": null, \"returned_count\": 8, \"roster_enrichment\": {}, \"schema_version\": 1, \"snapshot_at\": \"2026-11-15T12:00:00Z\", \"snapshot_id\": \"snapshot\", \"source_id\": \"journal\", \"state\": \"available\", \"after_cursor\": \"terminal\", \"sources\": [], \"entries\": []}\n",
+  "requests": [
+   "/events?limit=500"
+  ]
+ },
+ {
+  "argv": [
+   "sales"
+  ],
+  "exit_code": 0,
+  "stdout": "Slade Undertow | 2026-11-15T12:00:00Z | sale | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | sale | 1x Red Dye | cash 90c\ntotal proceeds unknown\nsource: unknown (age unknown)\n",
+  "requests": [
+   "/events?limit=500&since=1794139200"
+  ]
+ },
+ {
+  "argv": [
+   "sales",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"available\": true, \"checkpoint\": \"terminal\", \"complete\": true, \"coverage\": {}, \"filters\": {\"actor\": null, \"item\": null, \"since\": 1794657600, \"types\": [], \"until\": null, \"venue\": null}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"has_more\": false, \"item_matching\": {\"basis\": null, \"unresolved_linkless_count\": 0, \"unresolved_recorded_names\": []}, \"matched_count\": 8, \"mode\": \"snapshot\", \"next_cursor\": null, \"reason\": null, \"returned_count\": 8, \"roster_enrichment\": {}, \"schema_version\": 1, \"snapshot_at\": \"2026-11-15T12:00:00Z\", \"snapshot_id\": \"snapshot\", \"source_id\": \"journal\", \"state\": \"available\", \"after_cursor\": \"terminal\", \"sources\": [], \"proceeds_copper\": null, \"sales\": [{\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"1\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"sale\", \"unit_copper\": 1, \"value_copper\": 100, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"5\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"sale\", \"unit_copper\": null, \"value_copper\": 100, \"venue\": \"auction\"}]}\n",
+  "requests": [
+   "/events?limit=500&since=1794139200"
+  ]
+ },
+ {
+  "argv": [
+   "purchases"
+  ],
+  "exit_code": 0,
+  "stdout": "Slade Undertow | 2026-11-15T12:00:00Z | purchase | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | purchase | 1x Red Dye | cash 90c\nsource: unknown (age unknown)\n",
+  "requests": [
+   "/events?limit=500&since=1794139200"
+  ]
+ },
+ {
+  "argv": [
+   "purchases",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"available\": true, \"checkpoint\": \"terminal\", \"complete\": true, \"coverage\": {}, \"filters\": {\"actor\": null, \"item\": null, \"since\": 1794657600, \"types\": [], \"until\": null, \"venue\": null}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"has_more\": false, \"item_matching\": {\"basis\": null, \"unresolved_linkless_count\": 0, \"unresolved_recorded_names\": []}, \"matched_count\": 8, \"mode\": \"snapshot\", \"next_cursor\": null, \"reason\": null, \"returned_count\": 8, \"roster_enrichment\": {}, \"schema_version\": 1, \"snapshot_at\": \"2026-11-15T12:00:00Z\", \"snapshot_id\": \"snapshot\", \"source_id\": \"journal\", \"state\": \"available\", \"after_cursor\": \"terminal\", \"sources\": [], \"purchases\": [{\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"0\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"purchase\", \"unit_copper\": 1.5, \"value_copper\": null, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"4\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"purchase\", \"unit_copper\": 1, \"value_copper\": null, \"venue\": \"auction\"}]}\n",
+  "requests": [
+   "/events?limit=500&since=1794139200"
+  ]
+ },
+ {
+  "argv": [
+   "expirations"
+  ],
+  "exit_code": 0,
+  "stdout": "Slade Undertow | 2026-11-15T12:00:00Z | expiration | 1x Red Dye | cash 90c\nSlade Undertow | 2026-11-15T12:00:00Z | expiration | 1x Red Dye | cash 90c\n  repost input: floor 87c | listed 709 | sales/day 1.0\n  repost input: floor 87c | listed 709 | sales/day 1.0\nsource: AHledger forever.pvp.alliance.us (saved/data 2026-11-15T12:00:00Z; age 0s)\n",
+  "requests": [
+   "/events?limit=500&since=1794139200",
+   "/v1/pricetable/forever.pvp.alliance.us"
+  ]
+ },
+ {
+  "argv": [
+   "expirations",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"available\": true, \"checkpoint\": \"terminal\", \"complete\": true, \"coverage\": {}, \"filters\": {\"actor\": null, \"item\": null, \"since\": 1794657600, \"types\": [], \"until\": null, \"venue\": null}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"has_more\": false, \"item_matching\": {\"basis\": null, \"unresolved_linkless_count\": 0, \"unresolved_recorded_names\": []}, \"matched_count\": 8, \"mode\": \"snapshot\", \"next_cursor\": null, \"reason\": null, \"returned_count\": 8, \"roster_enrichment\": {}, \"schema_version\": 1, \"snapshot_at\": \"2026-11-15T12:00:00Z\", \"snapshot_id\": \"snapshot\", \"source_id\": \"journal\", \"state\": \"available\", \"after_cursor\": \"terminal\", \"sources\": [{\"name\": \"AHledger forever.pvp.alliance.us\", \"updated_at\": \"2026-11-15T12:00:00Z\", \"age_seconds\": 0, \"stale\": false}], \"expirations\": [{\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"3\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"expiration\", \"unit_copper\": 1.5, \"value_copper\": 100, \"venue\": \"auction\", \"market\": {\"median_copper\": 88, \"floor_copper\": 87, \"quantity\": 709, \"sales_per_day\": 1.0}}, {\"actor\": {}, \"barter_items\": [], \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": \"Other\", \"currencies\": [], \"deposit_copper\": 1, \"fee_copper\": null, \"id\": \"7\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"expiration\", \"unit_copper\": 1, \"value_copper\": 100, \"venue\": \"auction\", \"market\": {\"median_copper\": 88, \"floor_copper\": 87, \"quantity\": 709, \"sales_per_day\": 1.0}}]}\n",
+  "requests": [
+   "/events?limit=500&since=1794139200",
+   "/v1/pricetable/forever.pvp.alliance.us"
+  ]
+ },
+ {
+  "argv": [
+   "listings"
+  ],
+  "exit_code": 0,
+  "stdout": "Slade Undertow | 2x Red Dye | buyout 2s | expires 2026-11-15T12:00:00Z | floor 87c | undercut yes\nsource: DataStore.lua (saved/data 2026-11-15T12:00:00Z; age 0s); AHledger forever.pvp.alliance.us (saved/data 2026-11-15T12:00:00Z; age 0s)\n",
+  "requests": [
+   "/v1/pricetable/forever.pvp.alliance.us",
+   "/listings"
+  ]
+ },
+ {
+  "argv": [
+   "listings",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"filters\": {}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"listings\": [{\"auctionID\": 123, \"character\": \"Slade Undertow\", \"count\": 2, \"expirationTime\": 1794747600, \"item_id\": 2604, \"location\": {}, \"name\": \"Red Dye\", \"price\": {\"available\": true, \"recorded\": {\"buyout_copper\": 200, \"bid_copper\": 100, \"has_bid\": false, \"deposit_copper\": 10, \"expires_at\": \"2026-11-15T12:00:00Z\"}}, \"realm\": \"Forever\", \"source\": \"DataStore_Auctions\", \"undercut\": true, \"buyout_copper\": 200, \"bid_copper\": 100, \"has_bid\": false, \"deposit_copper\": 10, \"expires_at\": \"2026-11-15T12:00:00Z\", \"available\": true, \"floor_copper\": 87}], \"returned_count\": 1, \"scans\": [{\"available\": true, \"character\": \"Slade Undertow\", \"pricing\": {}}], \"sources\": [{\"available\": true, \"file\": \"DataStore.lua\", \"globals\": {}, \"mtime\": \"2026-11-15T12:00:00Z\", \"mtime_ns\": 1794744000000000000, \"size_bytes\": 100, \"file_age_seconds\": 0, \"max_age_seconds\": 900, \"stale\": false}, {\"name\": \"AHledger forever.pvp.alliance.us\", \"updated_at\": \"2026-11-15T12:00:00Z\", \"age_seconds\": 0, \"stale\": false}]}\n",
+  "requests": [
+   "/v1/pricetable/forever.pvp.alliance.us",
+   "/listings"
+  ]
+ },
+ {
+  "argv": [
+   "net",
+   "2604"
+  ],
+  "exit_code": 0,
+  "stdout": "Red Dye\nposted 2 (posting attempts)\nsold 2 | expired 2 | cancelled 0 | listed unknown\nunaccounted unknown (signed diagnostic: posted - sold - expired - cancelled - listed)\nproceeds unknown | auction cash 5s 40c before materials\nrealized profit unknown; holding/materials basis unknown; real posting cycle unverified\nsource: DataStore.lua (saved/data 2026-11-15T12:00:00Z; age 0s); wowforever.ninja profession index pages (saved/data 2026-11-14T20:20:00Z; age 56400s)\n",
+  "requests": [
+   "/events?limit=500&since=1794139200",
+   "/listings?item=2604"
+  ]
+ },
+ {
+  "argv": [
+   "net",
+   "2604",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"available\": true, \"checkpoint\": \"terminal\", \"complete\": true, \"coverage\": {}, \"filters\": {\"actor\": null, \"item\": null, \"since\": 1794657600, \"types\": [], \"until\": null, \"venue\": null}, \"generated_at\": \"2026-11-15T12:00:00Z\", \"has_more\": false, \"item_matching\": {\"basis\": null, \"unresolved_linkless_count\": 0, \"unresolved_recorded_names\": []}, \"matched_count\": 8, \"mode\": \"snapshot\", \"next_cursor\": null, \"reason\": null, \"returned_count\": 8, \"roster_enrichment\": {}, \"schema_version\": 1, \"snapshot_at\": \"2026-11-15T12:00:00Z\", \"snapshot_id\": \"snapshot\", \"source_id\": \"journal\", \"state\": \"available\", \"after_cursor\": \"terminal\", \"sources\": [{\"available\": true, \"file\": \"DataStore.lua\", \"globals\": {}, \"mtime\": \"2026-11-15T12:00:00Z\", \"mtime_ns\": 1794744000000000000, \"size_bytes\": 100, \"file_age_seconds\": 0, \"max_age_seconds\": 900, \"stale\": false}, {\"name\": \"wowforever.ninja profession index pages\", \"updated_at\": \"2026-11-14T20:20:00Z\", \"age_seconds\": 56400}], \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"posted\": 2, \"sold\": 2, \"expired\": 2, \"cancelled\": 0, \"listed\": null, \"unaccounted\": null, \"cash_copper\": 540, \"proceeds_copper\": null, \"deposits_lost_copper\": null, \"materials\": [], \"materials_copper\": null, \"realized_profit_copper\": null, \"basis\": \"unknown: no supported lot assignments\", \"reconciliation\": \"unverified: real posting/invoice/expiry cycle required\", \"match_basis\": [\"id\"], \"stale\": false}\n",
+  "requests": [
+   "/events?limit=500&since=1794139200",
+   "/listings?item=2604"
+  ]
+ },
+ {
+  "argv": [
+   "positions"
+  ],
+  "exit_code": 0,
+  "stdout": "Red Dye | recorded held 3 | listed 2 | basis unknown | floor 87c | held value 2s 61c\nholdings incomplete: some inventory locations are unavailable\nsource: DataStore.lua (saved/data 2026-11-15T12:00:00Z; age 0s); AHledger forever.pvp.alliance.us (saved/data 2026-11-15T12:00:00Z; age 0s)\n",
+  "requests": [
+   "/v1/pricetable/forever.pvp.alliance.us",
+   "/characters",
+   "/events?limit=500&since=1794139200",
+   "/listings",
+   "/characters/Slade%20Undertow/inventory"
+  ]
+ },
+ {
+  "argv": [
+   "positions",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"positions\": [{\"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"held\": 3, \"locations\": [{\"character\": \"Slade Undertow\", \"location\": \"bags\", \"count\": 3}], \"listed\": 2, \"floor_copper\": 87, \"value_copper\": 261, \"basis_copper\": null, \"basis\": \"unknown: no supported lot assignments\", \"purchases\": [{\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"0\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"purchase\", \"unit_copper\": 1.5, \"value_copper\": null, \"venue\": \"auction\"}, {\"actor\": {}, \"barter_items\": null, \"cash_basis\": \"recorded\", \"cash_copper\": 90, \"character\": \"Slade Undertow\", \"cost_basis_eligible\": true, \"count\": 1, \"counterparty\": null, \"currencies\": null, \"deposit_copper\": null, \"fee_copper\": null, \"id\": \"4\", \"item\": {\"id\": 2604, \"name\": \"Red Dye\"}, \"item_match_basis\": null, \"payment_confirmed\": null, \"posting_basis\": \"recorded\", \"price_basis\": \"recorded\", \"proceeds_copper\": null, \"provenance\": {}, \"quote\": {}, \"raw\": {}, \"recorded_at\": \"2026-11-15T12:00:00Z\", \"type\": \"purchase\", \"unit_copper\": 1, \"value_copper\": null, \"venue\": \"auction\"}], \"match_basis\": [\"id\"]}], \"inventory_availability\": [{\"character\": \"Slade Undertow\", \"location\": \"bags\", \"available\": true}, {\"character\": \"Slade Undertow\", \"location\": \"bank\", \"available\": false}, {\"character\": \"Slade Undertow\", \"location\": \"equipped\", \"available\": false}, {\"character\": \"Slade Undertow\", \"location\": \"mail\", \"available\": false}], \"complete\": false, \"stale\": false, \"journal_available\": true, \"journal_state\": \"available\", \"sources\": [{\"available\": true, \"file\": \"DataStore.lua\", \"globals\": {}, \"mtime\": \"2026-11-15T12:00:00Z\", \"mtime_ns\": 1794744000000000000, \"size_bytes\": 100}, {\"available\": true, \"file\": \"DataStore.lua\", \"globals\": {}, \"mtime\": \"2026-11-15T12:00:00Z\", \"mtime_ns\": 1794744000000000000, \"size_bytes\": 100, \"file_age_seconds\": 0, \"max_age_seconds\": 900, \"stale\": false}, {\"name\": \"AHledger forever.pvp.alliance.us\", \"updated_at\": \"2026-11-15T12:00:00Z\", \"age_seconds\": 0, \"stale\": false}, {\"available\": true, \"file\": \"DataStore.lua\", \"globals\": {}, \"mtime\": \"2026-11-15T12:00:00Z\", \"mtime_ns\": 1794744000000000000, \"size_bytes\": 100}]}\n",
+  "requests": [
+   "/v1/pricetable/forever.pvp.alliance.us",
+   "/characters",
+   "/events?limit=500&since=1794139200",
+   "/listings",
+   "/characters/Slade%20Undertow/inventory"
+  ]
+ }
+]

@@ -1,0 +1,454 @@
+{
+ "now": "2026-11-15T12:00:00Z",
+ "routes": {
+  "/characters/Slade": {
+   "generated_at": "2026-11-15T12:00:00Z",
+   "sources": [
+    {
+     "available": true,
+     "file": "DataStore.lua",
+     "globals": {},
+     "mtime": "2026-11-15T12:00:00Z",
+     "mtime_ns": 1794744000000000000,
+     "size_bytes": 100
+    }
+   ],
+   "character": {
+    "class": "Mage",
+    "class_id": 8,
+    "faction": "Alliance",
+    "gold_copper": 100,
+    "hearth": {
+     "location": "Ironforge"
+    },
+    "level": 60,
+    "name": "Slade Undertow",
+    "partial_data": [],
+    "professions": [
+     {
+      "max_skill": 75,
+      "name": "Tailoring",
+      "recipes": {},
+      "skill": 5,
+      "skill_available": true
+     }
+    ],
+    "professions_updated_at": "2026-11-15T12:00:00Z",
+    "race": "Human",
+    "race_id": 1,
+    "realm": "Forever",
+    "short_name": "Slade",
+    "sources": {
+     "gold_copper": "DataStore.lua",
+     "hearth": "DataStore.lua",
+     "level": "DataStore.lua",
+     "professions": "DataStore.lua"
+    }
+   }
+  },
+  "/characters": {
+   "characters": [
+    {
+     "name": "Slade Undertow"
+    }
+   ],
+   "sources": [
+    {
+     "available": true,
+     "file": "DataStore.lua",
+     "globals": {},
+     "mtime": "2026-11-15T12:00:00Z",
+     "mtime_ns": 1794744000000000000,
+     "size_bytes": 100
+    }
+   ]
+  },
+  "/characters/Slade%20Undertow/inventory": {
+   "sources": [
+    {
+     "available": true,
+     "file": "DataStore.lua",
+     "globals": {},
+     "mtime": "2026-11-15T12:00:00Z",
+     "mtime_ns": 1794744000000000000,
+     "size_bytes": 100
+    }
+   ],
+   "bags": {
+    "available": true,
+    "items": [
+     {
+      "item_id": 2604,
+      "name": "Red Dye",
+      "count": 3
+     }
+    ]
+   }
+  },
+  "/listings": {
+   "filters": {},
+   "generated_at": "2026-11-15T12:00:00Z",
+   "listings": [
+    {
+     "auctionID": 123,
+     "character": "Slade Undertow",
+     "count": 2,
+     "expirationTime": 1794747600,
+     "item_id": 2604,
+     "location": {},
+     "name": "Red Dye",
+     "price": {
+      "available": true,
+      "recorded": {
+       "buyout_copper": 200,
+       "bid_copper": 100,
+       "has_bid": false,
+       "deposit_copper": 10,
+       "expires_at": "2026-11-15T12:00:00Z"
+      }
+     },
+     "realm": "Forever",
+     "source": "DataStore_Auctions",
+     "undercut": null
+    }
+   ],
+   "returned_count": 1,
+   "scans": [
+    {
+     "available": true,
+     "character": "Slade Undertow",
+     "pricing": {}
+    }
+   ],
+   "sources": [
+    {
+     "available": true,
+     "file": "DataStore.lua",
+     "globals": {},
+     "mtime": "2026-11-15T12:00:00Z",
+     "mtime_ns": 1794744000000000000,
+     "size_bytes": 100,
+     "file_age_seconds": 0,
+     "max_age_seconds": 900,
+     "stale": false
+    }
+   ]
+  },
+  "/events": {
+   "available": true,
+   "checkpoint": "terminal",
+   "complete": true,
+   "coverage": {},
+   "entries": [
+    {
+     "actor": {},
+     "barter_items": null,
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": null,
+     "currencies": null,
+     "deposit_copper": null,
+     "fee_copper": null,
+     "id": "0",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "purchase",
+     "unit_copper": 1.5,
+     "value_copper": null,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": [],
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": "Other",
+     "currencies": [],
+     "deposit_copper": 1,
+     "fee_copper": null,
+     "id": "1",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "sale",
+     "unit_copper": 1,
+     "value_copper": 100,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": null,
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": null,
+     "currencies": null,
+     "deposit_copper": null,
+     "fee_copper": null,
+     "id": "2",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "posting",
+     "unit_copper": null,
+     "value_copper": null,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": [],
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": "Other",
+     "currencies": [],
+     "deposit_copper": 1,
+     "fee_copper": null,
+     "id": "3",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "expiration",
+     "unit_copper": 1.5,
+     "value_copper": 100,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": null,
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": null,
+     "currencies": null,
+     "deposit_copper": null,
+     "fee_copper": null,
+     "id": "4",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "purchase",
+     "unit_copper": 1,
+     "value_copper": null,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": [],
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": "Other",
+     "currencies": [],
+     "deposit_copper": 1,
+     "fee_copper": null,
+     "id": "5",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "sale",
+     "unit_copper": null,
+     "value_copper": 100,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": null,
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": null,
+     "currencies": null,
+     "deposit_copper": null,
+     "fee_copper": null,
+     "id": "6",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "posting",
+     "unit_copper": 1.5,
+     "value_copper": null,
+     "venue": "auction"
+    },
+    {
+     "actor": {},
+     "barter_items": [],
+     "cash_basis": "recorded",
+     "cash_copper": 90,
+     "character": "Slade Undertow",
+     "cost_basis_eligible": true,
+     "count": 1,
+     "counterparty": "Other",
+     "currencies": [],
+     "deposit_copper": 1,
+     "fee_copper": null,
+     "id": "7",
+     "item": {
+      "id": 2604,
+      "name": "Red Dye"
+     },
+     "item_match_basis": null,
+     "payment_confirmed": null,
+     "posting_basis": "recorded",
+     "price_basis": "recorded",
+     "proceeds_copper": null,
+     "provenance": {},
+     "quote": {},
+     "raw": {},
+     "recorded_at": "2026-11-15T12:00:00Z",
+     "type": "expiration",
+     "unit_copper": 1,
+     "value_copper": 100,
+     "venue": "auction"
+    }
+   ],
+   "filters": {
+    "actor": null,
+    "item": null,
+    "since": 1794657600,
+    "types": [],
+    "until": null,
+    "venue": null
+   },
+   "generated_at": "2026-11-15T12:00:00Z",
+   "has_more": false,
+   "item_matching": {
+    "basis": null,
+    "unresolved_linkless_count": 0,
+    "unresolved_recorded_names": []
+   },
+   "matched_count": 8,
+   "mode": "snapshot",
+   "next_cursor": null,
+   "reason": null,
+   "returned_count": 8,
+   "roster_enrichment": {},
+   "schema_version": 1,
+   "snapshot_at": "2026-11-15T12:00:00Z",
+   "snapshot_id": "snapshot",
+   "source_id": "journal",
+   "state": "available"
+  },
+  "/v1/pricetable/forever.pvp.alliance.us": "m|v|1794744000\n2604:88:87:709:::::10"
+ },
+ "commands": [
+  [
+   "char",
+   "Slade"
+  ],
+  [
+   "events"
+  ],
+  [
+   "events",
+   "--limit",
+   "0"
+  ],
+  [
+   "sales"
+  ],
+  [
+   "purchases"
+  ],
+  [
+   "expirations"
+  ],
+  [
+   "listings"
+  ],
+  [
+   "net",
+   "2604"
+  ],
+  [
+   "positions"
+  ]
+ ]
+}
