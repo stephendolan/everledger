@@ -1,376 +1,21 @@
 # everledger
 
-everledger is a standalone Rust CLI for WoW: Forever prices, crafting, vendors,
-characters and journal outcomes. This README is its command reference, generated
-verbatim from the binary's `--help`.
-
-See [Journalator consumer notes](docs/journalator-contract.md) for watch checkpoints,
-local filter views, and the live-service regression evidence.
-
-```text
-everledger: WoW Forever prices, catalogue, vendors, characters and outcomes.
-
-Usage: everledger <COMMAND>
-
-Commands:
-  price        AHledger quote plus vendor listed prices
-  recipe       Catalogue facts and roster known-by annotation
-  bridge       Catalogue skill-up bands across a range
-  margins      AHledger craft margins; optional roster recipe/level scope
-  vendors      Vendor listed prices/locations; ForeverDB includes faction
-  char         Characters, profession ranks and known recipes
-  listings     Recorded live auction listings and AHledger floor comparison
-  positions    Inventory holdings/listings and AHledger floor; basis unknown without assignments
-  sales        Sales proceeds (defaults to auction)
-  purchases    Auction and vendor purchases
-  expirations  Expired auctions with market repost inputs
-  net          Item auction cash/count diagnostic; profit basis stays unknown
-  events       Typed journal feed; prints next_cursor, has_more and service checkpoint
-  status       Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
-  refresh      Rebuild catalogue and refresh the configured vendor backend
-
-Options:
-  -h, --help  Print help
-
-Selectors: --char accepts a unique first or full character name.
-Times: 7d, 24h, dates, local ISO timestamps, or UTC ISO with Z; since inclusive,
-until exclusive. Outcomes default to 7d; events to 24h. Limits: 50 human, 500 JSON.
-JSON uses API field names, integer copper totals and UTC ISO timestamps.
-Human unknown values print as unknown; JSON keeps nulls and full provenance.
-Human booleans print as yes/no; JSON keeps booleans.
-Human output ends with one source: summary of sources, save/data times and ages.
-Stale data has one stale: notice after all rows, before the source summary.
-Old journal saves show their age without a stale notice or exit-code change.
-JSON matched/returned counts describe the accompanying filtered array;
-aggregates count all pages, events count the current page, bootstrap counts zero.
-Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
-Journal save age is normal: old saves alone do not change exit codes.
-Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
-Listings use the roster scan limit (15m). Positions apply both market/scan limits.
-Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
-On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
-Ninja sale/price claims are Classic 1.12 baseline; vendor sightings may be seen
-in Forever. ForeverDB maps its own sell-row labels separately from sightings.
-Ninja quantity/faction are unavailable; ForeverDB retains stack and side.
-All zones appear, including Horde; faction filtering is unavailable. Listed prices are not used in craft margins.
-Configuration: standalone everledger binary.
-Only connector transport needs python3 and the dynamic_credentials helper.
-EVERLEDGER_DATA_DIR defaults to ~/.everledger (catalogue and queried vendor cache).
-EVERLEDGER_ROSTER_URL defaults to http://localhost:8765; set EVERLEDGER_ROSTER_TOKEN
-or EVERLEDGER_ROSTER_TOKEN_FILE for bearer authentication.
-EVERLEDGER_MARKET defaults to forever.pvp.alliance.us.
-EVERLEDGER_AHLEDGER_URL defaults to https://api.ahledger.com.
-EVERLEDGER_VENDOR_URL defaults to https://wowforever.ninja.
-Set EVERLEDGER_FOREVERDB_API_KEY or EVERLEDGER_FOREVERDB_API_KEY_FILE
-(default: EVERLEDGER_DATA_DIR/foreverdb-api-key), or select vault transport with
-EVERLEDGER_FOREVERDB_VIA_CONNECTOR=custom.foreverdb (no raw key required).
-EVERLEDGER_DYNAMIC_CREDENTIALS_DIR defaults to
-/opt/muse/skills/custom-connector-setup/bin; connector mode needs dynamic_credentials.
-Both transports send a browser User-Agent and refuse redirects.
-Ninja stays active until a key or connector is configured and a sync completes.
-Then ForeverDB is automatic; failed syncs use the 7d stale-cache rule, with ninja
-retained as fallback. Data from ForeverDB.net (https://foreverdb.net).
-Refresh downloads profession pages and refreshes cached ninja IDs, or syncs
-ForeverDB vendors only: rolling 24-hour request budget across attempts.
-Default cap 36 requests; paced below 30/minute.
-Override with EVERLEDGER_FOREVERDB_DAILY_REQUESTS (a positive integer).
-List pages use limit 100 and offset; today's 1,014 vendors need 11 list + 1,014
-detail requests = 1,025 per full sync, bootstrap and steady state (no sell revisions).
-At the default 36/day, bootstrap takes at least 29 daily attempts; retries add requests.
-Retryable HTTP 502 gets one retry within the daily cap; in-attempt waits are
-60-300s. Longer waits stay pending until a later attempt. Unfinished syncs resume; only complete indexes activate.
-ForeverDB prices are per item only when stack price divides evenly by stack;
-otherwise show the total and quantity, e.g. 10c per 3. Limited stock is marked.
-With ForeverDB active, vendors adds a plain fallback-coverage count when the
-ninja cache knows additional distinct sellers; --in applies to both sets.
-Status names the transport and vendor/item record counts for each backend.
-Status and vendor lookups never make ForeverDB requests.
-```
-
-## price
-
-```text
-AHledger quote plus vendor listed prices
-
-Usage: everledger price [OPTIONS] <ITEM>...
-
-Arguments:
-  <ITEM>...  
-
-Options:
-      --json  one JSON document using API field names
-  -h, --help  Print help
-```
-
-## recipe
-
-```text
-Catalogue facts and roster known-by annotation
-
-Usage: everledger recipe [OPTIONS] <ITEM>...
-
-Arguments:
-  <ITEM>...  
-
-Options:
-      --skill <SKILL>  
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## bridge
-
-```text
-Catalogue skill-up bands across a range
-
-Usage: everledger bridge [OPTIONS] <PROFESSION> <START> <END>
-
-Arguments:
-  <PROFESSION>  
-  <START>       
-  <END>         
-
-Options:
-      --json  one JSON document using API field names
-  -h, --help  Print help
-```
-
-## margins
-
-```text
-AHledger craft margins; optional roster recipe/level scope
-
-Usage: everledger margins [OPTIONS] [PROFESSION]
-
-Arguments:
-  [PROFESSION]  
-
-Options:
-      --level <LEVEL>  
-      --char <CHAR>    
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## vendors
-
-```text
-Vendor listed prices/locations; ForeverDB includes faction
-
-Usage: everledger vendors [OPTIONS] <ITEM>...
-
-Arguments:
-  <ITEM>...  
-
-Options:
-      --in <ZONE>  zone/city substring; aliases IF, SW, Darn, Org, TB, UC
-      --json       one JSON document using API field names
-  -h, --help       Print help
-```
-
-## char
-
-```text
-Characters, profession ranks and known recipes
-
-Usage: everledger char [OPTIONS] [NAME] [PROFESSION]
-
-Arguments:
-  [NAME]        
-  [PROFESSION]  
-
-Options:
-      --skill <SKILL>  
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## listings
-
-```text
-Recorded live auction listings and AHledger floor comparison
-
-Usage: everledger listings [OPTIONS]
-
-Options:
-      --char <CHAR>  
-      --item <ITEM>  
-      --json         one JSON document using API field names
-  -h, --help         Print help
-```
-
-## positions
-
-```text
-Inventory holdings/listings and AHledger floor; basis unknown without assignments
-
-Usage: everledger positions [OPTIONS]
-
-Options:
-      --char <CHAR>  
-      --item <ITEM>  
-      --json         one JSON document using API field names
-  -h, --help         Print help
-```
-
-## sales
-
-```text
-Sales proceeds (defaults to auction)
-
-Usage: everledger sales [OPTIONS]
-
-Options:
-      --item <ITEM>    
-      --char <CHAR>    
-      --since <SINCE>  
-      --until <UNTIL>  
-      --venue <VENUE>  [default: auction] [possible values: auction, vendor]
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## purchases
-
-```text
-Auction and vendor purchases
-
-Usage: everledger purchases [OPTIONS]
-
-Options:
-      --item <ITEM>    
-      --char <CHAR>    
-      --since <SINCE>  
-      --until <UNTIL>  
-      --venue <VENUE>  [possible values: auction, vendor]
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## expirations
-
-```text
-Expired auctions with market repost inputs
-
-Usage: everledger expirations [OPTIONS]
-
-Options:
-      --item <ITEM>    
-      --char <CHAR>    
-      --since <SINCE>  
-      --until <UNTIL>  
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## net
-
-```text
-Item auction cash/count diagnostic; profit basis stays unknown
-
-Usage: everledger net [OPTIONS] <ITEM>...
-
-Arguments:
-  <ITEM>...  
-
-Options:
-      --char <CHAR>    
-      --since <SINCE>  
-      --until <UNTIL>  
-      --json           one JSON document using API field names
-  -h, --help           Print help
-```
-
-## events
-
-```text
-Typed journal feed; prints next_cursor, has_more and service checkpoint
-
-Usage: everledger events [OPTIONS]
-
-Options:
-      --item <ITEM>        
-      --char <CHAR>        
-      --since <SINCE>      
-      --until <UNTIL>      
-      --venue <VENUE>      [possible values: auction, vendor]
-      --type <EVENT_TYPE>  comma-separated purchase, sale, posting, expiration, cancellation
-      --cursor <CURSOR>    snapshot page cursor from next_cursor; inherits fixed filters
-      --after <AFTER>      terminal after_cursor/checkpoint; exclusive with since/until
-      --limit <LIMIT>      0 bootstraps a watch; default 50 human, 500 JSON
-      --json               one JSON document using API field names
-  -h, --help               Print help
-
-Start a watch: everledger events --limit 0 --json. Bootstrap drains a snapshot
-with positive service limits and prints no entries. Save after_cursor (the
-service terminal checkpoint) only after has_more is false. While has_more is
-true, pass next_cursor to --cursor to finish the snapshot; page cursors retain
-the local view. Character/item/type/venue filters are local views over an
-unfiltered checkpoint and may change between polls. Limit bounds the scanned
-page, so a filtered page may be empty with has_more true. Times are sent as
-integer epoch seconds. On 409 cursor_invalid, alert once and resync from
-resync_since; retries can replay entries. snapshot_changed requires restarting
-from the last committed checkpoint. Act before saving progress for
-at-least-once delivery. This CLI persists nothing.
-```
-
-## status
-
-```text
-Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
-
-Usage: everledger status [OPTIONS]
-
-Options:
-      --json  one JSON document using API field names
-  -h, --help  Print help
-```
-
-## refresh
-
-```text
-Rebuild catalogue and refresh the configured vendor backend
-
-Usage: everledger refresh [OPTIONS] <TARGET>
-
-Arguments:
-  <TARGET>  [possible values: catalogue]
-
-Options:
-      --json  one JSON document using API field names
-  -h, --help  Print help
-```
-
-## ForeverDB backend
-
-Ninja is the default until a key or connector is configured and a full ForeverDB
-sync completes. Run `everledger refresh catalogue`; unfinished work resumes on
-later daily refreshes. The mapping follows the API shapes probed November 15,
-2026. Both bootstrap and steady state require 1,025 requests at today's 1,014
-vendors. The cap is a rolling 24-hour request budget across attempts. At the
-default cap of 36 requests, bootstrap takes at least 29 daily attempts. Set
-`EVERLEDGER_FOREVERDB_DAILY_REQUESTS` to a positive integer to override the cap,
-for example `5000` for Stephen's chosen free-tier limit.
-Invalid values are usage errors. Pacing stays at 2.1 seconds between requests,
-and retries count against the configured cap. No per-vendor sell revision is
-available.
-See the [backend report and exact connector setup commands](docs/foreverdb.md)
-for mapping, price/stack rules, request counts, coverage comparison and fixtures.
-
-ForeverDB results disclose additional distinct sellers already in the ninja
-cache in one plain line, scoped by `--in` when supplied. Status reports vendor
-and item record counts for both backends and the selected transport.
-
-## Build and verification
-
-Build the release binary and run the Rust tests:
+everledger is a command-line tool for WoW: Forever prices, crafting, vendors,
+characters, and journal outcomes, built as one Rust binary. It reads auction
+prices and sales estimates from AHledger, recipes and baseline vendor data from
+wowforever.ninja, client vendor data from ForeverDB, and characters, inventory,
+listings, and journal records from a companion roster service.
+
+## Build
+
+[Rust 1.100.0](rust-toolchain.toml) is pinned for this project. Build the release
+binary from the repository root:
 
 ```sh
 cargo build --release
-cargo test
 ```
 
-A host without a Rust toolchain takes a statically linked binary, built at
+The deployed host takes the static binary at
 `target/x86_64-unknown-linux-musl/release/everledger`:
 
 ```sh
@@ -380,27 +25,113 @@ CC_x86_64_unknown_linux_musl=gcc cargo build --release --target x86_64-unknown-l
 
 `CC_x86_64_unknown_linux_musl` names the C compiler for the TLS library's C
 sources; `gcc` serves where no musl compiler wrapper is installed. The binary
-verifies TLS against the host's certificate bundle, found in the standard
-locations or named by `SSL_CERT_FILE`, and runs `python3` from the path when
-the ForeverDB connector is in use.
+verifies TLS against the host's certificate bundle in the standard locations
+or the file named by `SSL_CERT_FILE`. Connector transport runs `python3` from
+`PATH` and needs the `dynamic_credentials` helper.
 
-Regenerate the command reference from the built binary:
+## Run
+
+Build the local recipe catalogue on the first run:
 
 ```sh
+target/release/everledger refresh catalogue
+```
+
+Use `target/release/everledger` followed by a command. See the
+[command reference](docs/command-reference.md) for arguments and options.
+
+| Command | Answers |
+| --- | --- |
+| `price` | AHledger quote and listed vendor prices for an item. |
+| `recipe` | Recipe facts and which roster characters know it. |
+| `bridge` | Profession skill-up bands across a range. |
+| `margins` | Craft margins, optionally scoped to a character or level. |
+| `vendors` | Listed prices and seller locations, with faction from ForeverDB. |
+| `char` | Characters, profession ranks, and known recipes. |
+| `listings` | Recorded auctions compared with the AHledger floor. |
+| `positions` | Holdings and listings valued at the floor; cost basis needs assignments. |
+| `sales` | Sales proceeds, with auction sales as the default. |
+| `purchases` | Auction and vendor purchases. |
+| `expirations` | Expired auctions and market inputs for reposting. |
+| `net` | Item auction cash and counts; profit basis remains unknown. |
+| `events` | Paged journal events and service checkpoints for consumers. |
+| `status` | Source reachability, cache freshness, and vendor backend state. |
+| `refresh catalogue` | Rebuild the catalogue and refresh the configured vendor backend. |
+
+Every command accepts `--json` for one JSON document with API field names,
+integer copper amounts, and UTC timestamps. Human output labels unknown values
+and ends with a source summary. Exit codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Answer returned. |
+| `1` | Error. |
+| `2` | Usage error. |
+| `3` | Stale data printed. |
+| `4` | Source unreachable. |
+
+## Environment
+
+Set variables in the process environment. [.env.example](.env.example) lists
+the same settings; the binary does not load that file itself.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HOME` | `.` when absent | Supplies the home directory for the default data path. |
+| `EVERLEDGER_DATA_DIR` | `$HOME/.everledger` | Catalogue, downloaded pages, and vendor caches. |
+| `EVERLEDGER_ROSTER_URL` | `http://localhost:8765` | Companion roster service base URL. |
+| `EVERLEDGER_ROSTER_TOKEN` | Unset | Bearer token; a nonblank value takes precedence over the token file. |
+| `EVERLEDGER_ROSTER_TOKEN_FILE` | Unset | File containing the bearer token. |
+| `EVERLEDGER_MARKET` | `forever.pvp.alliance.us` | AHledger market. |
+| `EVERLEDGER_AHLEDGER_URL` | `https://api.ahledger.com` | AHledger base URL override. |
+| `EVERLEDGER_VENDOR_URL` | `https://wowforever.ninja` | Recipe and ninja vendor source URL override. |
+| `EVERLEDGER_FOREVERDB_API_KEY` | Unset | ForeverDB key; a nonblank value takes precedence over the key file. |
+| `EVERLEDGER_FOREVERDB_API_KEY_FILE` | `$EVERLEDGER_DATA_DIR/foreverdb-api-key` | File containing the ForeverDB key. |
+| `EVERLEDGER_FOREVERDB_VIA_CONNECTOR` | Unset | Nonblank connector slug, such as `custom.foreverdb`; takes precedence over key settings. |
+| `EVERLEDGER_DYNAMIC_CREDENTIALS_DIR` | `/opt/muse/skills/custom-connector-setup/bin` | Directory containing the connector's `dynamic_credentials` helper. |
+| `EVERLEDGER_FOREVERDB_DAILY_REQUESTS` | `36` | Positive integer request budget over a rolling 24 hours, shared across refresh attempts and retries. |
+| `EVERLEDGER_SEAM_FOREVERDB_URL` | Unset | Only in `parity-seams` builds: loopback ForeverDB fixture URL; required for their ForeverDB requests. |
+
+One refresh can spend only the budget remaining when its attempt starts.
+Spends become available as they age out of the rolling 24-hour window; repeating
+a refresh does not reset the allowance. An invalid budget value fails every
+command with exit code 2, including help. See the [ForeverDB reference](docs/foreverdb.md)
+for request sizing, activation, and resumption.
+
+HTTP proxy settings and `SSL_CERT_FILE` are honored. Test clock settings belong
+to the [parity seam contract](parity/README.md#seam-contract).
+
+## Python fallback
+
+The [Python fallback](python/README.md) lives in `python/` and needs Python 3.11+
+and curl. From the repository root:
+
+```sh
+python/everledger --help
+```
+
+It reads the same environment and data directory. The binary and fallback can
+take turns on one data directory, including resuming each other's vendor syncs.
+A wrapper script must point at `python/everledger` in this checkout.
+
+## Verification
+
+```sh
+cargo test
 python3 scripts/update_command_reference.py target/release/everledger
 ```
 
-The Rust tests check every reference block against the binary's help. See
-[the parity harness](parity/README.md) for differential verification against the
-Python oracle, argument-surface checks, and the isolated fixture setup;
-[the architecture notes](docs/architecture.md) for the crate's conventions; and
-[the register of differences](docs/rust-port-differences.md) for every place the
-binary deliberately departs from the Python reference.
+The tests compare every generated reference block with the binary's help. The
+[parity harness](parity/README.md) compares the Rust binary with the Python
+reference using loopback fixtures, including requests, output, and cache bytes.
+Its matrix runner runs every instrument. Maintainers can also read the
+[architecture](docs/architecture.md), [sanctioned differences](docs/rust-port-differences.md),
+and [journal consumer contract](docs/journalator-contract.md).
 
 ## Credits
 
 - **Prices from AHledger** (https://ahledger.com). All auction house prices, listing counts, and sales estimates come from AHledger's API for the `forever.pvp.alliance.us` market.
 - **Recipe data from wowforever.ninja** (https://wowforever.ninja), which publishes WoW: Forever client data. Its vendor and world data derive in part from the cMaNGOS classic-db baseline and are GPL-3.0 with attribution; the catalogue built by this tool inherits that. Treat baseline rows as unconfirmed until checked against the live game: Forever moves vendors and sources.
-- **Data from [ForeverDB.net](https://foreverdb.net)**. The optional ForeverDB adapter indexes vendor data extracted from the Forever client. It activates after a key or connector is configured and a complete sync finishes; wire shapes follow the November 15, 2026 probes.
+- **Data from [ForeverDB.net](https://foreverdb.net)**. The optional ForeverDB adapter indexes vendor data extracted from the Forever client. It activates after a key or connector is configured and a complete sync finishes.
 
 World of Warcraft and WoW: Forever are not affiliated with this project. This is a personal, non-commercial tool.
