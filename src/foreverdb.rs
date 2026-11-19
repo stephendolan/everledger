@@ -511,25 +511,7 @@ fn sync_locked(
     };
     engine.checkpoint_interrupt();
     let mut checkpoint = CheckpointState::Resumable;
-    let outcome = (|| {
-        transport.validate(context)?;
-        engine.walk_pages(&mut checkpoint)?;
-        engine.walk_details()?;
-        let complete = engine.pending.view().next_offset.is_none()
-            && engine.pending.view().details.0.len() == engine.pending.view().vendor_ids.len();
-        if complete {
-            let mut data = snapshot(engine.pending, previous.as_ref(), context)?;
-            data.set("sync_id", engine.pending.view().sync_id.clone())?;
-            interrupt.write("index.json", &data)?;
-            interrupt.remove("pending.json")?;
-        }
-        engine.close_attempt(if complete {
-            AttemptEnd::Complete
-        } else {
-            AttemptEnd::Pending
-        })?;
-        Ok(())
-    })();
+    let outcome = engine.traverse(previous.as_ref(), &mut checkpoint);
     if let Err(SyncFailure::InvalidCache(error)) = outcome {
         interrupt.clear();
         return Err(SyncFailure::InvalidCache(error));
@@ -781,6 +763,29 @@ struct Engine<'a, 'b> {
     deferred: Option<Deferred>,
 }
 impl Engine<'_, '_> {
+    fn traverse(
+        &mut self,
+        previous: Option<&Index>,
+        checkpoint: &mut CheckpointState,
+    ) -> SyncRun<()> {
+        self.transport.validate(self.context)?;
+        self.walk_pages(checkpoint)?;
+        self.walk_details()?;
+        let complete = self.pending.view().next_offset.is_none()
+            && self.pending.view().details.0.len() == self.pending.view().vendor_ids.len();
+        if complete {
+            let mut data = snapshot(self.pending, previous, self.context)?;
+            data.set("sync_id", self.pending.view().sync_id.clone())?;
+            self.interrupt.write("index.json", &data)?;
+            self.interrupt.remove("pending.json")?;
+        }
+        self.close_attempt(if complete {
+            AttemptEnd::Complete
+        } else {
+            AttemptEnd::Pending
+        })?;
+        Ok(())
+    }
     fn walk_pages(&mut self, checkpoint: &mut CheckpointState) -> SyncRun<()> {
         while let Some(offset) = self.pending.view().next_offset {
             if self.attempt.view().requests >= self.budget.0 {
