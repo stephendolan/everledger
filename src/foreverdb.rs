@@ -17,7 +17,6 @@ use crate::{
 use mapping::{Basis, Identifier, Metadata};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     fs::{File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
@@ -367,14 +366,7 @@ fn random_id() -> Result<String> {
         .map_err(sync_io)?;
     Ok(bytes.iter().map(|n| format!("{n:02x}")).collect())
 }
-pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock) -> Result<()> {
-    let doc = if name == "attempt.json" {
-        let mut attempt = doc.clone();
-        prune_spends(&mut attempt, clock)?;
-        Cow::Owned(attempt)
-    } else {
-        Cow::Borrowed(doc)
-    };
+pub(super) fn write_at(dir: &Path, name: &str, doc: &Document) -> Result<()> {
     let path = dir.join(format!(
         "{name}.{}.tmp",
         random_id()?.chars().take(8).collect::<String>()
@@ -388,7 +380,7 @@ pub(super) fn write_at(dir: &Path, name: &str, doc: &Document, clock: &dyn Clock
             .open(&path)
             .map_err(sync_io)?;
         stream
-            .write_all(dumps(&doc, JsonMode::Stdout).as_bytes())
+            .write_all(dumps(doc, JsonMode::Stdout).as_bytes())
             .map_err(sync_io)?;
         stream.sync_all().map_err(sync_io)?;
         std::fs::rename(&path, dir.join(name)).map_err(sync_io)?;
@@ -470,118 +462,16 @@ fn sync_locked(
     dir: &Path,
     result: &mut SyncData,
 ) -> SyncRun<()> {
-    let previous =
-        decode_index(sync_read(context, "index.json")?).map_err(SyncFailure::InvalidCache)?;
-    let old_record = load_attempt(context)?;
-    let old_attempt: Option<PreviousAttempt> = old_record
-        .as_ref()
-        .map(|d| d.decode("ForeverDB attempt"))
-        .transpose()?;
-    let mut pending = sync_read(context, "pending.json")?;
-    let budget = RequestBudget::remaining(
-        context.config.foreverdb_daily_requests,
-        old_attempt.as_ref().map_or(&[], |attempt| &attempt.spends),
-    );
-    if budget.0 == 0 {
-        result.configured = true;
-        result.complete = previous.is_some() && pending.is_none();
-        result.pending = pending.is_some();
-        result.total_requests = match pending.as_ref().filter(|d| d.truthy()) {
-            Some(doc) => {
-                cache_object(doc, "ForeverDB checkpoint total")
-                    .map_err(SyncFailure::InvalidCache)?;
-                #[derive(Deserialize)]
-                struct Total {
-                    #[serde(default)]
-                    total_requests: u64,
-                }
-                doc.decode::<Total>("ForeverDB checkpoint total")
-                    .map_err(SyncFailure::InvalidCache)?
-                    .total_requests
-            }
-            None => old_attempt.as_ref().map_or(0, |a| a.total_requests),
-        };
-        result.deferred = Some(Deferred::DailyLimit);
-        result.failed = old_attempt.as_ref().is_some_and(|a| a.failed);
-        result.status = old_attempt.as_ref().and_then(|a| a.status);
-        result.error = old_attempt.as_ref().and_then(|a| a.error.clone());
+    let SyncPlan::Attempt(plan) = plan_sync(context, dir, result)? else {
         return Ok(());
-    }
-
-    if let Some(doc) = pending.as_ref().filter(|d| d.truthy())
-        && !matching_format(doc).map_err(SyncFailure::InvalidCache)?
-    {
-        pending = None;
-    }
-    if let (Some(p), Some(old)) = (pending.as_ref().filter(|d| d.truthy()), &previous) {
-        #[derive(Deserialize)]
-        struct Identity {
-            sync_id: String,
-        }
-        let identity: Identity = p
-            .decode("ForeverDB checkpoint identity")
-            .map_err(SyncFailure::InvalidCache)?;
-        if Some(identity.sync_id.as_str()) == old.view().sync_id.as_deref() {
-            remove(dir, "pending.json")?;
-            pending = None;
-        }
-    }
-    let pending = match pending {
-        Some(p) => p,
-        None => Document::object([
-            ("format", FORMAT.into()),
-            ("sync_id", random_id()?.into()),
-            ("started_at", iso(context.clock.now()).into()),
-            ("next_offset", 0i64.into()),
-            ("vendor_ids", Document::Array(vec![])),
-            ("details", Document::Object(vec![])),
-            ("metadata", Document::Null),
-            ("total_requests", 0i64.into()),
-        ]),
     };
-    let mut pending: Payload<Pending> =
-        Payload::decode(pending, "ForeverDB checkpoint").map_err(SyncFailure::InvalidCache)?;
-    if pending.view().next_offset.is_none() && pending.view().metadata.is_none() {
-        return Err(SyncFailure::InvalidCache(Failure::shape(
-            "ForeverDB checkpoint",
-            "metadata is required after the vendor pages are complete",
-        )));
-    }
-    if let Some(a) = &old_attempt
-        && a.sync_id.as_deref() == Some(&pending.view().sync_id)
-    {
-        let total = pending.view().total_requests.max(a.total_requests);
-        pending.set("total_requests", Document::from_typed(&total)?)?;
-    }
-    let mut attempt: Payload<Attempt> = Payload::decode(
-        Document::object([
-            ("attempted_at", iso(context.clock.now()).into()),
-            ("requests", 0i64.into()),
-            ("sync_id", pending.view().sync_id.clone().into()),
-            (
-                "spends",
-                old_record
-                    .as_ref()
-                    .and_then(|d| d.get("spends").cloned())
-                    .unwrap_or(Document::Array(vec![])),
-            ),
-            (
-                "failed",
-                old_attempt.as_ref().is_some_and(|a| a.failed).into(),
-            ),
-            (
-                "status",
-                old_attempt
-                    .as_ref()
-                    .and_then(|a| a.status)
-                    .map(i64::from)
-                    .into(),
-            ),
-        ]),
-        "ForeverDB attempt",
-    )?;
-    result.total_requests = pending.view().total_requests;
-    write_at(dir, "attempt.json", attempt.document(), context.clock)?;
+    let PlannedAttempt {
+        previous,
+        mut pending,
+        mut attempt,
+        budget,
+    } = *plan;
+    save_attempt(dir, attempt.document(), context.clock)?;
     let interrupt = interrupt::Guard::new(dir)?;
     let mut engine = Engine {
         context,
@@ -594,263 +484,31 @@ fn sync_locked(
         result,
         deferred: None,
     };
-    engine.checkpoint_interrupt()?;
-    let mut obsolete = false;
-    let outcome = (|| {
-        transport.validate(context)?;
-        while let Some(offset) = engine.pending.view().next_offset {
-            if engine.attempt.view().requests >= engine.budget.0 {
-                break;
-            }
-            let Some(doc) = engine.get(&format!(
-                "/api/v1/vendors?limit={}&offset={offset}",
-                mapping::PAGE_SIZE
-            ))?
-            else {
-                break;
-            };
-            let page = mapping::page(doc, offset)?;
-            if engine
-                .pending
-                .view()
-                .metadata
-                .as_ref()
-                .is_some_and(|m| *m != page.metadata)
-            {
-                obsolete = true;
-                return Err(mapping::invalid().into());
-            }
-            if page
-                .ids
-                .iter()
-                .any(|id| engine.pending.view().vendor_ids.contains(id))
-            {
-                return Err(mapping::invalid().into());
-            }
-            engine.pending.set("metadata", page.metadata.document())?;
-            let mut ids = engine.pending.view().vendor_ids.clone();
-            ids.extend(page.ids);
-            engine.pending.set(
-                "vendor_ids",
-                Document::Array(ids.into_iter().map(Document::from).collect()),
-            )?;
-            engine.pending.set("next_offset", page.next)?;
-            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-        }
-        if engine.pending.view().next_offset.is_none() {
-            for id in engine.pending.view().vendor_ids.clone() {
-                if engine.pending.view().details.get(&id).is_some() {
-                    continue;
-                }
-                if engine.attempt.view().requests >= engine.budget.0 {
-                    break;
-                }
-                let Some(doc) = engine.get(&format!("/api/v1/vendors/{id}"))? else {
-                    break;
-                };
-                let expected =
-                    Identifier::try_from(id.parse::<i64>().map_err(|_| mapping::invalid())?)
-                        .map_err(|_| mapping::invalid())?;
-                let data = mapping::vendor(doc, expected)?;
-                engine
-                    .pending
-                    .set_path(&["details", &id], Document::object([("data", data)]))?;
-                interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-            }
-        }
-        let complete = engine.pending.view().next_offset.is_none()
-            && engine.pending.view().details.0.len() == engine.pending.view().vendor_ids.len();
-        if complete {
-            let mut data = snapshot(engine.pending, previous.as_ref(), context)?;
-            data.set("sync_id", engine.pending.view().sync_id.clone())?;
-            interrupt.write("index.json", &data, context.clock)?;
-            interrupt.remove("pending.json")?;
-            engine.attempt.set("failed", false)?;
-            engine.attempt.set("status", Document::Null)?;
-            engine.attempt.set("error", Document::Null)?;
-        } else {
-            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-        }
-        engine.finish()?;
-        interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
-        engine.result.complete = complete;
-        engine.result.pending = !complete;
-        engine.result.deferred = engine.deferred;
-        Ok(())
-    })();
+    engine.checkpoint_interrupt();
+    let mut checkpoint = CheckpointState::Resumable;
+    let outcome = engine.traverse(previous.as_ref(), &mut checkpoint);
     if let Err(SyncFailure::InvalidCache(error)) = outcome {
         interrupt.clear();
         return Err(SyncFailure::InvalidCache(error));
     }
     if let Err(SyncFailure::Failed(e)) = &outcome {
-        engine.finish()?;
-        engine.attempt.set("failed", true)?;
-        engine.attempt.set(
-            "status",
-            e.body
-                .as_ref()
-                .and_then(|d| d.get("status"))
-                .cloned()
-                .unwrap_or(Document::Null),
-        )?;
-        engine.attempt.set("error", e.message.clone())?;
-        interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
-        if obsolete {
-            interrupt.remove("pending.json")?;
-        } else {
-            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-        }
-        engine.result.failed = true;
-        engine.result.pending = !obsolete;
-        engine.result.status = engine.attempt.view().status;
-        engine.result.error = engine.attempt.view().error.clone();
+        engine.close_attempt(AttemptEnd::Failed(e, checkpoint))?;
     }
     interrupt.clear();
     Ok(())
 }
-struct Engine<'a, 'b> {
-    context: &'a Context<'b>,
-    transport: &'a transport::Transport,
-    pending: &'a mut Payload<Pending>,
-    attempt: &'a mut Payload<Attempt>,
-    budget: RequestBudget,
-    last_start: Option<f64>,
-    interrupt: &'a interrupt::Guard,
-    result: &'a mut SyncData,
-    deferred: Option<Deferred>,
+pub(super) fn save_attempt(dir: &Path, attempt: &Document, clock: &dyn Clock) -> Result<()> {
+    let mut pruned = attempt.clone();
+    prune_spends(&mut pruned, clock)?;
+    write_at(dir, "attempt.json", &pruned)
 }
-impl Engine<'_, '_> {
-    fn finish(&mut self) -> Result<()> {
-        let mut doc = self.attempt.document().clone();
-        finish_attempt(&mut doc, self.context.clock.now())?;
-        *self.attempt = Payload::decode(doc, "ForeverDB attempt")?;
-        Ok(())
-    }
-    fn checkpoint_interrupt(&self) -> Result<()> {
-        self.interrupt.update(
-            self.attempt.document(),
-            self.pending.document(),
-            self.context.clock.now(),
-        );
-        Ok(())
-    }
-    fn get(&mut self, path: &str) -> SyncRun<Option<Document>> {
-        loop {
-            if self.attempt.view().requests >= self.budget.0 {
-                self.deferred = Some(Deferred::DailyLimit);
-                return Ok(None);
-            }
-            let retry = self
-                .pending
-                .document()
-                .get("retry")
-                .filter(|d| d.truthy())
-                .map(|d| {
-                    cache_object(d, "ForeverDB retry").map_err(SyncFailure::InvalidCache)?;
-                    d.decode::<Retry>("ForeverDB retry")
-                        .map_err(SyncFailure::InvalidCache)
-                })
-                .transpose()?;
-            self.checkpoint_interrupt()?;
-            if let Some(retry) = &retry {
-                let delay = (instant(&retry.not_before)
-                    .map_err(SyncFailure::InvalidCache)?
-                    .microseconds()
-                    - self.context.clock.now().microseconds()) as f64
-                    / 1e6;
-                if delay > 300.0 {
-                    self.deferred = Some(Deferred::RetryWait);
-                    return Ok(None);
-                }
-                if delay > 0.0 {
-                    self.context.clock.sleep(delay.clamp(60.0, 300.0))?;
-                }
-            }
-            if let Some(last) = self.last_start {
-                self.context
-                    .clock
-                    .sleep((INTERVAL - (self.context.clock.monotonic() - last)).max(0.0))?;
-            }
-            let mut reservation = self.attempt.clone();
-            let requests = self
-                .attempt
-                .view()
-                .requests
-                .checked_add(1)
-                .ok_or_else(mapping::invalid)?;
-            let total = self
-                .pending
-                .view()
-                .total_requests
-                .checked_add(1)
-                .ok_or_else(mapping::invalid)?;
-            reservation.set("requests", Document::from_typed(&requests)?)?;
-            reservation.set("total_requests", Document::from_typed(&total)?)?;
-            reservation.set("last_request_at", iso(self.context.clock.now()))?;
-            self.interrupt
-                .write("attempt.json", reservation.document(), self.context.clock)?;
-            *self.attempt = reservation;
-            self.pending
-                .set("total_requests", Document::from_typed(&total)?)?;
-            self.result.requests = requests;
-            self.result.total_requests = total;
-            self.last_start = Some(self.context.clock.monotonic());
-            self.checkpoint_interrupt()?;
-            match self.transport.request(path, self.context) {
-                Ok(raw) => {
-                    self.interrupt
-                        .clear_retry(self.pending, self.context.clock)?;
-                    return crate::http::decode_body(&raw)
-                        .map(Some)
-                        .map_err(|_| SyncFailure::Failed(mapping::invalid()));
-                }
-                Err(error) => {
-                    let body = error.body.as_ref();
-                    let status = body
-                        .and_then(|d| d.get("status"))
-                        .and_then(Document::as_i64);
-                    let response = body.and_then(|d| d.get("response"));
-                    if status == Some(502)
-                        && retry.is_none()
-                        && response.and_then(|d| d.get("retryable")) == Some(&Document::Bool(true))
-                    {
-                        let timestamp = self.context.clock.now();
-                        let not_before =
-                            retry_at(response.and_then(|d| d.get("retry_after")), timestamp)?;
-                        self.pending.set(
-                            "retry",
-                            Document::object([("not_before", retry_iso(not_before).into())]),
-                        )?;
-                        self.interrupt.write(
-                            "pending.json",
-                            self.pending.document(),
-                            self.context.clock,
-                        )?;
-                        if not_before.microseconds() - timestamp.microseconds() > 300_000_000 {
-                            self.deferred = Some(Deferred::RetryWait);
-                            return Ok(None);
-                        }
-                        continue;
-                    }
-                    self.interrupt
-                        .clear_retry(self.pending, self.context.clock)?;
-                    return Err(Failure {
-                        message: crate::human::refresh::sync_failed(status),
-                        code: crate::ExitCode::Unreachable,
-                        body: Some(Document::object([("status", status.into())])),
-                    }
-                    .into());
-                }
-            }
-        }
-    }
+fn failure_status(error: &Failure) -> Option<&Document> {
+    error.body.as_ref().and_then(|body| body.get("status"))
 }
-type SnapshotItem = (String, Document, Vec<(Seller, Document)>);
-fn snapshot(
+fn snapshot_entries(
     pending: &Payload<Pending>,
     previous: Option<&Index>,
-    context: &Context<'_>,
-) -> Result<Document> {
+) -> Result<Vec<SnapshotItem>> {
     let mut entries: Vec<SnapshotItem> = vec![];
     if let Some(index) = previous {
         for (id, _) in &index.view().items.0 {
@@ -893,6 +551,461 @@ fn snapshot(
             ));
         }
     }
+    Ok(entries)
+}
+enum SyncPlan {
+    BudgetSpent,
+    Attempt(Box<PlannedAttempt>),
+}
+struct PlannedAttempt {
+    previous: Option<Index>,
+    pending: Payload<Pending>,
+    attempt: Payload<Attempt>,
+    budget: RequestBudget,
+}
+#[derive(Deserialize)]
+struct CheckpointTotal {
+    #[serde(default)]
+    total_requests: u64,
+}
+#[derive(Deserialize)]
+struct CheckpointIdentity {
+    sync_id: String,
+}
+fn plan_sync(context: &Context<'_>, dir: &Path, result: &mut SyncData) -> SyncRun<SyncPlan> {
+    let previous =
+        decode_index(sync_read(context, "index.json")?).map_err(SyncFailure::InvalidCache)?;
+    let old_record = load_attempt(context)?;
+    let old_attempt: Option<PreviousAttempt> = old_record
+        .as_ref()
+        .map(|d| d.decode("ForeverDB attempt"))
+        .transpose()?;
+    let pending = sync_read(context, "pending.json")?;
+    let budget = RequestBudget::remaining(
+        context.config.foreverdb_daily_requests,
+        old_attempt.as_ref().map_or(&[], |attempt| &attempt.spends),
+    );
+    if budget.0 == 0 {
+        report_spent_budget(
+            previous.as_ref(),
+            pending.as_ref(),
+            old_attempt.as_ref(),
+            result,
+        )?;
+        return Ok(SyncPlan::BudgetSpent);
+    }
+
+    let pending = prepare_checkpoint(
+        context,
+        dir,
+        pending,
+        previous.as_ref(),
+        old_attempt.as_ref(),
+    )?;
+    let attempt = open_attempt(context, &pending, old_record.as_ref(), old_attempt.as_ref())?;
+    result.total_requests = pending.view().total_requests;
+    Ok(SyncPlan::Attempt(Box::new(PlannedAttempt {
+        previous,
+        pending,
+        attempt,
+        budget,
+    })))
+}
+fn open_attempt(
+    context: &Context<'_>,
+    pending: &Payload<Pending>,
+    old_record: Option<&Document>,
+    old_attempt: Option<&PreviousAttempt>,
+) -> Result<Payload<Attempt>> {
+    Payload::decode(
+        Document::object([
+            ("attempted_at", iso(context.clock.now()).into()),
+            ("requests", 0i64.into()),
+            ("sync_id", pending.view().sync_id.clone().into()),
+            (
+                "spends",
+                old_record
+                    .and_then(|d| d.get("spends").cloned())
+                    .unwrap_or(Document::Array(vec![])),
+            ),
+            ("failed", old_attempt.is_some_and(|a| a.failed).into()),
+            (
+                "status",
+                old_attempt.and_then(|a| a.status).map(i64::from).into(),
+            ),
+        ]),
+        "ForeverDB attempt",
+    )
+}
+fn prepare_checkpoint(
+    context: &Context<'_>,
+    dir: &Path,
+    mut pending: Option<Document>,
+    previous: Option<&Index>,
+    old_attempt: Option<&PreviousAttempt>,
+) -> SyncRun<Payload<Pending>> {
+    if let Some(doc) = pending.as_ref().filter(|d| d.truthy())
+        && !matching_format(doc).map_err(SyncFailure::InvalidCache)?
+    {
+        pending = None;
+    }
+    if let (Some(p), Some(old)) = (pending.as_ref().filter(|d| d.truthy()), previous) {
+        let identity: CheckpointIdentity = p
+            .decode("ForeverDB checkpoint identity")
+            .map_err(SyncFailure::InvalidCache)?;
+        if Some(identity.sync_id.as_str()) == old.view().sync_id.as_deref() {
+            remove(dir, "pending.json")?;
+            pending = None;
+        }
+    }
+    let pending = match pending {
+        Some(p) => p,
+        None => Document::object([
+            ("format", FORMAT.into()),
+            ("sync_id", random_id()?.into()),
+            ("started_at", iso(context.clock.now()).into()),
+            ("next_offset", 0i64.into()),
+            ("vendor_ids", Document::Array(vec![])),
+            ("details", Document::Object(vec![])),
+            ("metadata", Document::Null),
+            ("total_requests", 0i64.into()),
+        ]),
+    };
+    let mut pending: Payload<Pending> =
+        Payload::decode(pending, "ForeverDB checkpoint").map_err(SyncFailure::InvalidCache)?;
+    if pending.view().next_offset.is_none() && pending.view().metadata.is_none() {
+        return Err(SyncFailure::InvalidCache(Failure::shape(
+            "ForeverDB checkpoint",
+            "metadata is required after the vendor pages are complete",
+        )));
+    }
+    if let Some(a) = old_attempt
+        && a.sync_id.as_deref() == Some(&pending.view().sync_id)
+    {
+        let total = pending.view().total_requests.max(a.total_requests);
+        pending.set("total_requests", Document::from_typed(&total)?)?;
+    }
+    Ok(pending)
+}
+fn report_spent_budget(
+    previous: Option<&Index>,
+    pending: Option<&Document>,
+    old_attempt: Option<&PreviousAttempt>,
+    result: &mut SyncData,
+) -> SyncRun<()> {
+    result.configured = true;
+    result.complete = previous.is_some() && pending.is_none();
+    result.pending = pending.is_some();
+    result.total_requests = match pending.filter(|d| d.truthy()) {
+        Some(doc) => {
+            cache_object(doc, "ForeverDB checkpoint total").map_err(SyncFailure::InvalidCache)?;
+            doc.decode::<CheckpointTotal>("ForeverDB checkpoint total")
+                .map_err(SyncFailure::InvalidCache)?
+                .total_requests
+        }
+        None => old_attempt.map_or(0, |a| a.total_requests),
+    };
+    result.deferred = Some(Deferred::DailyLimit);
+    result.failed = old_attempt.is_some_and(|a| a.failed);
+    result.status = old_attempt.and_then(|a| a.status);
+    result.error = old_attempt.and_then(|a| a.error.clone());
+    Ok(())
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckpointState {
+    Resumable,
+    Obsolete,
+}
+#[derive(Clone, Copy)]
+enum AttemptEnd<'a> {
+    Complete,
+    Pending,
+    Failed(&'a Failure, CheckpointState),
+}
+enum RequestRetry {
+    Again,
+    Deferred,
+}
+struct Engine<'a, 'b> {
+    context: &'a Context<'b>,
+    transport: &'a transport::Transport,
+    pending: &'a mut Payload<Pending>,
+    attempt: &'a mut Payload<Attempt>,
+    budget: RequestBudget,
+    last_start: Option<f64>,
+    interrupt: &'a interrupt::Guard,
+    result: &'a mut SyncData,
+    deferred: Option<Deferred>,
+}
+impl Engine<'_, '_> {
+    fn traverse(
+        &mut self,
+        previous: Option<&Index>,
+        checkpoint: &mut CheckpointState,
+    ) -> SyncRun<()> {
+        self.transport.validate(self.context)?;
+        self.walk_pages(checkpoint)?;
+        self.walk_details()?;
+        let complete = self.pending.view().next_offset.is_none()
+            && self.pending.view().details.0.len() == self.pending.view().vendor_ids.len();
+        if complete {
+            let mut data = snapshot(self.pending, previous, self.context)?;
+            data.set("sync_id", self.pending.view().sync_id.clone())?;
+            self.interrupt.write("index.json", &data)?;
+            self.interrupt.remove("pending.json")?;
+        }
+        self.close_attempt(if complete {
+            AttemptEnd::Complete
+        } else {
+            AttemptEnd::Pending
+        })?;
+        Ok(())
+    }
+    fn walk_pages(&mut self, checkpoint: &mut CheckpointState) -> SyncRun<()> {
+        while let Some(offset) = self.pending.view().next_offset {
+            if self.attempt.view().requests >= self.budget.0 {
+                break;
+            }
+            let Some(doc) = self.get(&format!(
+                "/api/v1/vendors?limit={}&offset={offset}",
+                mapping::PAGE_SIZE
+            ))?
+            else {
+                break;
+            };
+            let page = mapping::page(doc, offset)?;
+            if self
+                .pending
+                .view()
+                .metadata
+                .as_ref()
+                .is_some_and(|m| *m != page.metadata)
+            {
+                *checkpoint = CheckpointState::Obsolete;
+                return Err(mapping::invalid().into());
+            }
+            if page
+                .ids
+                .iter()
+                .any(|id| self.pending.view().vendor_ids.contains(id))
+            {
+                return Err(mapping::invalid().into());
+            }
+            self.pending.set("metadata", page.metadata.document())?;
+            let mut ids = self.pending.view().vendor_ids.clone();
+            ids.extend(page.ids);
+            self.pending.set(
+                "vendor_ids",
+                Document::Array(ids.into_iter().map(Document::from).collect()),
+            )?;
+            self.pending.set("next_offset", page.next)?;
+            self.interrupt
+                .write("pending.json", self.pending.document())?;
+        }
+        Ok(())
+    }
+    fn walk_details(&mut self) -> SyncRun<()> {
+        if self.pending.view().next_offset.is_none() {
+            for id in self.pending.view().vendor_ids.clone() {
+                if self.pending.view().details.get(&id).is_some() {
+                    continue;
+                }
+                if self.attempt.view().requests >= self.budget.0 {
+                    break;
+                }
+                let Some(doc) = self.get(&format!("/api/v1/vendors/{id}"))? else {
+                    break;
+                };
+                let expected =
+                    Identifier::try_from(id.parse::<i64>().map_err(|_| mapping::invalid())?)
+                        .map_err(|_| mapping::invalid())?;
+                let data = mapping::vendor(doc, expected)?;
+                self.pending
+                    .set_path(&["details", &id], Document::object([("data", data)]))?;
+                self.interrupt
+                    .write("pending.json", self.pending.document())?;
+            }
+        }
+        Ok(())
+    }
+    fn close_attempt(&mut self, end: AttemptEnd<'_>) -> Result<()> {
+        match end {
+            AttemptEnd::Complete => {
+                self.attempt.set("failed", false)?;
+                self.attempt.set("status", Document::Null)?;
+                self.attempt.set("error", Document::Null)?;
+            }
+            AttemptEnd::Pending => self
+                .interrupt
+                .write("pending.json", self.pending.document())?,
+            AttemptEnd::Failed(_, _) => {}
+        }
+        self.finish()?;
+        if let AttemptEnd::Failed(error, _) = end {
+            self.attempt.set("failed", true)?;
+            self.attempt.set(
+                "status",
+                failure_status(error).cloned().unwrap_or(Document::Null),
+            )?;
+            self.attempt.set("error", error.message.clone())?;
+        }
+        self.interrupt
+            .save_attempt(self.attempt.document(), self.context.clock)?;
+        match end {
+            AttemptEnd::Complete | AttemptEnd::Pending => {
+                let complete = matches!(end, AttemptEnd::Complete);
+                self.result.complete = complete;
+                self.result.pending = !complete;
+                self.result.deferred = self.deferred;
+            }
+            AttemptEnd::Failed(_, checkpoint) => {
+                match checkpoint {
+                    CheckpointState::Obsolete => self.interrupt.remove("pending.json")?,
+                    CheckpointState::Resumable => self
+                        .interrupt
+                        .write("pending.json", self.pending.document())?,
+                }
+                self.result.failed = true;
+                self.result.pending = checkpoint == CheckpointState::Resumable;
+                self.result.status = self.attempt.view().status;
+                self.result.error = self.attempt.view().error.clone();
+            }
+        }
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<()> {
+        let mut doc = self.attempt.document().clone();
+        finish_attempt(&mut doc, self.context.clock.now())?;
+        *self.attempt = Payload::decode(doc, "ForeverDB attempt")?;
+        Ok(())
+    }
+    fn checkpoint_interrupt(&self) {
+        self.interrupt.update(
+            self.attempt.document(),
+            self.pending.document(),
+            self.context.clock.now(),
+        );
+    }
+    fn reserve_request(&mut self) -> SyncRun<()> {
+        let mut reservation = self.attempt.clone();
+        let requests = self
+            .attempt
+            .view()
+            .requests
+            .checked_add(1)
+            .ok_or_else(mapping::invalid)?;
+        let total = self
+            .pending
+            .view()
+            .total_requests
+            .checked_add(1)
+            .ok_or_else(mapping::invalid)?;
+        reservation.set("requests", Document::from_typed(&requests)?)?;
+        reservation.set("total_requests", Document::from_typed(&total)?)?;
+        reservation.set("last_request_at", iso(self.context.clock.now()))?;
+        self.interrupt
+            .save_attempt(reservation.document(), self.context.clock)?;
+        *self.attempt = reservation;
+        self.pending
+            .set("total_requests", Document::from_typed(&total)?)?;
+        self.result.requests = requests;
+        self.result.total_requests = total;
+        self.last_start = Some(self.context.clock.monotonic());
+        self.checkpoint_interrupt();
+        Ok(())
+    }
+    fn request_failure(&mut self, error: Failure, retry: Option<&Retry>) -> SyncRun<RequestRetry> {
+        let body = error.body.as_ref();
+        let status = failure_status(&error).and_then(Document::as_i64);
+        let response = body.and_then(|d| d.get("response"));
+        if status == Some(502)
+            && retry.is_none()
+            && response.and_then(|d| d.get("retryable")) == Some(&Document::Bool(true))
+        {
+            let timestamp = self.context.clock.now();
+            let not_before = retry_at(response.and_then(|d| d.get("retry_after")), timestamp)?;
+            self.pending.set(
+                "retry",
+                Document::object([("not_before", retry_iso(not_before).into())]),
+            )?;
+            self.interrupt
+                .write("pending.json", self.pending.document())?;
+            if not_before.microseconds() - timestamp.microseconds() > 300_000_000 {
+                self.deferred = Some(Deferred::RetryWait);
+                return Ok(RequestRetry::Deferred);
+            }
+            return Ok(RequestRetry::Again);
+        }
+        self.interrupt
+            .clear_retry(self.pending, self.context.clock)?;
+        Err(Failure {
+            message: crate::human::refresh::sync_failed(status),
+            code: crate::ExitCode::Unreachable,
+            body: Some(Document::object([("status", status.into())])),
+        }
+        .into())
+    }
+    fn get(&mut self, path: &str) -> SyncRun<Option<Document>> {
+        loop {
+            if self.attempt.view().requests >= self.budget.0 {
+                self.deferred = Some(Deferred::DailyLimit);
+                return Ok(None);
+            }
+            let retry = self
+                .pending
+                .document()
+                .get("retry")
+                .filter(|d| d.truthy())
+                .map(|d| {
+                    cache_object(d, "ForeverDB retry").map_err(SyncFailure::InvalidCache)?;
+                    d.decode::<Retry>("ForeverDB retry")
+                        .map_err(SyncFailure::InvalidCache)
+                })
+                .transpose()?;
+            self.checkpoint_interrupt();
+            if let Some(retry) = &retry {
+                let delay = (instant(&retry.not_before)
+                    .map_err(SyncFailure::InvalidCache)?
+                    .microseconds()
+                    - self.context.clock.now().microseconds()) as f64
+                    / 1e6;
+                if delay > 300.0 {
+                    self.deferred = Some(Deferred::RetryWait);
+                    return Ok(None);
+                }
+                if delay > 0.0 {
+                    self.context.clock.sleep(delay.clamp(60.0, 300.0))?;
+                }
+            }
+            if let Some(last) = self.last_start {
+                self.context
+                    .clock
+                    .sleep((INTERVAL - (self.context.clock.monotonic() - last)).max(0.0))?;
+            }
+            self.reserve_request()?;
+            match self.transport.request(path, self.context) {
+                Ok(raw) => {
+                    self.interrupt
+                        .clear_retry(self.pending, self.context.clock)?;
+                    return crate::http::decode_body(&raw)
+                        .map(Some)
+                        .map_err(|_| SyncFailure::Failed(mapping::invalid()));
+                }
+                Err(error) => match self.request_failure(error, retry.as_ref())? {
+                    RequestRetry::Again => continue,
+                    RequestRetry::Deferred => return Ok(None),
+                },
+            }
+        }
+    }
+}
+type SnapshotItem = (String, Document, Vec<(Seller, Document)>);
+fn snapshot(
+    pending: &Payload<Pending>,
+    previous: Option<&Index>,
+    context: &Context<'_>,
+) -> Result<Document> {
+    let mut entries = snapshot_entries(pending, previous)?;
     for (_, _, rows) in &mut entries {
         rows.sort_by_cached_key(|(r, _)| {
             (
