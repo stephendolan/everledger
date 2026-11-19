@@ -530,17 +530,12 @@ fn sync_locked(
             data.set("sync_id", engine.pending.view().sync_id.clone())?;
             interrupt.write("index.json", &data, context.clock)?;
             interrupt.remove("pending.json")?;
-            engine.attempt.set("failed", false)?;
-            engine.attempt.set("status", Document::Null)?;
-            engine.attempt.set("error", Document::Null)?;
-        } else {
-            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
         }
-        engine.finish()?;
-        interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
-        engine.result.complete = complete;
-        engine.result.pending = !complete;
-        engine.result.deferred = engine.deferred;
+        engine.close_attempt(if complete {
+            AttemptEnd::Complete
+        } else {
+            AttemptEnd::Pending
+        })?;
         Ok(())
     })();
     if let Err(SyncFailure::InvalidCache(error)) = outcome {
@@ -548,27 +543,7 @@ fn sync_locked(
         return Err(SyncFailure::InvalidCache(error));
     }
     if let Err(SyncFailure::Failed(e)) = &outcome {
-        engine.finish()?;
-        engine.attempt.set("failed", true)?;
-        engine.attempt.set(
-            "status",
-            e.body
-                .as_ref()
-                .and_then(|d| d.get("status"))
-                .cloned()
-                .unwrap_or(Document::Null),
-        )?;
-        engine.attempt.set("error", e.message.clone())?;
-        interrupt.write("attempt.json", engine.attempt.document(), context.clock)?;
-        if checkpoint == CheckpointState::Obsolete {
-            interrupt.remove("pending.json")?;
-        } else {
-            interrupt.write("pending.json", engine.pending.document(), context.clock)?;
-        }
-        engine.result.failed = true;
-        engine.result.pending = checkpoint == CheckpointState::Resumable;
-        engine.result.status = engine.attempt.view().status;
-        engine.result.error = engine.attempt.view().error.clone();
+        engine.close_attempt(AttemptEnd::Failed(e, checkpoint))?;
     }
     interrupt.clear();
     Ok(())
@@ -736,6 +711,12 @@ enum CheckpointState {
     Resumable,
     Obsolete,
 }
+#[derive(Clone, Copy)]
+enum AttemptEnd<'a> {
+    Complete,
+    Pending,
+    Failed(&'a Failure, CheckpointState),
+}
 struct Engine<'a, 'b> {
     context: &'a Context<'b>,
     transport: &'a transport::Transport,
@@ -814,6 +795,59 @@ impl Engine<'_, '_> {
                     self.pending.document(),
                     self.context.clock,
                 )?;
+            }
+        }
+        Ok(())
+    }
+    fn close_attempt(&mut self, end: AttemptEnd<'_>) -> Result<()> {
+        match end {
+            AttemptEnd::Complete => {
+                self.attempt.set("failed", false)?;
+                self.attempt.set("status", Document::Null)?;
+                self.attempt.set("error", Document::Null)?;
+            }
+            AttemptEnd::Pending => {
+                self.interrupt
+                    .write("pending.json", self.pending.document(), self.context.clock)?
+            }
+            AttemptEnd::Failed(_, _) => {}
+        }
+        self.finish()?;
+        if let AttemptEnd::Failed(error, _) = end {
+            self.attempt.set("failed", true)?;
+            self.attempt.set(
+                "status",
+                error
+                    .body
+                    .as_ref()
+                    .and_then(|d| d.get("status"))
+                    .cloned()
+                    .unwrap_or(Document::Null),
+            )?;
+            self.attempt.set("error", error.message.clone())?;
+        }
+        self.interrupt
+            .write("attempt.json", self.attempt.document(), self.context.clock)?;
+        match end {
+            AttemptEnd::Complete | AttemptEnd::Pending => {
+                let complete = matches!(end, AttemptEnd::Complete);
+                self.result.complete = complete;
+                self.result.pending = !complete;
+                self.result.deferred = self.deferred;
+            }
+            AttemptEnd::Failed(_, checkpoint) => {
+                match checkpoint {
+                    CheckpointState::Obsolete => self.interrupt.remove("pending.json")?,
+                    CheckpointState::Resumable => self.interrupt.write(
+                        "pending.json",
+                        self.pending.document(),
+                        self.context.clock,
+                    )?,
+                }
+                self.result.failed = true;
+                self.result.pending = checkpoint == CheckpointState::Resumable;
+                self.result.status = self.attempt.view().status;
+                self.result.error = self.attempt.view().error.clone();
             }
         }
         Ok(())
