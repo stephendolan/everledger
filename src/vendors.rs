@@ -383,7 +383,7 @@ fn fetch(item_id: i64, context: &Context<'_>) -> CacheResult<NinjaAnswer> {
                 "{}/items/{item_id}.{suffix}",
                 context.config.vendor_url
             ))
-            .header("User-Agent", "Mozilla/5.0 (compatible; everledger)"),
+            .header("User-Agent", crate::http::VENDOR_USER_AGENT),
         ) {
             Ok(r) => Ok(Some((
                 crate::http::decode_body(&r.body)?,

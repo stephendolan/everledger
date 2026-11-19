@@ -13,6 +13,8 @@ use serde::{
 };
 use std::{fmt, marker::PhantomData, sync::OnceLock};
 
+pub const ADVISORY_DAYS: i64 = 14;
+
 #[derive(Clone, Debug)]
 pub struct OrderedMap<T>(pub Vec<(String, T)>);
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for OrderedMap<T> {
@@ -134,8 +136,12 @@ fn load_catalogue_file(
         }
     })?;
     let cat: Catalogue = Payload::decode(crate::document::parse(&text)?, "catalogue")?;
-    if crate::time::age(Some(&cat.view().generated_at), clock).is_some_and(|s| s > 14 * 86400) {
-        diagnostics.warn("catalogue is older than 14d; run: everledger refresh catalogue")?;
+    if crate::time::age(Some(&cat.view().generated_at), clock)
+        .is_some_and(|s| s > ADVISORY_DAYS * 86400)
+    {
+        diagnostics.warn(&format!(
+            "catalogue is older than {ADVISORY_DAYS}d; run: everledger refresh catalogue"
+        ))?;
     }
     Ok(cat)
 }

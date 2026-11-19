@@ -1,8 +1,8 @@
 #[derive(clap::Args, Debug, Clone)]
 #[command(args_override_self = true)]
 pub struct Args {
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
 use crate::{
     Context, ExitCode, Result,
@@ -114,7 +114,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let mut stale = false;
     match crate::catalogue::load_catalogue(context) {
         Ok(cat) => {
-            let (ok, checks) = crate::commands::verify::check_catalogue(cat);
+            let (ok, checks) = crate::catalogue_check::check(cat);
             used.push(crate::catalogue::catalogue_source(cat, context.clock)?);
             rows.push(Document::object([
                 ("source", "catalogue".into()),
@@ -173,7 +173,7 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         Backend::Ninja => {
             let state = match context.http.request(
                 &Request::get(&context.config.vendor_url)
-                    .header("User-Agent", "Mozilla/5.0 (compatible; everledger)"),
+                    .header("User-Agent", crate::http::VENDOR_USER_AGENT),
             ) {
                 Ok(_) => "reachable".into(),
                 Err(e) => {

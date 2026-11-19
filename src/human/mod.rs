@@ -7,7 +7,22 @@ use crate::{
 };
 use std::collections::BTreeSet;
 pub mod bridge;
-pub mod verify;
+pub mod catalogue_check;
+pub mod char;
+pub mod events;
+pub mod expirations;
+pub mod listings;
+pub mod margins;
+pub mod net;
+pub mod positions;
+pub mod price;
+pub mod purchases;
+pub mod recipe;
+pub mod refresh;
+pub mod sales;
+pub mod status;
+pub mod vendors;
+
 pub use crate::primitives::copper_money;
 
 pub type SourceFamilies = Vec<(String, Vec<Source>)>;
@@ -173,20 +188,6 @@ pub fn emit(
     lines.push(source_lines(&items, families, clock));
     Ok(lines.join("\n") + "\n")
 }
-pub mod char;
-pub mod events;
-pub mod expirations;
-pub mod listings;
-pub mod margins;
-pub mod net;
-pub mod positions;
-pub mod price;
-pub mod purchases;
-pub mod recipe;
-pub mod refresh;
-pub mod sales;
-pub mod status;
-pub mod vendors;
 
 pub fn text(value: Option<&str>) -> String {
     value.filter(|s| !s.is_empty()).unwrap_or("unknown").into()

@@ -1,3 +1,12 @@
+use crate::{
+    Context, Failure, Result,
+    catalogue::{self, Recipe, catalogue_source, load_catalogue},
+    commands::CommandOutput,
+    document::Document,
+    human,
+    primitives::casefold,
+};
+
 #[derive(clap::Args, Debug, Clone)]
 #[command(args_override_self = true)]
 pub struct Args {
@@ -7,17 +16,9 @@ pub struct Args {
     pub start: i64,
     #[arg(value_parser=crate::cli::parse_integer,allow_negative_numbers=true)]
     pub end: i64,
-    #[arg(long = "json", help = "one JSON document using API field names")]
-    pub json: bool,
+    #[command(flatten)]
+    pub output: crate::cli::OutputArgs,
 }
-use crate::{
-    Context, Failure, Result,
-    catalogue::{self, Recipe, catalogue_source, load_catalogue},
-    commands::CommandOutput,
-    document::Document,
-    human,
-    primitives::casefold,
-};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Color {
     Orange,
