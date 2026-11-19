@@ -857,6 +857,34 @@ impl Engine<'_, '_> {
         );
         Ok(())
     }
+    fn reserve_request(&mut self) -> SyncRun<()> {
+        let mut reservation = self.attempt.clone();
+        let requests = self
+            .attempt
+            .view()
+            .requests
+            .checked_add(1)
+            .ok_or_else(mapping::invalid)?;
+        let total = self
+            .pending
+            .view()
+            .total_requests
+            .checked_add(1)
+            .ok_or_else(mapping::invalid)?;
+        reservation.set("requests", Document::from_typed(&requests)?)?;
+        reservation.set("total_requests", Document::from_typed(&total)?)?;
+        reservation.set("last_request_at", iso(self.context.clock.now()))?;
+        self.interrupt
+            .save_attempt(reservation.document(), self.context.clock)?;
+        *self.attempt = reservation;
+        self.pending
+            .set("total_requests", Document::from_typed(&total)?)?;
+        self.result.requests = requests;
+        self.result.total_requests = total;
+        self.last_start = Some(self.context.clock.monotonic());
+        self.checkpoint_interrupt()?;
+        Ok(())
+    }
     fn get(&mut self, path: &str) -> SyncRun<Option<Document>> {
         loop {
             if self.attempt.view().requests >= self.budget.0 {
@@ -894,31 +922,7 @@ impl Engine<'_, '_> {
                     .clock
                     .sleep((INTERVAL - (self.context.clock.monotonic() - last)).max(0.0))?;
             }
-            let mut reservation = self.attempt.clone();
-            let requests = self
-                .attempt
-                .view()
-                .requests
-                .checked_add(1)
-                .ok_or_else(mapping::invalid)?;
-            let total = self
-                .pending
-                .view()
-                .total_requests
-                .checked_add(1)
-                .ok_or_else(mapping::invalid)?;
-            reservation.set("requests", Document::from_typed(&requests)?)?;
-            reservation.set("total_requests", Document::from_typed(&total)?)?;
-            reservation.set("last_request_at", iso(self.context.clock.now()))?;
-            self.interrupt
-                .save_attempt(reservation.document(), self.context.clock)?;
-            *self.attempt = reservation;
-            self.pending
-                .set("total_requests", Document::from_typed(&total)?)?;
-            self.result.requests = requests;
-            self.result.total_requests = total;
-            self.last_start = Some(self.context.clock.monotonic());
-            self.checkpoint_interrupt()?;
+            self.reserve_request()?;
             match self.transport.request(path, self.context) {
                 Ok(raw) => {
                     self.interrupt
