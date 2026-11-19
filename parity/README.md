@@ -1,28 +1,63 @@
 # Differential parity harness
 
-Python 3 standard library only. Run from the repository root:
+The harness compares the Rust binary with the Python reference using loopback
+fixtures. It needs Python 3.11+, curl, and openssl for the TLS instrument.
+Run from the repository root.
+
+## Run every instrument
+
+Build both seam binaries, then run the matrix:
 
 ```sh
-python3 parity/run.py parity/oracle-candidate
-python3 parity/run.py target/debug/everledger --report /tmp/rust-parity.json
-python3 parity/run.py target/debug/everledger --scenario live_checkpoint --scenario 'foreverdb/*502*'
-python3 parity/run.py parity/oracle-candidate --list
-python3 -m unittest parity.test_parity -v
-python3 parity/argv_surface.py target/debug/everledger
-EVERLEDGER_PARITY_ORIGIN=2026-11-15T12:34:56.789012Z python3 parity/run.py target/debug/everledger
+cargo build --features parity-seams --target-dir target/seams
+cargo build --release --features parity-seams --target-dir target/seams
+python3 parity/matrix.py target/seams/debug/everledger target/seams/release/everledger
 ```
 
-The Rust executable needs the `parity-seams` feature. `oracle-candidate` is an
-executable stand-in that runs the read-only Python oracle with those seams.
-The runner exits 1 for any unexplained difference, fixture/assertion failure,
-empty help output, credential leak, or empty scenario selection. It exits 0
-only when every selected step passes. A full run takes roughly two minutes
-on this host; the self-suite runs the full corpus twice.
+`matrix.py` finds the repository from its own location. Its arguments are the
+debug seam binary, the release seam binary, and an optional log directory.
+Binary and log paths are relative to the caller's working directory. Without
+a log directory it creates a temporary one and prints its path. Logs remain
+available when it exits. `MATRIX GREEN` means every selected instrument passes.
+The full run includes long replays and a production-size sync. Concurrent
+matrices can increase its runtime.
 
-Each source test maps to a named scenario. `--list` prints all 96 mappings;
-the report includes the same accounting, selection, and CLI translation notes.
-An inventory check fails if the reference test set changes. All 96 methods
-have CLI equivalents, including the 38 ForeverDB methods that use internals.
+| Instrument | Check |
+| --- | --- |
+| `corpus` | Replay the reference suite through both commands. |
+| `corpus-fractional` | Replay with a fractional clock origin. |
+| `self-suite` | Prove the harness detects deliberately wrong candidates. |
+| `argv-surface` | Compare argument acceptance and request-cap parsing. |
+| `fuzz-read` | Generate random read-command worlds. |
+| `fuzz-read-fractional` | Generate worlds with a fractional clock origin. |
+| `fuzz-sync` | Generate syncs, failures, and budget boundaries. |
+| `damage` | Compare damaged caches and broken HTTP responses. |
+| `interrupts` | Signal syncs and exercise retry delays. |
+| `handoff` | Let each implementation resume the other's files. |
+| `tls` | Verify certificate trust and hostname checks. |
+| `recovery` | Interrupt at every request on both transports. |
+| `scale` | Compare the release build on a production-size fixture. |
+
+Use repeatable `--only NAME` to select instruments. Timed signals and held
+responses can be sensitive to concurrent work; rerun a failed instrument alone
+with `--jobs 1` before treating it as a regression:
+
+```sh
+python3 parity/matrix.py target/seams/debug/everledger target/seams/release/everledger --only recovery --jobs 1
+```
+
+For individual scenarios and argument checks:
+
+```sh
+python3 parity/run.py parity/oracle-candidate --list
+python3 parity/run.py target/seams/debug/everledger --scenario live_checkpoint --scenario 'foreverdb/*502*'
+```
+
+`oracle-candidate` runs the Python reference with the test seams. The replay
+runner exits 1 for an unexplained difference, fixture failure, empty help,
+credential leak, or empty selection. An inventory check maps every reference
+test to a named scenario and fails when that set changes. The report includes
+the inventory and CLI translation notes.
 
 ## Scoreboard and report
 
@@ -35,7 +70,7 @@ have CLI equivalents, including the 38 ForeverDB methods that use internals.
 
 Each sanctioned step prints its exemption class beside each affected field.
 The JSON report includes the table, every step, both complete transcripts, all
-differences, byte ranges with offsets, assertion errors, and the 96-test
+differences, byte ranges with offsets, assertion errors, and the reference-test
 accounting. Bytes use `{"base64": "...", "length": N}` so invalid UTF-8 and
 trailing whitespace survive. Decode with `base64.b64decode(value['base64'])`.
 Request lists retain their order and exact path/query strings. The four logged
@@ -52,17 +87,17 @@ at the default `parity/report.json` location.
 ## Replay and isolation
 
 `corpus.py` loads `python/tests/test_cli.py` as a fixture vocabulary and executes its
-55 test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
+CLI test methods. A subclass replaces `run_cli` and `sync_foreverdb` with paired
 subprocess runs. Original assertions still run against the oracle result;
 assertion failures fail the harness independently of parity. This preserves
 loops, cursor chaining, route changes, file edits, environment edits, and
 invocation order without duplicating the tests' logic. Test fixture `NOW` and
 relative datetime mutations use the virtual origin.
 
-Each scenario owns a new loopback HTTP server, data directory, and optional
+Each scenario owns a separate loopback HTTP server, data directory, and optional
 connector stub directory. Both sides run sequentially at the **same absolute
 paths and port**, with separate persistent snapshots. Fixture edits between
-steps are applied to each side's state, translating only previously paired
+steps are applied to each side's state, translating only paired
 random sync IDs. Every side's resulting snapshot is compared before any
 fixture edit can replace it. Candidate state is never seeded from a completed
 oracle invocation. The alternate human/JSON rendering forks each side's
@@ -129,8 +164,8 @@ fail through the dead proxy. No production service is contacted.
 
 ## Seam contract
 
-The candidate's `parity-seams` build implements these variables. Release
-builds contain none of these overrides:
+The candidate's `parity-seams` build implements these variables. Builds
+without that feature contain none of these overrides:
 
 - `EVERLEDGER_SEAM_NOW`: UTC ISO-8601 origin with `Z` suffix. The corpus uses
   `2026-11-15T12:00:00Z`; `EVERLEDGER_PARITY_ORIGIN` gives the runner another
@@ -159,7 +194,7 @@ values in ForeverDB's `attempt.json`, `pending.json`, and `index.json`, and thei
 Python atomic-write temporary filename suffixes. stdout, stderr, unrelated
 files, and nested payload fields receive no normalization. Sync IDs retain their relationships
 across files and invocations; changing one reference or starting an unexpected
-new sync remains visible. Normalization preserves all other JSON formatting,
+sync remains visible. Normalization preserves all other JSON formatting,
 key order, whitespace, paths, numbers, and timestamps. Temporary-name
 normalization collisions fail the harness.
 
@@ -193,7 +228,7 @@ and checks normalization and allowlist boundaries.
 a candidate and compares how each side classifies them: rejected by the argument
 parser, answered with help, or accepted. It covers missing values, repeated and
 abbreviated options, split positionals, negative numbers, and separators, which
-the replayed tests barely touch. The port types command-line integers as i64 in
+the replayed tests barely touch. The binary types command-line integers as i64 in
 ASCII digits, so a candidate may reject the Unicode-digit and unbounded integers
 that Python's `int()` accepts, and may accept a small integer written in more
 than the 4,300 digits CPython converts; the script reports each such case as
@@ -216,9 +251,6 @@ replayed corpus. The corpus is fixed and can be fitted; the fuzz cannot.
 
 ```sh
 python3 parity/fuzz.py target/seams/debug/everledger --cases 40 --seed 1
-python3 parity/fuzz.py target/seams/debug/everledger --only fuzz-read/1/17 --report /tmp/case.json
-python3 parity/fuzz.py target/seams/debug/everledger --commands events,sales,net
-python3 parity/fuzz.py target/seams/debug/everledger --suite sync --cases 30
 ```
 
 The `sync` suite drives `refresh catalogue` through several attempts per case:
@@ -228,7 +260,7 @@ plain 502, 503, 401, 302, bodies that are not JSON or not the mapped shape),
 and time passing between attempts: none, part of a 24-hour window, more than
 one, or to within a second of the instant a recorded spend expires. Each
 attempt runs under its own daily cap: unset, a value from 1 to 5000 in several
-spellings, or now and then one the CLI refuses. Scripted retry delays run below,
+spellings, or sometimes one the CLI refuses. Scripted retry delays run below,
 at, and above the 300 seconds an attempt will wait. Scripted failures are aimed at the cap's last request and
 the one before it. Every step also asserts the fixture key is absent from
 stdout, stderr, and every file.
@@ -255,12 +287,12 @@ python3 parity/scale.py target/seams/release/everledger
 
 ## Recovery after every request
 
-`scripts/check_foreverdb_recovery.py` kills a sync at each of its six requests,
+`recovery.py` kills a sync at each of its six requests,
 with SIGINT and with SIGKILL, on both transports, and compares what the next
 attempts do with the journal and checkpoint left behind.
 
 ```sh
-python3 scripts/check_foreverdb_recovery.py target/seams/debug/everledger
+python3 parity/recovery.py target/seams/debug/everledger
 ```
 
 ## Interrupts and retry delays
@@ -334,21 +366,19 @@ python3 parity/tls.py target/seams/debug/everledger
 
 ## One data directory, two implementations
 
-During cutover both implementations read and write the same data directory.
-The runner gives each side its own copy of the state, so `handoff.py` covers
-what it cannot: one implementation finishing a sync the other started, in both
-orders, a day apart and back to back under different caps; the one that did not
-publish the index then answering a lookup from it; both reading an index from
-an older build, which still carries the `details` and `sync_requests` blocks
-nothing reads; and one waiting on the sync lock the other holds.
+The binary and Python fallback share a data directory. The replay runner
+gives each side its own state copy, so `handoff.py` checks sequential use of
+one directory: either implementation finishes the other's sync, reads its
+published index, or waits for its sync lock. It exercises different caps both
+back to back and a day apart.
 
-Cutover also hands the port a data directory that earlier builds of the
-reference filled. `handoff.py` takes each commit this port has been pinned to
-out of the clone's history and has it complete a small sync, leave a larger one
-halfway, and cache ninja lookups. The current reference and the candidate then
-read each directory and refresh over it, and must give the same answers and
-leave the same files. `EARLIER` lists the commits; a pin bump adds the commit it
-leaves behind.
+Fallback directories can contain files from earlier reference builds.
+`handoff.py` extracts the commits listed in `EARLIER` from local Git history,
+creates complete and partial syncs, and caches ninja lookups. The current
+reference and candidate must read and refresh each directory with matching
+answers and files. A reference pin update adds the commit it replaces to
+`EARLIER`. Indexes carrying unused `details` and `sync_requests` fields remain
+part of this compatibility check.
 
 ```sh
 python3 parity/handoff.py target/seams/debug/everledger

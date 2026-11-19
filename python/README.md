@@ -1,19 +1,29 @@
 # Python reference and fallback
 
-This directory holds the Python reference the Rust binary is held to and the
-fallback for hosts without the binary. It requires Python 3.11+ and curl.
+This directory holds the Python reference for verifying the Rust binary and
+the fallback for hosts without it. It requires Python 3.11+ and curl.
 
-From the repository root:
+Run it from the repository root:
 
 ```sh
 python/everledger --help
-python/everledger bridge tailoring 1 50
-PYTHONPATH=python python3 -m unittest discover -s python/tests -v
 ```
 
 The executable also runs from any working directory when called by its path.
-Set `EVERLEDGER_DATA_DIR` to the directory holding `catalogue.json` and caches;
-it defaults to `~/.everledger`.
+A wrapper must point at `python/everledger`. It reads the same
+[environment settings](../README.md#environment) and data directory as the
+binary. `EVERLEDGER_DATA_DIR` defaults to `~/.everledger`; the two implementations
+can take turns reading and writing it.
+
+Run the reference tests from the repository root:
+
+```sh
+PYTHONPATH=python python3 -m unittest discover -s python/tests -v
+PYTHONPATH=python /usr/bin/python3.12 -m unittest discover -s python/tests -v
+```
+
+The command reference below is checked against the executable by
+`tests/test_cli.py`.
 
 ```text
 usage: everledger [-h]
