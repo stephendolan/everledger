@@ -62,9 +62,11 @@ def run(baseline, candidate):
                         different += 1
                         a, b = observations
                         depth_change = label in ('depth-127', 'depth-128', 'depth-200') and a[0] == 1 and b[0] == 0 and b'recursion limit exceeded' in a[2] and not a[1] and not b[2]
-                        numeric_change = label in ('nan', 'infinity', 'big-float') and a[0] == b[0] == 1 and not a[1] and not b[1] and b'expected ident' in a[2] and b'expected value' in b[2] and a[3] == b[3]
+                        numeric_change = label in ('nan', 'infinity', 'big-float') and a[0] == b[0] == 1 and not a[1] and not b[1] and a[2] in (b'roster: invalid response shape (expected ident at line 1 column 2)\n', b'roster: invalid response shape (expected value at line 1 column 1)\n') and b[2] == b'roster: invalid response shape (expected value)\n' and a[3] == b[3]
                         sanctioned = location == 'selector-page' and (depth_change or numeric_change)
                         unexpected += not sanctioned
+                        if not sanctioned:
+                            print('  baseline:', repr(a[2]), 'candidate:', repr(b[2]))
                         print(f'{"sanctioned R3" if sanctioned else "UNEXPECTED"} {location}/{label}: '
                               f'exit {observations[0][0]} -> {observations[1][0]}')
             print(f'{total} character/inventory cases, {different} differ, {unexpected} unexpected')
