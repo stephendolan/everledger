@@ -163,7 +163,7 @@ def disclose_item_source(data, item):
 
 def price(args):
     item = item_for(' '.join(args.item))
-    raw, _ = request(f"{AHL}/v1/prices/{MARKET}/{item['id']}")
+    raw, _ = request(f"{AHL}/v1/prices/{MARKET}/{item['id']}", public=True)
     data = json.loads(raw)
     latest, sales = data['latest'], data['sales']
     if latest['quantity'] is not None:
@@ -374,7 +374,7 @@ def status(args):
     vendor_status, vendor_sources = vendors.backend_status()
     if vendor_status['backend'] == vendors.BACKEND:
         try:
-            request(vendors.BASE, vendors.UA)
+            request(vendors.BASE, vendors.UA, public=True)
             vendor_status['state'] = 'reachable'
         except Failure as e:
             vendor_status['state'] = str(e); code=max(code,e.code)
@@ -398,7 +398,7 @@ def refresh(args):
     result=subprocess.run(['bash',str(Path(__file__).resolve().parent/'refresh.sh')],capture_output=True,text=True)
     if result.returncode:
         print(result.stderr or result.stdout,file=sys.stderr)
-        return 4 if 'curl:' in result.stderr else 1
+        return 4 if result.returncode == 4 or 'curl:' in result.stderr else 1
     if result.stderr: print(result.stderr,end='',file=sys.stderr)
     used=[catalogue_source(load_catalogue())]
     vendor_sources, synced = vendors.refresh_cached()

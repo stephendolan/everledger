@@ -36,6 +36,7 @@ matrices can increase its runtime.
 | `interrupts` | Signal syncs and exercise retry delays. |
 | `handoff` | Let each implementation resume the other's files. |
 | `tls` | Verify certificate trust and hostname checks. |
+| `fetch-transport` | Exercise native and curl public fetches, failures, and HTTP status handling. |
 | `recovery` | Interrupt at every request on both transports. |
 | `scale` | Compare the release build on a production-size fixture. |
 
@@ -431,3 +432,13 @@ not match the reference. After changing the fixture, regenerate it:
 ```sh
 python3 parity/captured_roster.py target/seams/debug/everledger --write
 ```
+
+## Public fetch transports
+
+`python3 parity/fetch_transport.py target/debug/everledger` exercises both
+implementations against a local TLS fixture and a stub curl on PATH. It covers
+native success, mid-body disconnection, successful/failed/missing curl, all three
+`EVERLEDGER_FETCH_TRANSPORT` modes, HTTP errors, User-Agents, catalogue bytes and
+vendor headers. The matrix includes this instrument. No live source is used.
+`compare_builds.py` pins `EVERLEDGER_FETCH_TRANSPORT=native` for both builds so
+transport fallback cannot change the existing corpus comparison.

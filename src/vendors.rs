@@ -17,7 +17,7 @@ pub mod status;
 pub const BACKEND: &str = "wowforever.ninja";
 const USER_AGENT: &str = "Mozilla/5.0 (compatible; everledger)";
 pub fn ninja_request(url: impl Into<String>) -> Request {
-    Request::get(url).header("User-Agent", USER_AGENT)
+    Request::public_get(url).header("User-Agent", USER_AGENT)
 }
 #[derive(Clone, Copy)]
 pub(crate) struct CacheAge(i64);

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -70,20 +71,85 @@ def money(value):
     return sign + (' '.join(parts) or '0c')
 
 
-def request(url, headers=None):
-    req = urllib.request.Request(url, headers={'User-Agent': 'everledger', **(headers or {})})
+def curl_request(req):
+    url = req.full_url
+    visits = {}
+    for redirect in range(11):
+        if any(ord(c) <= 32 or ord(c) == 127 for c in url):
+            raise http.client.InvalidURL('URL contains control characters or spaces')
+        parsed = urllib.parse.urlsplit(url)
+        parsed.port
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+            raise ValueError('public fetch URL must be HTTP(S) with a host')
+        args = ['curl', '--disable', '--silent', '--globoff', '--path-as-is',
+                '--connect-timeout', '20', '--max-time', '20', '--proto', '=http,https',
+                '--dump-header', '/dev/stderr', '--write-out', '%{stderr}\n%{http_code}']
+        headers = dict(req.header_items())
+        for name, value in [('Accept-Encoding', 'identity'), ('Connection', 'close')]:
+            if not any(k.lower() == name.lower() for k in headers):
+                headers[name] = value
+        for name, value in headers.items():
+            args += ['--header', name + ': ' + value]
+        result = subprocess.run([*args, '--url', url], capture_output=True)
+        if result.returncode:
+            raise OSError('curl transport failed')
+        headers, status = result.stderr.rsplit(b'\n', 1)
+        status = int(status)
+        if not 100 <= status < 600:
+            raise OSError('curl returned no HTTP status')
+        response_headers = http.client.HTTPMessage()
+        for line in headers.decode('iso-8859-1').splitlines():
+            if line.startswith('HTTP/'):
+                response_headers = http.client.HTTPMessage()
+            elif ':' in line:
+                name, value = line.split(':', 1)
+                response_headers[name] = value.strip()
+        location = next((v for k, v in response_headers.items() if k.lower() == 'location'), None)
+        if status in (301, 302, 303, 307, 308) and location:
+            target = urllib.parse.urljoin(url, location)
+            visits[target] = visits.get(target, 0) + 1
+            if redirect < 10 and visits[target] <= 4:
+                url = target
+                continue
+        return status, result.stdout, response_headers
+
+
+def native_request(req):
     try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return response.status, response.read(), dict(response.headers)
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(), dict(error.headers)
+
+
+def request(url, headers=None, *, public=False):
+    req = urllib.request.Request(url, headers={'User-Agent': 'everledger', **(headers or {})})
+    mode = os.environ.get('EVERLEDGER_FETCH_TRANSPORT', 'auto') if public else 'native'
+    if mode not in ('auto', 'native', 'curl'):
+        raise Failure('EVERLEDGER_FETCH_TRANSPORT must be auto, native, or curl', 2)
+    try:
+        if mode == 'curl':
+            status, raw, response_headers = curl_request(req)
+        else:
+            status, raw, response_headers = native_request(req)
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as error:
+        original = Failure(f'{url}: source unreachable ({error})', 4)
+        local = isinstance(error, http.client.InvalidURL) or (isinstance(error, urllib.error.URLError)
+                and isinstance(error.reason, (str, ValueError)))
+        if mode != 'auto' or local:
+            raise original from error
         try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                return response.read(), dict(response.headers)
-        except urllib.error.HTTPError as e:
-            try:
-                body = json.loads(e.read())
-            except (ValueError, UnicodeDecodeError):
-                body = None
-            raise Failure(f'{url}: HTTP {e.code}', 2 if e.code in (400, 422) else 1 if e.code in (404, 409) else 4, {'status': e.code, 'response': body}) from e
-    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
-        raise Failure(f'{url}: source unreachable ({e})', 4) from e
+            status, raw, response_headers = curl_request(req)
+        except (OSError, ValueError):
+            raise original from error
+    if not 200 <= status < 300:
+        try:
+            body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        raise Failure(f'{url}: HTTP {status}', 2 if status in (400, 422) else 1 if status in (404, 409) else 4,
+                      {'status': status, 'response': body})
+    return raw, response_headers
 
 
 def roster(path, params=None):
@@ -234,7 +300,7 @@ def item_basis(row):
 
 
 def market_table():
-    raw, _ = request(f'{AHL}/v1/pricetable/{MARKET}')
+    raw, _ = request(f'{AHL}/v1/pricetable/{MARKET}', public=True)
     lines = raw.decode().splitlines()
     head = lines[0].split('|')
     prices = {}

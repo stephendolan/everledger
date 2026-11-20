@@ -108,6 +108,7 @@ def suites(binary, out, side):
 def run(repo, out, side, name, argv, extra):
     env = {k: v for k, v in os.environ.items() if not k.startswith('EVERLEDGER_')}
     env.update(extra)
+    env['EVERLEDGER_FETCH_TRANSPORT'] = 'native'
     with (out / f'{name}.{side}.log').open('wb') as log:
         code = subprocess.run(argv, cwd=repo, env=env, stdout=log, stderr=subprocess.STDOUT).returncode
     return side, name, code

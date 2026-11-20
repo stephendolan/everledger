@@ -18,7 +18,7 @@ pub struct Price {
 }
 pub type PriceTable = BTreeMap<i64, Price>;
 pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
-    let raw = context.http.request(&Request::get(format!(
+    let raw = context.http.request(&Request::public_get(format!(
         "{}/v1/pricetable/{}",
         context.config.ahledger_url, context.config.market
     )))?;

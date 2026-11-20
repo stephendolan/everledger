@@ -72,6 +72,13 @@ and ends with a source summary. Exit codes are:
 
 ## Environment
 
+Public AHledger and wowforever.ninja fetches retry once through `curl` on PATH
+when the native connection fails, times out, or disconnects before the body is
+complete. HTTP responses keep their usual status handling, including errors.
+Missing or failed curl preserves the original unreachable error. Curl keeps the
+source's User-Agent and body bytes and uses a 20-second transfer timeout.
+
+
 Set variables in the process environment. [.env.example](.env.example) lists
 the same settings; the binary does not load that file itself.
 
@@ -84,6 +91,7 @@ the same settings; the binary does not load that file itself.
 | `EVERLEDGER_ROSTER_TOKEN_FILE` | Unset | File containing the bearer token. |
 | `EVERLEDGER_MARKET` | `forever.pvp.alliance.us` | AHledger market. |
 | `EVERLEDGER_AHLEDGER_URL` | `https://api.ahledger.com` | AHledger base URL override. |
+| `EVERLEDGER_FETCH_TRANSPORT` | `auto` | Public-source HTTP(S): `auto` tries native, then curl once on a transport failure; `native` disables fallback; `curl` uses curl first. Roster and ForeverDB are unaffected. |
 | `EVERLEDGER_VENDOR_URL` | `https://wowforever.ninja` | Recipe and ninja vendor source URL override. |
 | `EVERLEDGER_FOREVERDB_API_KEY` | Unset | ForeverDB key; a nonblank value takes precedence over the key file. |
 | `EVERLEDGER_FOREVERDB_API_KEY_FILE` | `$EVERLEDGER_DATA_DIR/foreverdb-api-key` | File containing the ForeverDB key. |

@@ -55,10 +55,12 @@ pub struct RoundedQuote {
 }
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let item = crate::catalogue::item_for(&args.item.join(" "), context)?;
-    let response = context.http.request(&crate::http::Request::get(format!(
-        "{}/v1/prices/{}/{}",
-        context.config.ahledger_url, context.config.market, item.id
-    )))?;
+    let response = context
+        .http
+        .request(&crate::http::Request::public_get(format!(
+            "{}/v1/prices/{}/{}",
+            context.config.ahledger_url, context.config.market, item.id
+        )))?;
     let data: Payload<MarketQuote> =
         Payload::decode(crate::http::decode_body(&response.body)?, "AHledger quote")?;
     let v = data.view();

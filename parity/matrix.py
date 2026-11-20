@@ -41,6 +41,7 @@ def instruments(candidate, release, logs):
         ('interrupts', [py, 'parity/interrupts.py', candidate], {}),
         ('handoff', [py, 'parity/handoff.py', candidate], {}),
         ('tls', [py, 'parity/tls.py', candidate], {}),
+        ('fetch-transport', [py, 'parity/fetch_transport.py', candidate], {}),
         ('recovery', [py, 'parity/recovery.py', candidate], {}),
         ('scale', [py, 'parity/scale.py', release], {}),
     ]

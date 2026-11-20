@@ -3,13 +3,14 @@ use crate::{
     ExitCode, Failure, Result,
     document::{Document, parse},
 };
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, process::Command, time::Duration};
 
 #[derive(Clone, Debug)]
 pub struct Request {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub redirects: Redirects,
+    pub public: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Redirects {
@@ -22,6 +23,13 @@ impl Request {
             url: url.into(),
             headers: vec![],
             redirects: Redirects::Follow,
+            public: false,
+        }
+    }
+    pub fn public_get(url: impl Into<String>) -> Self {
+        Self {
+            public: true,
+            ..Self::get(url)
         }
     }
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
@@ -78,139 +86,307 @@ fn env_proxy(scheme: &str, host: &str, port: Option<u16>) -> Result<Option<ureq:
         })
         .transpose()
 }
-impl Http for UreqHttp {
-    fn request(&self, request: &Request) -> Result<Response> {
-        let mut url = request.url.clone();
-        #[cfg(feature = "parity-seams")]
-        {
-            let uri: ureq::http::Uri = url
-                .parse()
-                .map_err(|e| Failure::unreachable(format!("invalid URL: {e}")))?;
-            if uri.host() == Some("foreverdb.net") {
-                let base = std::env::var("EVERLEDGER_SEAM_FOREVERDB_URL").map_err(|_| {
-                    Failure::unreachable("ForeverDB disabled without EVERLEDGER_SEAM_FOREVERDB_URL")
-                })?;
-                url = format!(
-                    "{}{}",
-                    base.trim_end_matches('/'),
-                    uri.path_and_query().map_or("/", |p| p.as_str())
-                );
-            }
-        }
-        let mut visits = HashMap::<String, u32>::new();
-        for redirect in 0..=10 {
-            let uri: ureq::http::Uri = url.parse().map_err(|e| {
-                Failure::unreachable(format!("{}: source unreachable ({e})", request.url))
-            })?;
-            let proxy = env_proxy(
-                uri.scheme_str().unwrap_or("http"),
-                uri.host().unwrap_or(""),
-                uri.port_u16(),
-            )?;
-            let forward = uri.scheme_str() == Some("http")
-                && proxy.as_ref().is_some_and(|p| {
-                    matches!(
-                        p.protocol(),
-                        ureq::ProxyProtocol::Http | ureq::ProxyProtocol::Https
-                    )
-                });
-            let config = ureq::Agent::config_builder()
-                .http_status_as_error(false)
-                .max_redirects(0)
-                .timeout_connect(Some(Duration::from_secs(20)))
-                .timeout_per_read(Some(Duration::from_secs(20)))
-                .timeout_per_write(Some(Duration::from_secs(20)))
-                .tls_config(
-                    ureq::tls::TlsConfig::builder()
-                        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-                        .build(),
-                )
-                .proxy(if forward { None } else { proxy.clone() })
-                .build();
-            let agent: ureq::Agent = if forward {
-                forward::agent(config, proxy.as_ref().unwrap())
-            } else {
-                config.into()
-            };
-            let mut req = agent.get(&url);
-            for (name, value) in [
-                ("User-Agent", "everledger"),
-                ("Accept-Encoding", "identity"),
-                ("Connection", "close"),
-            ] {
-                if !request
-                    .headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case(name))
-                {
-                    req = req.header(name, value);
-                }
-            }
-            if forward
-                && let Some(proxy) = &proxy
-                && let Some(user) = proxy.username()
-            {
-                let auth = format!("{user}:{}", proxy.password().unwrap_or(""));
-                let encoded = crate::primitives::base64_encode(auth.as_bytes())
-                    .replace('-', "+")
-                    .replace('_', "/");
-                req = req.header("Proxy-Authorization", format!("Basic {encoded}"));
-            }
-            for (name, value) in &request.headers {
-                req = req.header(name, value);
-            }
-            let mut response = req.call().map_err(|e| {
-                Failure::unreachable(format!("{}: source unreachable ({e})", request.url))
-            })?;
-            let status = response.status().as_u16();
-            if matches!(status, 301 | 302 | 303 | 307 | 308)
-                && request.redirects == Redirects::Follow
-                && let Some(location) = response
-                    .headers()
-                    .get("location")
-                    .and_then(|h| h.to_str().ok())
-            {
-                let next = resolve_url(&url, location)?;
-                let count = visits.entry(next.clone()).or_default();
-                *count += 1;
-                if redirect < 10 && *count < 4 {
-                    url = next;
-                    continue;
-                }
-            }
-            let headers = response
-                .headers()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").into()))
-                .collect();
-            let body = response
-                .body_mut()
+struct WireResponse {
+    status: u16,
+    body: ResponseBody,
+    headers: Vec<(String, String)>,
+}
+enum ResponseBody {
+    Native(ureq::Body),
+    Curl(Vec<u8>),
+}
+impl ResponseBody {
+    fn read(self, request: &Request) -> std::result::Result<Vec<u8>, FetchError> {
+        match self {
+            Self::Native(mut body) => body
                 .with_config()
                 .limit(u64::MAX)
                 .read_to_vec()
-                .map_err(|e| {
-                    Failure::unreachable(format!("{}: source unreachable ({e})", request.url))
-                })?;
-            if !(200..300).contains(&status) {
-                let decoded = decode_body(&body).unwrap_or(Document::Null);
-                let code = match status {
-                    400 | 422 => ExitCode::Usage,
-                    404 | 409 => ExitCode::Error,
-                    _ => ExitCode::Unreachable,
-                };
-                return Err(Failure {
-                    message: format!("{}: HTTP {status}", request.url),
-                    code,
-                    body: Some(Document::object([
-                        ("status", Document::from(i64::from(status))),
-                        ("response", decoded),
-                    ])),
-                });
-            }
-            return Ok(Response { body, headers });
+                .map_err(|e| FetchError::native(request, e)),
+            Self::Curl(body) => Ok(body),
         }
-        unreachable!("redirect loop returns an HTTP error")
     }
+}
+struct FetchError {
+    failure: Failure,
+    retry: bool,
+}
+impl FetchError {
+    fn local(failure: Failure) -> Self {
+        Self {
+            failure,
+            retry: false,
+        }
+    }
+    fn native(request: &Request, error: ureq::Error) -> Self {
+        let retry = matches!(
+            error,
+            ureq::Error::Io(_)
+                | ureq::Error::Protocol(_)
+                | ureq::Error::Timeout(_)
+                | ureq::Error::HostNotFound
+                | ureq::Error::ConnectionFailed
+                | ureq::Error::Tls(_)
+                | ureq::Error::Rustls(_)
+                | ureq::Error::ConnectProxyFailed(_)
+        );
+        Self {
+            failure: Failure::unreachable(format!("{}: source unreachable ({error})", request.url)),
+            retry,
+        }
+    }
+}
+impl Http for UreqHttp {
+    fn request(&self, request: &Request) -> Result<Response> {
+        let mode = if request.public {
+            std::env::var("EVERLEDGER_FETCH_TRANSPORT").unwrap_or_else(|_| "auto".into())
+        } else {
+            "native".into()
+        };
+        if !matches!(mode.as_str(), "auto" | "native" | "curl") {
+            return Err(Failure::usage(
+                "EVERLEDGER_FETCH_TRANSPORT must be auto, native, or curl",
+            ));
+        }
+        match fetch(request, mode == "curl") {
+            Ok(response) => Ok(response),
+            Err(original) => {
+                if mode == "auto" && original.retry {
+                    match fetch(request, true) {
+                        Ok(response) => return Ok(response),
+                        Err(error) if error.failure.body.is_some() => return Err(error.failure),
+                        Err(_) => {}
+                    }
+                }
+                Err(original.failure)
+            }
+        }
+    }
+}
+fn native_get(
+    request: &Request,
+    url: &str,
+    uri: &ureq::http::Uri,
+) -> std::result::Result<WireResponse, FetchError> {
+    let proxy = env_proxy(
+        uri.scheme_str().unwrap_or("http"),
+        uri.host().unwrap_or(""),
+        uri.port_u16(),
+    )
+    .map_err(FetchError::local)?;
+    let forward = uri.scheme_str() == Some("http")
+        && proxy.as_ref().is_some_and(|p| {
+            matches!(
+                p.protocol(),
+                ureq::ProxyProtocol::Http | ureq::ProxyProtocol::Https
+            )
+        });
+    let config = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .timeout_connect(Some(Duration::from_secs(20)))
+        .timeout_per_read(Some(Duration::from_secs(20)))
+        .timeout_per_write(Some(Duration::from_secs(20)))
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .proxy(if forward { None } else { proxy.clone() })
+        .build();
+    let agent: ureq::Agent = if forward {
+        forward::agent(config, proxy.as_ref().unwrap())
+    } else {
+        config.into()
+    };
+    let mut req = agent.get(url);
+    for (name, value) in request_headers(request) {
+        req = req.header(name, value);
+    }
+    if forward
+        && let Some(proxy) = &proxy
+        && let Some(user) = proxy.username()
+    {
+        let auth = format!("{user}:{}", proxy.password().unwrap_or(""));
+        let encoded = crate::primitives::base64_encode(auth.as_bytes())
+            .replace('-', "+")
+            .replace('_', "/");
+        req = req.header("Proxy-Authorization", format!("Basic {encoded}"));
+    }
+    let response = req.call().map_err(|e| FetchError::native(request, e))?;
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").into()))
+        .collect();
+    Ok(WireResponse {
+        status,
+        body: ResponseBody::Native(response.into_body()),
+        headers,
+    })
+}
+fn curl_get(request: &Request, url: &str) -> std::result::Result<WireResponse, FetchError> {
+    let failed = || FetchError {
+        failure: Failure::unreachable(format!(
+            "{}: source unreachable (curl transport failed)",
+            request.url
+        )),
+        retry: true,
+    };
+    let mut command = Command::new("curl");
+    command.args([
+        "--disable",
+        "--silent",
+        "--globoff",
+        "--path-as-is",
+        "--connect-timeout",
+        "20",
+        "--max-time",
+        "20",
+        "--proto",
+        "=http,https",
+        "--dump-header",
+        "/dev/stderr",
+        "--write-out",
+        "%{stderr}\n%{http_code}",
+    ]);
+    for (name, value) in request_headers(request) {
+        command.arg("--header").arg(format!("{name}: {value}"));
+    }
+    let output = command
+        .arg("--url")
+        .arg(url)
+        .output()
+        .map_err(|_| failed())?;
+    if !output.status.success() {
+        return Err(failed());
+    }
+    let split = output
+        .stderr
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .ok_or_else(failed)?;
+    let (headers, status) = (&output.stderr[..split], &output.stderr[split + 1..]);
+    let status: u16 = std::str::from_utf8(status)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|s| (100..600).contains(s))
+        .ok_or_else(failed)?;
+    let mut parsed = Vec::new();
+    for line in String::from_utf8_lossy(headers).lines() {
+        if line.starts_with("HTTP/") {
+            parsed.clear();
+        } else if let Some((name, value)) = line.split_once(':') {
+            parsed.push((name.to_owned(), value.trim().to_owned()));
+        }
+    }
+    Ok(WireResponse {
+        status,
+        body: ResponseBody::Curl(output.stdout),
+        headers: parsed,
+    })
+}
+fn request_headers(request: &Request) -> Vec<(&str, &str)> {
+    let mut headers: Vec<_> = request
+        .headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    for (name, value) in [
+        ("User-Agent", "everledger"),
+        ("Accept-Encoding", "identity"),
+        ("Connection", "close"),
+    ] {
+        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(name)) {
+            headers.push((name, value));
+        }
+    }
+    headers
+}
+fn fetch(request: &Request, curl: bool) -> std::result::Result<Response, FetchError> {
+    let mut url = request.url.clone();
+    #[cfg(feature = "parity-seams")]
+    {
+        let uri: ureq::http::Uri = url
+            .parse()
+            .map_err(|e| FetchError::local(Failure::unreachable(format!("invalid URL: {e}"))))?;
+        if uri.host() == Some("foreverdb.net") {
+            let base = std::env::var("EVERLEDGER_SEAM_FOREVERDB_URL").map_err(|_| {
+                FetchError::local(Failure::unreachable(
+                    "ForeverDB disabled without EVERLEDGER_SEAM_FOREVERDB_URL",
+                ))
+            })?;
+            url = format!(
+                "{}{}",
+                base.trim_end_matches('/'),
+                uri.path_and_query().map_or("/", |p| p.as_str())
+            );
+        }
+    }
+    let mut visits = HashMap::<String, u32>::new();
+    for redirect in 0..=10 {
+        let uri: ureq::http::Uri = url.parse().map_err(|e| {
+            FetchError::local(Failure::unreachable(format!(
+                "{}: source unreachable ({e})",
+                request.url
+            )))
+        })?;
+        let response = if curl {
+            let mut builder = ureq::http::Request::builder().uri(url.as_str());
+            for (name, value) in request_headers(request) {
+                builder = builder.header(name, value);
+            }
+            builder
+                .body(())
+                .map_err(|e| FetchError::native(request, ureq::Error::Http(e)))?;
+            if !matches!(uri.scheme_str(), Some("http" | "https")) || uri.host().is_none() {
+                return Err(FetchError::native(request, ureq::Error::BadUri(url)));
+            }
+            curl_get(request, &url)?
+        } else {
+            native_get(request, &url, &uri)?
+        };
+        let status = response.status;
+        if matches!(status, 301 | 302 | 303 | 307 | 308)
+            && request.redirects == Redirects::Follow
+            && let Some(location) = response
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("location"))
+                .map(|(_, v)| v.as_str())
+        {
+            let next = resolve_url(&url, location).map_err(FetchError::local)?;
+            let count = visits.entry(next.clone()).or_default();
+            *count += 1;
+            if redirect < 10 && *count < 4 {
+                url = next;
+                continue;
+            }
+        }
+        let body = response.body.read(request)?;
+        if !(200..300).contains(&status) {
+            let decoded = decode_body(&body).unwrap_or(Document::Null);
+            let code = match status {
+                400 | 422 => ExitCode::Usage,
+                404 | 409 => ExitCode::Error,
+                _ => ExitCode::Unreachable,
+            };
+            return Err(FetchError::local(Failure {
+                message: format!("{}: HTTP {status}", request.url),
+                code,
+                body: Some(Document::object([
+                    ("status", Document::from(i64::from(status))),
+                    ("response", decoded),
+                ])),
+            }));
+        }
+        return Ok(Response {
+            body,
+            headers: response.headers,
+        });
+    }
+    unreachable!("redirect loop returns an HTTP error")
 }
 pub fn decode_body(body: &[u8]) -> Result<Document> {
     let bytes = body.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(body);

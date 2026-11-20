@@ -128,7 +128,7 @@ pub fn build(context: &Context<'_>) -> Result<Catalogue> {
     let raw_dir = context.config.data_dir.join("raw");
     std::fs::create_dir_all(&raw_dir)?;
     for profession in PROFESSIONS {
-        let request = Request::get(format!(
+        let request = Request::public_get(format!(
             "{}/professions/{profession}/",
             context.config.vendor_url
         ))

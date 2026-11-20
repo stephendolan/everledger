@@ -54,7 +54,7 @@ def normalize(pins):
 def fetch_ninja(item_id):
     def get(suffix):
         try:
-            raw, headers = request(f'{BASE}/items/{item_id}.{suffix}', UA)
+            raw, headers = request(f'{BASE}/items/{item_id}.{suffix}', UA, public=True)
             return json.loads(raw), headers
         except Failure as e:
             if e.body and e.body.get('status') == 404:

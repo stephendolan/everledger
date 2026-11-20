@@ -14,7 +14,11 @@ The executable also runs from any working directory when called by its path.
 A wrapper must point at `python/everledger`. It reads the same
 [environment settings](../README.md#environment) and data directory as the
 binary. `EVERLEDGER_DATA_DIR` defaults to `~/.everledger`; the two implementations
-can take turns reading and writing it.
+can take turns reading and writing it. `EVERLEDGER_FETCH_TRANSPORT=auto|native|curl`
+controls AHledger and ninja fetches, including catalogue downloads: `auto` retries
+native transport failures once through curl; `native` disables fallback; `curl`
+uses curl first. Completed HTTP errors never trigger fallback. Missing or failed
+curl preserves the original unreachable error. Roster and ForeverDB are unaffected.
 
 Run the reference tests from the repository root, under each interpreter the
 fallback has to run on:

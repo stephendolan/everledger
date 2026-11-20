@@ -167,6 +167,19 @@ Python process that calls the `dynamic_credentials` helper and performs the
 request itself. The helper may replace the request rather than add a header to
 it, and the surrogate credential never enters the Rust process.
 
+## Public-source transport
+
+`Request::public_get` marks Rust's AHledger quote and pricetable, ninja item and
+pins, vendor status probe, and profession-page requests. Python marks the same
+requests with `public=True`; `refresh.sh` downloads each profession page through
+`everledger_fetch.py` and the shared core request function.
+`EVERLEDGER_FETCH_TRANSPORT` selects native, curl, or the default auto fallback.
+Only native transport errors trigger the single curl attempt. HTTP statuses and
+local request errors do not. Both transports feed the same status/body handling;
+failed or absent curl retains the original native error. Roster and ForeverDB
+requests do not opt in. AHledger item-name resolution currently uses the local
+catalogue or quote response; there is no separate `/v1/items` fetch.
+
 ## Verification
 
 `cargo test` runs unit and integration tests, golden vectors, the oracle probe,
