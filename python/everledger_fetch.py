@@ -9,4 +9,4 @@ if __name__ == '__main__':
         Path(sys.argv[2]).write_bytes(body)
     except Failure as error:
         print(f'catalogue page fetch failed: {error}', file=sys.stderr)
-        sys.exit(error.code)
+        sys.exit(4)

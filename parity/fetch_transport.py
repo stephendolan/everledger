@@ -192,6 +192,18 @@ def main():
                     check(all(fallback[f] == native[f] for f in FIELDS) and len(calls) == 1,
                           f'{name} curl HTTP {status} uses native status/body handling')
                     routes[path] = (status, {'error': 'canned'})
+            page = '/professions/alchemy/'
+            for status in (400, 404, 409, 422, 429, 503):
+                routes[page] = (status, {'error': 'page unavailable'})
+                canned[page] = dict(status=status, body=base64.b64encode(b'{"error": "page unavailable"}').decode(), headers={})
+                for name, command in [('Python', [sys.executable, str(ROOT / 'parity/oracle.py')]), ('Rust', candidate)]:
+                    native, calls = capture(command, ['refresh', 'catalogue', '--json'])
+                    check(native['exit_code'] == 4 and not calls, f'{name} catalogue HTTP {status} keeps exit4 and skips fallback')
+                    routes[page] = (200, PARTIAL)
+                    fallback, calls = capture(command, ['refresh', 'catalogue', '--json'])
+                    check(all(fallback[f] == native[f] for f in FIELDS) and len(calls) == 1,
+                          f'{name} catalogue curl HTTP {status} keeps native behavior')
+                    routes[page] = (status, {'error': 'page unavailable'})
             print(f'{checks} checks passed')
     finally:
         scenario.close()
