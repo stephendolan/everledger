@@ -29,15 +29,15 @@ if mode in ('request-order', 'query', 'cooldown'):
             return value
         db.json = types.SimpleNamespace(loads=loads, dump=json.dump)
 
-    def request(url, headers=None):
+    def request(url, headers=None, **kwargs):
         if mode == 'query' and '/events?' in url:
-            return original(url + '&unexpected=1', headers)
+            return original(url + '&unexpected=1', headers, **kwargs)
         if mode == 'request-order':
             if url.endswith('/items/2604.json'):
-                saved['pins'] = original(url.replace('/2604.json', '/2604.pins.json'), headers)
+                saved['pins'] = original(url.replace('/2604.json', '/2604.pins.json'), headers, **kwargs)
             elif url.endswith('/items/2604.pins.json') and 'pins' in saved:
                 return saved.pop('pins')
-        return original(url, headers)
+        return original(url, headers, **kwargs)
 
     core.request = request
     sys.argv = [sys.argv[0], *args]

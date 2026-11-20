@@ -450,3 +450,9 @@ reproduces deployed SHA-256
 `843f0ad4931fa6f14c1a25a2c0cac493d781c0fe7b63d74a353120cf74e4dbbe`.
 Its seam build supplies the deterministic baseline for native build comparisons;
 the production binary does not enable the harness's clock controls.
+
+The malformed-response instrument `damage.py` pins native transport. Its strict
+request-count rules describe the native parsers, including cases where Python
+accepts an incomplete header and Rust refuses it. Transport fallback would add
+requests on only one side of those intentionally different outcomes. The
+`fetch-transport` instrument explicitly exercises auto and curl behavior instead.

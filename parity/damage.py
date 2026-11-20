@@ -276,6 +276,7 @@ def main():
     engine = Engine(candidate, both=False)
     module = load_cli()
     scenario = DBScenario(engine, module, 'damage')
+    scenario.env['EVERLEDGER_FETCH_TRANSPORT'] = 'native'
     try:
         fresh = snapshot(scenario.root)
 
