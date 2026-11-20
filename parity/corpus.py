@@ -15,7 +15,7 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
-ORACLE_COMMIT = '6f72b44'
+ORACLE_COMMIT = '0415edd2ef03e6c66da16cedeb6041355af09438'
 CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 
 

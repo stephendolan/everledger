@@ -17,9 +17,9 @@ from parity.run import run
 
 class Reference(unittest.TestCase):
     def test_implementation_matches_oracle_commit(self):
-        for name in ORACLE_FILES:
+        for name in (*ORACLE_FILES, 'everledger_fetch.py'):
             with self.subTest(file=name):
-                original = subprocess.run(['git', 'show', f'{ORACLE_COMMIT}:{name}'],
+                original = subprocess.run(['git', 'show', f'{ORACLE_COMMIT}:python/{name}'],
                                           cwd=ROOT, capture_output=True, check=True).stdout
                 self.assertEqual((ROOT / 'python' / name).read_bytes(), original)
 

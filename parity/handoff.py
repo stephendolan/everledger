@@ -62,7 +62,7 @@ REFRESH = ['refresh', 'catalogue', '--json']
 LOOKUPS = (['vendors', '2604', '--json'], ['vendors', '2604'])
 STATUS = ['status', '--json']
 # Each commit of the reference this port has been pinned to before the present one, oldest first.
-EARLIER = ('32f05ab', 'b24e183', 'd28214c')
+EARLIER = ('32f05ab', 'b24e183', 'd28214c', '6f72b44')
 # The first build whose ForeverDB module the clock shim can load; ninja cache files have kept their shape since.
 FIRST_CACHE = '4b3d1c2'
 KEY = 'EVERLEDGER_FOREVERDB_API_KEY'

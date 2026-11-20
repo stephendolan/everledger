@@ -442,3 +442,11 @@ native success, mid-body disconnection, successful/failed/missing curl, all thre
 vendor headers. The matrix includes this instrument. No live source is used.
 `compare_builds.py` pins `EVERLEDGER_FETCH_TRANSPORT=native` for both builds so
 transport fallback cannot change the existing corpus comparison.
+
+The reference integrity check pins the public-fetch update at `0415edd`;
+`handoff.py` retains the preceding `6f72b44` reference in its historical cache
+compatibility checks. The pre-change source `a482a49`, rebuilt for static musl,
+reproduces deployed SHA-256
+`843f0ad4931fa6f14c1a25a2c0cac493d781c0fe7b63d74a353120cf74e4dbbe`.
+Its seam build supplies the deterministic baseline for native build comparisons;
+the production binary does not enable the harness's clock controls.
