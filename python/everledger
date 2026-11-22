@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """everledger: WoW Forever prices, catalogue, vendors, characters and outcomes."""
 import argparse
+from collections import Counter
 import contextlib
 import io
 import json
@@ -9,7 +10,7 @@ import subprocess
 import sys
 
 from everledger_core import (AHL, MARKET, Failure, age, catalogue_source,
-    character_path, emit, human, load_catalogue, market_table, money,
+    character_path, emit, human, load_catalogue, market_table, money, planning_margin,
     recipes, request, resolve_item, roster, source, sources, is_stale)
 import everledger_catalogue as catalogue
 import everledger_outcomes as outcomes
@@ -255,8 +256,9 @@ def margins(args):
     profs = [args.profession.casefold()] if args.profession else list(cat['professions'])
     if any(p not in cat['professions'] for p in profs):
         raise Failure('unknown profession; choose ' + ', '.join(cat['professions']),2)
-    prices, ms = market_table()
+    prices, ms = market_table(include_history=True)
     used.append(ms)
+    recipe_counts = Counter(r['spell_id'] for _, r in recipes(cat))
     rows = []
     for prof in profs:
         skill = args.level
@@ -274,24 +276,33 @@ def margins(args):
         for r in cat['professions'][prof]['recipes']:
             if known is not None and r['spell_id'] not in known or skill is not None and r['bands']['learn'] > skill:
                 continue
-            rp = prices.get(r['result']['item_id'],{})
-            if rp.get('median_copper') is None:
-                continue
-            reagents = []
-            for x in r['reagents']:
-                cost = prices.get(x['item_id'],{}).get('median_copper')
-                reagents.append({**x,'unit_copper':cost,'basis':'AHledger'})
-            if any(x['unit_copper'] is None for x in reagents):
-                continue
-            cost = sum(x['unit_copper']*x['qty'] for x in reagents)
-            margin = round(rp['median_copper'] * r['result']['qty'] * 0.95) - cost
-            rows.append({'name':r['name'],'profession':prof,'spell_id':r['spell_id'],
-                'color':catalogue.color_at(r['bands'],skill) if skill is not None else None,
-                'margin_copper':margin,'cost_copper':cost,'sells_copper':rp['median_copper'],
-                'sales_per_day':rp['sales_per_day'],'reagents':reagents,'source_type':r['source_type']})
-    rows.sort(key=lambda r: ({'orange':0,'yellow':1,'green':2,'grey':3}.get(r['color'],4),-(r['margin_copper']*(r['sales_per_day'] or 0) if r['margin_copper']>0 else r['margin_copper'])))
-    rows=rows[:15]
-    return emit({'margins':rows,'sources':used},[f"{r['name']} [{r['profession']}] {human(r['color'])} | margin {money(r['margin_copper'])} | cost {money(r['cost_copper'])} | sells {money(r['sells_copper'])} | {str(r['sales_per_day']) + '/day' if r['sales_per_day'] is not None else 'sales/day unknown'} | {human(r['source_type'])}" for r in rows] or ['no priced recipes'],args.json,stale=is_stale(used))
+            result = planning_margin(r, prices, ambiguous=recipe_counts[r['spell_id']] > 1)
+            rows.append({'name': r['name'], 'profession': prof, 'spell_id': r['spell_id'],
+                         'color': catalogue.color_at(r['bands'], skill) if skill is not None else None,
+                         **result, 'source_type': r['source_type']})
+
+    def rank(row):
+        margin = row['margin_copper']
+        color = {'orange': 0, 'yellow': 1, 'green': 2, 'grey': 3}.get(row['color'], 4)
+        score = margin * row['sales_per_day'] if margin is not None and margin > 0 else (margin or 0)
+        return margin is None, color, -score
+
+    rows.sort(key=rank)
+    return emit({'margins': rows, 'sources': used}, [render_margin(r) for r in rows]
+                or ['no matching recipes'], args.json, stale=is_stale(used))
+
+
+def render_margin(row):
+    margin = money(row['margin_copper'])
+    if row['unavailable_reason']:
+        margin += f" ({row['unavailable_reason'].replace('_', ' ')})"
+    basis = {'current_floor': 'current floor', 'current_median': 'current median',
+             '7d_median': '7-day median'}.get(row['price_basis'])
+    sell = money(row['sells_copper']) + (f' ({basis})' if basis else '')
+    sales = f"{row['sales_per_day']}/day" if row['sales_per_day'] is not None else 'sales/day unknown'
+    return (f"{row['name']} [{row['profession']}] {human(row['color'])} | planning margin {margin} "
+            f"| current reagent cost {money(row['cost_copper'])} | planning sell {sell} | {sales} "
+            f"| {human(row['source_type'])}")
 
 
 def char(args):
