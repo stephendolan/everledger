@@ -15,7 +15,7 @@ from parity.engine import ORIGIN, ROOT
 from parity.fixture import Fixture
 
 
-ORACLE_COMMIT = '0415edd2ef03e6c66da16cedeb6041355af09438'
+ORACLE_COMMIT = '5d48d3324f88c8b1d3ba1795e14a8d16ab67a338'
 CAP = 'EVERLEDGER_FOREVERDB_DAILY_REQUESTS'
 
 
@@ -92,12 +92,12 @@ TRANSLATIONS = {
 def accounting(module):
     names = sorted(name[5:] for name in dir(module.CLI) if name.startswith('test_'))
     rows = [{'test': 'CLI.test_' + name, 'scenarios': ['cli/' + name], 'not_cli_observable': None} for name in names]
-    # Detect both additions and removals, rather than silently printing 96.
+    # Detect both additions and removals, rather than silently printing the old count.
     import ast
     tree = ast.parse((ROOT / 'python/tests/test_foreverdb.py').read_text())
     owners = {node.name[5:]: owner.name for owner in tree.body if isinstance(owner, ast.ClassDef)
               for node in owner.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')}
-    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 96:
+    if set(owners) != set(INTERNAL) or len(rows) + len(INTERNAL) != 97:
         raise ValueError('test inventory drift: update the corpus accounting')
     rows += [{'test': owners[name] + '.test_' + name, 'scenarios': ['foreverdb/' + name], 'not_cli_observable': None} for name in INTERNAL]
     return rows

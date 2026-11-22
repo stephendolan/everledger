@@ -540,7 +540,7 @@ class CLI(unittest.TestCase):
         when = '2020-01-01T00:00:00Z' if stale else NOW
         stamp = int(datetime.datetime.fromisoformat(when.replace('Z','+00:00')).timestamp())
         Handler.routes['/v1/pricetable/forever.pvp.alliance.us'] = (200,
-            f'market|version|{stamp}|2\n2604:88:87:709:::::3808\n100:200:190:2:::::10')
+            f'market|version|{stamp}|2\n2604:88:87:709:::::3808\n100:200:190:2:180::::10')
         Handler.routes['/v1/prices/forever.pvp.alliance.us/2604'] = (200, {
             'item': {'id':2604,'name':'Red Dye'}, 'latest':{'observedAt':when,
             'median':88,'minBuyout':87,'median7d':92,'quantity':709,'auctions':13},
@@ -604,8 +604,8 @@ class CLI(unittest.TestCase):
         self.assertIn('listed 709 |', self.run_cli('expirations').stdout)
         self.assertIs(type(json.loads(self.run_cli('expirations','--json').stdout)['expirations'][0]['market']['quantity']), int)
         d=json.loads(self.run_cli('margins','tailoring','--level','5','--json').stdout)
-        self.assertEqual(d['margins'][0]['cost_copper'],88)
-        self.assertEqual(d['margins'][0]['margin_copper'],102)
+        self.assertEqual(d['margins'][0]['cost_copper'],87)
+        self.assertEqual(d['margins'][0]['margin_copper'],84)
         self.assertEqual(d['margins'][0]['reagents'][0]['basis'],'AHledger')
         self.market(stale=True)
         self.run_cli('price','2604','--json',code=3)
@@ -613,6 +613,60 @@ class CLI(unittest.TestCase):
         Handler.routes['/events']=(503,{'error_code':'unreadable_snapshot'})
         self.assertEqual(self.run_cli('sales','--json',code=4).stdout,'')
         self.run_cli('vendors','not in catalogue',code=1)
+
+    def test_planning_margins_use_scan_basis_and_keep_every_recipe(self):
+        path = Path(self.tmp.name, 'catalogue.json')
+        cat = json.loads(path.read_text())
+        block = cat['professions']['tailoring']
+        template = block['recipes'][0]
+        block['recipes'] = [
+            {**template, 'spell_id': 1000 + i, 'name': f'Shirt {i:02}',
+             'result': {**template['result'], 'item_id': 100 + i}}
+            for i in range(17)
+        ]
+        recipes = block['recipes']
+        recipes[7]['result']['item_id'] = None
+        recipes[8]['result']['qty'] = 0
+        recipes[9]['reagents'] = [{**template['reagents'][0], 'item_id': None}]
+        recipes[10]['reagents'] = [{**template['reagents'][0], 'item_id': 2610}]
+        recipes[12]['spell_id'] = recipes[13]['spell_id']
+        path.write_text(json.dumps(cat))
+        stamp = int(datetime.datetime.fromisoformat(NOW).timestamp())
+        Handler.routes['/v1/pricetable/forever.pvp.alliance.us'] = (
+            200, (FIX / 'planning-margins.pricetable').read_text().format(stamp=stamp))
+
+        result = self.run_cli('margins', 'tailoring', '--json')
+        rows = json.loads(result.stdout)['margins']
+        by_name = {r['name']: r for r in rows}
+        # Old basis: 200c × 0.95 − 110c = +80c. V2: 90c × 0.95 rounds to 86c.
+        floor = by_name['Shirt 00']
+        self.assertEqual(floor['margin_copper'], -14)
+        self.assertEqual(floor['sells_copper'], 90)
+        self.assertEqual(floor['price_basis'], 'current_floor')
+        self.assertEqual(floor['cost_copper'], 100)
+        self.assertEqual(floor['reagents'][0]['unit_copper'], 100)
+        # Listed units equal twice the rate, so median wins. 190c × 0.95 rounds to 180c.
+        median = by_name['Shirt 01']
+        self.assertEqual(median['margin_copper'], 80)
+        self.assertEqual(median['price_basis'], 'current_median')
+        # The 7-day median caps a current-median quote. 120c × 0.95 = 114c.
+        capped = by_name['Shirt 02']
+        self.assertEqual(capped['margin_copper'], 14)
+        self.assertEqual(capped['price_basis'], '7d_median')
+        reasons = ('missing_7d_median', 'missing_current_quote', 'missing_positive_sales_rate',
+                   'missing_current_quote', 'missing_output_mapping', 'invalid_output_yield',
+                   'missing_reagent_mapping', 'missing_reagent_price', 'missing_positive_sales_rate',
+                   'ambiguous_recipe_mapping', 'ambiguous_recipe_mapping', 'missing_output_price')
+        for i, reason in enumerate(reasons, 3):
+            missing = by_name[f'Shirt {i:02}']
+            self.assertIsNone(missing['margin_copper'])
+            self.assertEqual(missing['unavailable_reason'], reason)
+        self.assertEqual(len(rows), 17)
+        self.assertEqual(rows[0]['name'], 'Shirt 01')
+        self.assertTrue(all(r['margin_copper'] is None for r in rows[3:]))
+        human = self.run_cli('margins', 'tailoring').stdout
+        self.assertIn('planning margin -14c', human)
+        self.assertIn('planning margin unknown (missing 7d median)', human)
 
     def test_malformed_http_reads_are_source_unreachable(self):
         routes = (
@@ -981,7 +1035,7 @@ with patch.object(db, 'request', side_effect=Failure('secret-fixture', 4, {'stat
         self.assertIn('ForeverDB sell-row labels', price)
         self.assertIn('Data from ForeverDB.net (https://foreverdb.net)', price)
         margins = json.loads(self.run_cli('margins', 'tailoring', '--json').stdout)
-        self.assertEqual(margins['margins'][0]['cost_copper'], 88)
+        self.assertEqual(margins['margins'][0]['cost_copper'], 87)
 
     def test_foreverdb_price_displays_uneven_stack_and_limited_stock(self):
         self.sync_foreverdb()

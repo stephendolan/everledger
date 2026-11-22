@@ -17,62 +17,143 @@ use crate::{
         bridge::{Color, color_at},
     },
     document::Document,
+    market::{Price, PriceTable},
     read_roster::{self, Knowledge},
 };
+use std::collections::HashMap;
+
 pub struct Margin<'a> {
     pub recipe: &'a catalogue::Recipe,
     pub profession: &'a str,
     pub color: Option<Color>,
-    pub margin: Copper,
-    pub cost: Copper,
-    pub sells: Copper,
-    pub sales: Option<f64>,
+    pub planning: PlanningMargin,
     pub reagents: Vec<Document>,
 }
-fn checked(n: Option<i64>) -> Result<Copper> {
-    n.map(Copper)
-        .ok_or_else(|| Failure::error("copper out of range"))
-}
-pub struct CraftQuote {
-    pub margin: Copper,
-    pub cost: Copper,
-    pub sells: Copper,
+
+#[derive(Default)]
+pub struct PlanningMargin {
+    pub margin: Option<Copper>,
+    pub cost: Option<Copper>,
+    pub sell: Option<(Copper, &'static str)>,
     pub sales: Option<f64>,
+    pub reason: Option<&'static str>,
 }
-pub fn quote(
-    r: &catalogue::Recipe,
-    prices: &crate::market::PriceTable,
-) -> Result<Option<CraftQuote>> {
-    let Some(price) = r.result.item_id.and_then(|id| prices.get(&id)) else {
-        return Ok(None);
-    };
-    let Some(sells) = price.median_copper else {
-        return Ok(None);
-    };
-    let mut cost = Copper(0);
-    for reagent in &r.reagents {
-        let Some(unit) = reagent
-            .item_id
-            .and_then(|id| prices.get(&id))
-            .and_then(|p| p.median_copper)
-        else {
-            return Ok(None);
-        };
-        cost = checked(
-            unit.0
-                .checked_mul(reagent.qty)
-                .and_then(|n| cost.0.checked_add(n)),
-        )?;
+
+fn checked_copper(value: i128) -> Result<Copper> {
+    i64::try_from(value)
+        .map(Copper)
+        .map_err(|_| Failure::error("copper out of range"))
+}
+
+fn planning_sell(
+    output: Option<i64>,
+    yield_qty: i64,
+    price: Option<&Price>,
+    sales: Option<f64>,
+) -> std::result::Result<(Copper, &'static str), &'static str> {
+    if output.is_none() {
+        return Err("missing_output_mapping");
     }
-    let gross = checked(sells.0.checked_mul(r.result.qty))?;
-    let net = crate::primitives::rounded_copper(gross.0 as f64 * 0.95)?;
-    Ok(Some(CraftQuote {
-        margin: checked(net.0.checked_sub(cost.0))?,
-        cost,
-        sells,
-        sales: price.sales_per_day,
-    }))
+    if yield_qty <= 0 {
+        return Err("invalid_output_yield");
+    }
+    let price = price.ok_or("missing_output_price")?;
+    let rate = sales
+        .filter(|n| *n > 0.0)
+        .ok_or("missing_positive_sales_rate")?;
+    let listed = price
+        .quantity
+        .filter(|n| *n >= 0)
+        .ok_or("missing_current_quote")?;
+    let (quote, basis) = if listed as f64 > 2.0 * rate {
+        (price.floor_copper, "current_floor")
+    } else {
+        (price.median_copper, "current_median")
+    };
+    let quote = quote.filter(|p| p.0 > 0).ok_or("missing_current_quote")?;
+    let history = price
+        .median_7d_copper
+        .filter(|p| p.0 > 0)
+        .ok_or("missing_7d_median")?;
+    Ok(if history.0 < quote.0 {
+        (history, "7d_median")
+    } else {
+        (quote, basis)
+    })
 }
+
+fn net_proceeds(price: Copper, yield_qty: i64) -> i128 {
+    let gross = i128::from(price.0) * i128::from(yield_qty);
+    let fraction = (gross % 100) * 95;
+    let whole = (gross / 100) * 95 + fraction / 100;
+    let remainder = fraction % 100;
+    whole + i128::from(remainder > 50 || remainder == 50 && whole % 2 != 0)
+}
+
+fn reagent_floor(item: &catalogue::RecipeItem, prices: &PriceTable) -> Option<Copper> {
+    item.item_id
+        .filter(|id| *id > 0)
+        .and_then(|id| prices.get(&id))
+        .and_then(|price| price.floor_copper)
+        .filter(|floor| floor.0 >= 0)
+}
+
+fn planning_margin(
+    recipe: &catalogue::Recipe,
+    prices: &PriceTable,
+    units: &[Option<Copper>],
+    ambiguous: bool,
+) -> Result<PlanningMargin> {
+    if ambiguous {
+        return Ok(PlanningMargin {
+            reason: Some("ambiguous_recipe_mapping"),
+            ..Default::default()
+        });
+    }
+    let mut result = PlanningMargin::default();
+    if units.iter().all(Option::is_some) {
+        let cost = recipe
+            .reagents
+            .iter()
+            .zip(units.iter().flatten())
+            .try_fold(Copper(0), |total, (reagent, unit)| {
+                let subtotal = checked_copper(i128::from(reagent.qty) * i128::from(unit.0))?;
+                checked_copper(i128::from(total.0) + i128::from(subtotal.0))
+            })?;
+        result.cost = Some(cost);
+    }
+    let output = recipe.result.item_id.filter(|id| *id > 0);
+    let price = output.and_then(|id| prices.get(&id));
+    let sales = price
+        .and_then(|p| p.sales_per_day)
+        .filter(|n| n.is_finite());
+    result.sales = sales;
+    match planning_sell(output, recipe.result.qty, price, sales) {
+        Err(reason) => result.reason = Some(reason),
+        Ok((sell, basis)) => {
+            result.sell = Some((sell, basis));
+            if let Some(cost) = result.cost {
+                result.margin = Some(checked_copper(
+                    net_proceeds(sell, recipe.result.qty) - i128::from(cost.0),
+                )?);
+            } else {
+                result.reason = Some(
+                    if recipe
+                        .reagents
+                        .iter()
+                        .any(|r| r.item_id.is_none_or(|id| id <= 0))
+                    {
+                        "missing_reagent_mapping"
+                    } else {
+                        "missing_reagent_price"
+                    },
+                );
+            }
+        }
+    }
+    Ok(result)
+}
+
 pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
     let cat = catalogue::load_catalogue(context)?;
     let name = args.char.as_ref().filter(|s| !s.is_empty());
@@ -109,9 +190,13 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                 .join(", ")
         )));
     }
-    let (prices, ms) = crate::market::market_table(context)?;
+    let (prices, ms) = crate::market::planning_table(context)?;
     used.push(ms);
     let all = catalogue::recipes(cat)?;
+    let mut recipe_counts = HashMap::new();
+    for row in &all {
+        *recipe_counts.entry(row.recipe.spell_id).or_insert(0) += 1;
+    }
     let mut rows = vec![];
     for prof in &profs {
         let mut skill = args.level;
@@ -154,34 +239,30 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
             {
                 continue;
             }
-            let Some(CraftQuote {
-                margin,
-                cost,
-                sells,
-                sales,
-            }) = quote(recipe, &prices)?
-            else {
-                continue;
-            };
+            let ambiguous = recipe_counts[&recipe.spell_id] > 1;
+            let units = recipe
+                .reagents
+                .iter()
+                .map(|r| {
+                    if ambiguous {
+                        None
+                    } else {
+                        reagent_floor(r, &prices)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let planning = planning_margin(recipe, &prices, &units, ambiguous)?;
             let docs = r
                 .document
                 .get("reagents")
                 .and_then(Document::as_array)
                 .ok_or_else(|| Failure::shape("recipe", "missing reagents"))?;
-            let reagents = recipe
-                .reagents
+            let reagents = docs
                 .iter()
-                .zip(docs)
-                .map(|(x, doc)| {
+                .zip(units)
+                .map(|(doc, unit)| {
                     let mut d = doc.clone();
-                    d.set(
-                        "unit_copper",
-                        Document::from_typed(
-                            &x.item_id
-                                .and_then(|id| prices.get(&id))
-                                .and_then(|p| p.median_copper),
-                        )?,
-                    )?;
+                    d.set("unit_copper", Document::from_typed(&unit)?)?;
                     d.set("basis", "AHledger")?;
                     Ok(d)
                 })
@@ -190,21 +271,24 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                 recipe,
                 profession: r.profession,
                 color: skill.map(|s| color_at(&recipe.bands, s)),
-                margin,
-                cost,
-                sells,
-                sales,
+                planning,
                 reagents,
             });
         }
     }
     rows.sort_by(|a, b| {
-        let rank = |r: &Margin<'_>| r.color.map(|c| c as u8).unwrap_or(5);
+        let rank = |r: &Margin<'_>| {
+            (
+                r.planning.margin.is_none(),
+                r.color.map(|c| c as u8).unwrap_or(5),
+            )
+        };
         let score = |r: &Margin<'_>| {
-            if r.margin.0 > 0 {
-                -(r.margin.0 as f64 * r.sales.unwrap_or(0.0))
+            let margin = r.planning.margin.map_or(0.0, |m| m.0 as f64);
+            if margin > 0.0 {
+                -(margin * r.planning.sales.unwrap_or(0.0))
             } else {
-                -(r.margin.0 as f64)
+                -margin
             }
         };
         rank(a).cmp(&rank(b)).then_with(|| {
@@ -213,7 +297,6 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
     });
-    rows.truncate(15);
     let docs = rows
         .iter()
         .map(|r| {
@@ -225,11 +308,19 @@ pub fn run(args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
                     "color",
                     Document::from(r.color.map(crate::human::bridge::color)),
                 ),
-                ("margin_copper", Document::from(r.margin.0)),
-                ("cost_copper", Document::from(r.cost.0)),
-                ("sells_copper", Document::from(r.sells.0)),
-                ("sales_per_day", Document::from_typed(&r.sales)?),
+                ("margin_copper", Document::from_typed(&r.planning.margin)?),
+                ("cost_copper", Document::from_typed(&r.planning.cost)?),
+                (
+                    "sells_copper",
+                    Document::from_typed(&r.planning.sell.map(|(c, _)| c))?,
+                ),
+                ("sales_per_day", Document::from_typed(&r.planning.sales)?),
                 ("reagents", Document::Array(r.reagents.clone())),
+                (
+                    "price_basis",
+                    Document::from(r.planning.sell.map(|(_, basis)| basis)),
+                ),
+                ("unavailable_reason", Document::from(r.planning.reason)),
                 ("source_type", Document::from(r.recipe.source_type.clone())),
             ]))
         })
