@@ -1017,3 +1017,82 @@ fn unread_page_values_use_the_service_decode_path() {
         }
     }
 }
+
+#[test]
+fn char_displays_saved_guide_position_and_preserves_the_wire_fields() {
+    let f = Fixture::new();
+    f.raw(
+        "/characters/Ada",
+        r#"{"character":{"name":"Ada Test","guide":{"available":true,"guide_group":"Example Guide",
+            "guide_subgroup":"Test Route","chapter":"10-11 Harbor","current_step":8,
+            "saved_at":"2026-11-15T11:59:00Z","file_age_seconds":60,
+            "current":{"chapter":"10-11 Harbor","step":8,"text":["Talk to Dockmaster"],
+                "targets":[],"level_tags":[],"chapter_levels":[10,11],"definition":{"line":42}}}}}"#,
+    );
+    let answer = f.command(&["char", "Ada", "--json"]).unwrap();
+    let guide = answer.data.get("character").unwrap().get("guide").unwrap();
+    assert_eq!(guide.get("current_step"), Some(&Document::from(8_i64)));
+    assert!(answer.lines.iter().any(
+        |line| line.contains("10-11 Harbor step 8 | Talk to Dockmaster")
+            && line.contains("SavedVariables 2026-11-15T11:59:00Z, 60s old")
+    ));
+
+    f.raw(
+        "/characters/Ada",
+        r#"{"character":{"name":"Ada Test","guide":{"available":false,"reason":"No progress recorded"}}}"#,
+    );
+    let answer = f.command(&["char", "Ada"]).unwrap();
+    assert!(
+        answer
+            .lines
+            .iter()
+            .any(|line| line.contains("RestedXP unavailable (No progress recorded)"))
+    );
+}
+
+#[test]
+fn guide_passes_term_and_limit_and_reports_upcoming_or_search_results() {
+    let f = Fixture::new();
+    let search = r##"{"character":"Ada Test","available":true,"chapter":"10-11 Harbor","current_step":8,
+        "query":"Blue Cave","route_available":true,"route_end":"Next chapter unavailable","truncated":false,
+        "steps":[{"chapter":"11-12 Blue Cave","step":1,"steps_from_current":3,"text":[],"targets":["Cave Keeper"],
+            "level_tags":["#level 11"],"chapter_levels":[11,12],
+            "previous":{"chapter":"10-11 Harbor","step":10,"text":["Leave the harbor"],"targets":[],
+                "level_tags":[],"chapter_levels":[10,11]}}]}"##;
+    f.raw("/characters/Ada%20Test/guide?q=Blue+Cave&limit=3", search);
+    let answer = f
+        .command(&["guide", "Ada Test", "--search", "Blue Cave", "--limit", "3"])
+        .unwrap();
+    assert!(
+        answer
+            .lines
+            .iter()
+            .any(|line| line.contains("step 1 (+3 installed steps)")
+                && line.contains("#level 11")
+                && line.contains("Target Cave Keeper"))
+    );
+    assert!(
+        answer
+            .lines
+            .iter()
+            .any(|line| line.contains("Before this | 10-11 Harbor step 10 | Leave the harbor"))
+    );
+    assert_eq!(
+        answer.data.get("query").and_then(Document::as_str),
+        Some("Blue Cave")
+    );
+
+    f.raw(
+        "/characters/Ada/guide",
+        r#"{"character":"Ada Test","available":true,"chapter":"10-11 Harbor",
+        "current_step":8,"route_available":true,"steps":[{"chapter":"10-11 Harbor","step":9,
+        "steps_from_current":1,"text":["Prepare at the harbor"],"targets":[],"level_tags":[]}]}"#,
+    );
+    let answer = f.command(&["guide", "Ada"]).unwrap();
+    assert!(
+        answer
+            .lines
+            .iter()
+            .any(|line| line.contains("step 9 (+1 installed step) | Prepare at the harbor"))
+    );
+}

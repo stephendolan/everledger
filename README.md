@@ -108,6 +108,32 @@ for request sizing, activation, and resumption.
 HTTP proxy settings and `SSL_CERT_FILE` are honored. Test clock settings belong
 to the [parity seam contract](parity/README.md#seam-contract).
 
+## RestedXP
+
+```sh
+everledger char Slade
+everledger char Slade --json
+everledger guide Slade --limit 5
+everledger guide Slade --search Deadmines
+everledger guide Nuggles --search Deadmines --json
+```
+
+`char` shows the saved guide family, chapter, step, instructions or target,
+and SavedVariables age when the roster provides them. JSON exposes the
+same position in `character.guide`, with the installed file and line under
+`current.definition`. `guide` continues through the installed chapters linked
+by RestedXP. Search returns the preceding step and signed distance from the
+saved position. Distances count installed steps, including optional steps.
+The roster files update on logout or `/reload`.
+
+`guide --json` preserves the roster's position fields, `generated_at`,
+`sources`, `query`, `route_available`, `route_end`, `truncated`, and
+`steps`. Each step includes the chapter, number, text, targets, level tags,
+chapter level range, definition file and line, and `steps_from_current`.
+Search includes `previous` when known. An unavailable route has null steps.
+An empty array means the installed route returned zero results. The Python
+fallback remains the differential reference for commands it supports.
+
 ## Python fallback
 
 The [Python fallback](python/README.md) lives in `python/` and needs Python 3.11+

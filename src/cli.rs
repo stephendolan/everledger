@@ -60,9 +60,11 @@ commands! {
     Vendors(vendors),
     #[command(
         name = "char",
-        about = "Characters, profession ranks and known recipes"
+        about = "Characters, profession ranks, known recipes and saved RestedXP position"
     )]
     Char(char),
+    #[command(name = "guide", about = "Upcoming RestedXP steps and term search")]
+    Guide(guide),
     #[command(
         name = "listings",
         about = "Recorded live auction listings and AHledger floor comparison"

@@ -46,6 +46,9 @@ pub fn character(
             text(c.professions_updated_at.as_deref())
         ),
     ];
+    if let Some(guide) = &c.guide {
+        lines.push(crate::human::guide::progress(guide));
+    }
     let want = profession.map(crate::primitives::lower);
     for p in &c.professions {
         if p.skill_available == Some(true) {

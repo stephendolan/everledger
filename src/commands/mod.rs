@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod char;
 pub mod events;
 pub mod expirations;
+pub mod guide;
 pub mod listings;
 pub mod margins;
 pub mod net;

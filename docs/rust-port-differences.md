@@ -10,6 +10,16 @@ reference. Its named exemptions are rules, not blanket permission to change
 output. [Build comparison](../parity/README.md#compare-two-builds) checks two
 binaries' candidate transcripts without those exemptions.
 
+## RestedXP guides
+
+The Rust CLI renders the roster v1.4 character's `guide` field and provides
+the `guide` command. The frozen Python reference has no guide command or human
+guide rendering. A character payload without the new field retains the
+existing Rust and Python behavior. With v1.4 payloads, Rust preserves the
+server's guide data in JSON. Native read-path tests cover the new field and
+command. The differential matrix continues to compare the shared surface
+using its existing captured roster and replay fixtures.
+
 ## Diagnostics and help
 
 | Difference | Boundary and instrument |

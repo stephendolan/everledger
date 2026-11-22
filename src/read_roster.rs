@@ -26,6 +26,28 @@ pub struct Profession {
 pub struct Hearth {
     pub location: Option<String>,
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct GuideStep {
+    pub chapter: String,
+    pub step: i64,
+    pub text: Vec<String>,
+    pub targets: Vec<String>,
+    pub level_tags: Vec<String>,
+    pub chapter_levels: Option<[i64; 2]>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct GuideProgress {
+    pub available: bool,
+    pub guide_group: Option<String>,
+    pub guide_subgroup: Option<String>,
+    pub chapter: Option<String>,
+    pub current_step: Option<i64>,
+    pub current: Option<GuideStep>,
+    pub current_reason: Option<String>,
+    pub reason: Option<String>,
+    pub saved_at: Option<String>,
+    pub file_age_seconds: Option<i64>,
+}
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct Character {
     pub name: Option<String>,
@@ -38,6 +60,7 @@ pub struct Character {
     pub realm: Option<String>,
     pub gold_copper: Option<crate::Copper>,
     pub hearth: Option<Hearth>,
+    pub guide: Option<GuideProgress>,
     pub professions_updated_at: Option<String>,
     #[serde(default)]
     pub professions: Vec<Profession>,
