@@ -45,7 +45,7 @@ Use `target/release/everledger` followed by a command. See the
 | `price` | AHledger quote and listed vendor prices for an item. |
 | `recipe` | Recipe facts and which roster characters know it. |
 | `bridge` | Profession skill-up bands across a range. |
-| `margins` | Craft margins, optionally scoped to a character or level. |
+| `margins` | [Planning margins](docs/planning-margins.md), optionally scoped to a character or level. |
 | `parity` | Rank priced conversions by estimated output volume and floor-realized spread. |
 | `vendors` | Listed prices and seller locations, with faction from ForeverDB. |
 | `char` | Characters, profession ranks, and known recipes. |

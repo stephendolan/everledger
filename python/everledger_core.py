@@ -1,6 +1,7 @@
 import datetime as dt
 import http.client
 import json
+import math
 from functools import cache
 import os
 from pathlib import Path
@@ -299,7 +300,7 @@ def item_basis(row):
     return 'name' if item.get('id') is None or item.get('id_basis') == 'name' else 'id'
 
 
-def market_table():
+def market_table(*, include_history=False):
     raw, _ = request(f'{AHL}/v1/pricetable/{MARKET}', public=True)
     lines = raw.decode().splitlines()
     head = lines[0].split('|')
@@ -311,7 +312,76 @@ def market_table():
         prices[int(cells[0])] = {'median_copper': round(number(1)) if number(1) is not None else None,
                                 'floor_copper': round(number(2)) if number(2) is not None else None,
                                 'quantity': int(number(3)) if number(3) is not None else None, 'sales_per_day': number(8) / 10 if number(8) is not None else None}
+        if include_history:
+            history = number(4)
+            prices[int(cells[0])]['median_7d_copper'] = round(history) if history is not None else None
     timestamp = iso(dt.datetime.fromtimestamp(int(head[2]), UTC))
     s = source('AHledger ' + MARKET, timestamp)
     s['stale'] = s['age_seconds'] > 900
     return prices, s
+
+
+def planning_sell(output, yield_qty, price, sales):
+    if output is None or output <= 0:
+        return None, None, 'missing_output_mapping'
+    if yield_qty <= 0:
+        return None, None, 'invalid_output_yield'
+    if not price:
+        return None, None, 'missing_output_price'
+    if sales is None or sales <= 0:
+        return None, None, 'missing_positive_sales_rate'
+    listed = price['quantity']
+    if listed is None or listed < 0:
+        return None, None, 'missing_current_quote'
+    field, basis = (('floor_copper', 'current_floor') if listed > 2 * sales
+                    else ('median_copper', 'current_median'))
+    quote = price[field]
+    if quote is None or quote <= 0:
+        return None, None, 'missing_current_quote'
+    history = price['median_7d_copper']
+    if history is None or history <= 0:
+        return None, None, 'missing_7d_median'
+    return (history, '7d_median', None) if history < quote else (quote, basis, None)
+
+
+def planning_margin(recipe, prices, ambiguous=False):
+    def copper(value):
+        if not -(2**63) <= value < 2**63:
+            raise Failure('copper out of range')
+        return value
+
+    reagents = []
+    for reagent in recipe['reagents']:
+        item_id = reagent['item_id']
+        price = prices.get(item_id, {}) if item_id and item_id > 0 and not ambiguous else {}
+        floor = price.get('floor_copper')
+        unit = floor if floor is not None and floor >= 0 else None
+        reagents.append({**reagent, 'unit_copper': unit, 'basis': 'AHledger'})
+
+    sell = basis = cost = sales = margin = None
+    if ambiguous:
+        reason = 'ambiguous_recipe_mapping'
+    else:
+        if all(r['unit_copper'] is not None for r in reagents):
+            cost = 0
+            for reagent in reagents:
+                cost = copper(cost + copper(reagent['unit_copper'] * reagent['qty']))
+        output = recipe['result']['item_id']
+        yield_qty = recipe['result']['qty']
+        price = prices.get(output, {}) if output and output > 0 else {}
+        sales = price.get('sales_per_day')
+        if sales is not None and not math.isfinite(sales):
+            sales = None
+        sell, basis, reason = planning_sell(output, yield_qty, price, sales)
+        if sell is not None:
+            if cost is not None:
+                whole, remainder = divmod(sell * yield_qty * 95, 100)
+                net = whole + (remainder > 50 or remainder == 50 and whole % 2 != 0)
+                margin = copper(net - cost)
+            else:
+                reason = ('missing_reagent_mapping' if any(not r['item_id'] or r['item_id'] < 0 for r in reagents)
+                          else 'missing_reagent_price')
+
+    return {'margin_copper': margin, 'cost_copper': cost, 'sells_copper': sell,
+            'sales_per_day': sales, 'reagents': reagents, 'price_basis': basis,
+            'unavailable_reason': reason}

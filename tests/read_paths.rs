@@ -124,7 +124,9 @@ impl Fixture {
     fn market(&self, reagent: &str) {
         self.raw(
             "/v1/pricetable/forever.pvp.alliance.us",
-            &format!("market|v|1794744000|2\n2604:{reagent}:87:709:::::3808\n100:200:190:2:::::10"),
+            &format!(
+                "market|v|1794744000|2\n2604:{reagent}:87:709:::::3808\n100:200:190:2:180::::10"
+            ),
         );
     }
     fn snapshot(&self) -> everledger::vendors::NinjaAnswer {
@@ -313,28 +315,27 @@ fn pins_last_modified_takes_precedence() {
     );
 }
 #[test]
-fn margin_omits_unknown_reagent_but_keeps_a_zero_cost() {
+fn margin_exposes_missing_reagent_prices_and_keeps_a_zero_cost() {
     let f = Fixture::new();
-    f.market("");
-    assert!(
-        f.command(&["margins"])
-            .unwrap()
-            .data
-            .get("margins")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    f.market("0");
-    let out = f.command(&["margins"]).unwrap();
-    let row = &out.data.get("margins").unwrap().as_array().unwrap()[0];
-    assert_eq!(row.get("cost_copper"), Some(&Document::from(0_i64)));
-    assert_eq!(row.get("margin_copper"), Some(&Document::from(190_i64)));
-    f.market("88");
-    let out = f.command(&["margins"]).unwrap();
-    let row = &out.data.get("margins").unwrap().as_array().unwrap()[0];
-    assert_eq!(row.get("margin_copper"), Some(&Document::from(102_i64)));
+    for (floor, expected_cost, expected_margin, reason) in [
+        ("", None, None, Some("missing_reagent_price")),
+        ("0", Some(0_i64), Some(171_i64), None),
+        ("87", Some(87), Some(84), None),
+    ] {
+        f.raw(
+            "/v1/pricetable/forever.pvp.alliance.us",
+            &format!("m|v|1794744000\n2604:88:{floor}:2:::::10\n100:200:190:2:180::::10"),
+        );
+        let out = f.command(&["margins"]).unwrap();
+        let row = &out.data.get("margins").unwrap().as_array().unwrap()[0];
+        assert_eq!(row.get("cost_copper"), Some(&Document::from(expected_cost)));
+        assert_eq!(
+            row.get("margin_copper"),
+            Some(&Document::from(expected_margin))
+        );
+        assert_eq!(row.get("sells_copper"), Some(&Document::from(180_i64)));
+        assert_eq!(row.get("unavailable_reason"), Some(&Document::from(reason)));
+    }
 }
 #[test]
 fn unavailable_recipe_knowledge_errors_named_profession_and_skips_unspecified() {
@@ -415,7 +416,7 @@ fn margin_exit_considers_roster_and_market_sources() {
     assert!(f.command(&["margins", "--char", "Slade"]).unwrap().stale);
     f.raw(
         "/v1/pricetable/forever.pvp.alliance.us",
-        "m|v|1\n2604:88:87:2:::::10\n100:200:190:2:::::10",
+        "m|v|1\n2604:88:87:2:::::10\n100:200:190:2:180::::10",
     );
     assert!(f.command(&["margins"]).unwrap().stale);
     f.fail("/v1/pricetable/forever.pvp.alliance.us", 503);
@@ -640,7 +641,7 @@ fn char_pads_columns_sorts_options_and_groups_known_names_four_per_line() {
     assert_eq!(out.lines.last().unwrap(), "      Old");
 }
 #[test]
-fn margin_ranking_uses_color_then_expected_profit_and_keeps_fifteen_stably() {
+fn margin_ranking_returns_the_full_ranked_set_stably() {
     let mut f = Fixture::new();
     let names = (0..17).map(|i| format!("Shirt {i:02}")).collect::<Vec<_>>();
     let specs = names
@@ -651,9 +652,9 @@ fn margin_ranking_uses_color_then_expected_profit_and_keeps_fifteen_stably() {
     f.market("88");
     let out = f.command(&["margins", "--level", "5"]).unwrap();
     let rows = out.data.get("margins").unwrap().as_array().unwrap();
-    assert_eq!(rows.len(), 15);
+    assert_eq!(rows.len(), 17);
     assert_eq!(rows[0].get("name"), Some(&Document::from("Shirt 00")));
-    assert_eq!(rows[14].get("name"), Some(&Document::from("Shirt 14")));
+    assert_eq!(rows[16].get("name"), Some(&Document::from("Shirt 16")));
 }
 #[test]
 fn cache_from_another_backend_url_is_discarded_before_decoding_snapshot() {
@@ -704,7 +705,7 @@ fn margin_order_uses_profit_times_sales_but_negative_margins_ignore_sales() {
     cat.set("professions", Document::object([("tailoring", block)]))
         .unwrap();
     f.catalogue = CatalogueStore::from_document(cat).unwrap();
-    f.raw("/v1/pricetable/forever.pvp.alliance.us","m|v|1794744000\n2604:100:90:1:::::10\n100:300:290:2:::::10\n101:200:190:2:::::100\n102:1000:900:2:::::1000\n103:100:90:2:::::10000\n104:50:40:2:::::1");
+    f.raw("/v1/pricetable/forever.pvp.alliance.us","m|v|1794744000\n2604:100:90:1:::::10\n100:300:290:2:300::::10\n101:200:190:2:200::::100\n102:1000:900:2:1000::::1000\n103:90:85:2:90::::10000\n104:50:40:2:50::::1");
     let out = f.command(&["margins", "--level", "5"]).unwrap();
     let names = out
         .data
@@ -750,7 +751,7 @@ fn craft_result_quantity_is_applied_before_auction_cut() {
     let out = f.command(&["margins"]).unwrap();
     assert_eq!(
         out.data.get("margins").unwrap().as_array().unwrap()[0].get("margin_copper"),
-        Some(&Document::from(292_i64))
+        Some(&Document::from(255_i64))
     );
 }
 #[test]

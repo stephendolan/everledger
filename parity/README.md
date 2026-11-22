@@ -443,7 +443,7 @@ vendor headers. The matrix includes this instrument. No live source is used.
 `compare_builds.py` pins `EVERLEDGER_FETCH_TRANSPORT=native` for both builds so
 transport fallback cannot change the existing corpus comparison.
 
-The reference integrity check pins the public-fetch update at `0415edd`;
+The reference integrity check pins the Python v2 margins update at `5d48d33`.
 `handoff.py` retains the preceding `6f72b44` reference in its historical cache
 compatibility checks. The pre-change source `a482a49`, rebuilt for static musl,
 reproduces deployed SHA-256

@@ -199,7 +199,7 @@ class FullCorpus(unittest.TestCase):
                 report = run([str(ROOT / 'parity/oracle-candidate')], progress=False)
                 self.assertEqual(report['errors'], [])
                 self.assertTrue(report['success'])
-                self.assertEqual(len(report['selected']), 96)
+                self.assertEqual(len(report['selected']), 97)
                 self.assertTrue(all(row['state'] == 'identical' for row in report['steps']))
                 totals.append(len(report['steps']))
                 print(f'\noracle/oracle run {iteration + 1}: {len(report["steps"])} identical; 0 sanctioned; 0 unexplained', flush=True)

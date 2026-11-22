@@ -13,11 +13,21 @@ pub const FRESHNESS_SECONDS: i64 = 15 * 60;
 pub struct Price {
     pub median_copper: Option<Copper>,
     pub floor_copper: Option<Copper>,
+    #[serde(skip)]
+    pub median_7d_copper: Option<Copper>,
     pub quantity: Option<i64>,
     pub sales_per_day: Option<f64>,
 }
 pub type PriceTable = BTreeMap<i64, Price>;
 pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
+    read_table(context, false)
+}
+
+pub fn planning_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
+    read_table(context, true)
+}
+
+fn read_table(context: &Context<'_>, include_history: bool) -> Result<(PriceTable, Source)> {
     let raw = context.http.request(&Request::public_get(format!(
         "{}/v1/pricetable/{}",
         context.config.ahledger_url, context.config.market
@@ -58,6 +68,11 @@ pub fn market_table(context: &Context<'_>) -> Result<(PriceTable, Source)> {
             Price {
                 median_copper: number(1)?.map(rounded_copper).transpose()?,
                 floor_copper: number(2)?.map(rounded_copper).transpose()?,
+                median_7d_copper: if include_history {
+                    number(4)?.map(rounded_copper).transpose()?
+                } else {
+                    None
+                },
                 quantity: number(3)?.map(quantity_from_float).transpose()?,
                 sales_per_day: number(8)?.map(|v| v / 10.0),
             },
