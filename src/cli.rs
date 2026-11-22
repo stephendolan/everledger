@@ -53,6 +53,8 @@ commands! {
         about = "AHledger craft margins; optional roster recipe/level scope"
     )]
     Margins(margins),
+    #[command(name = "parity", about = "Catalogue and item-use conversions at AHledger floors and medians")]
+    Parity(parity),
     #[command(
         name = "vendors",
         about = "Vendor listed prices/locations; ForeverDB includes faction"

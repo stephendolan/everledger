@@ -63,7 +63,7 @@ pub struct Bands {
     #[serde(deserialize_with = "nullable")]
     pub grey: Option<i64>,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
 pub struct RecipeItem {
     pub item_id: Option<i64>,
     pub name: String,

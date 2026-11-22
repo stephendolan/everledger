@@ -11,7 +11,7 @@ JSON matched/returned counts describe the accompanying filtered array;
 aggregates count all pages, events count the current page, bootstrap counts zero.
 Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
 Journal save age is normal: old saves alone do not change exit codes.
-Price/margins AH freshness limit: {market_minutes}m; catalogue advisory age: {catalogue_days}d.
+Price/margins/parity AH freshness limit: {market_minutes}m; catalogue advisory age: {catalogue_days}d.
 Listings use the roster scan limit (15m). Positions apply both market/scan limits.
 Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
 On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.

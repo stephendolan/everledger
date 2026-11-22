@@ -17,6 +17,7 @@ use crate::{
         bridge::{Color, color_at},
     },
     document::Document,
+    market::{checked_copper, input_cost, net_after_auction_cut},
     read_roster::{self, Knowledge},
 };
 pub struct Margin<'a> {
@@ -28,10 +29,6 @@ pub struct Margin<'a> {
     pub sells: Copper,
     pub sales: Option<f64>,
     pub reagents: Vec<Document>,
-}
-fn checked(n: Option<i64>) -> Result<Copper> {
-    n.map(Copper)
-        .ok_or_else(|| Failure::error("copper out of range"))
 }
 pub struct CraftQuote {
     pub margin: Copper,
@@ -49,25 +46,13 @@ pub fn quote(
     let Some(sells) = price.median_copper else {
         return Ok(None);
     };
-    let mut cost = Copper(0);
-    for reagent in &r.reagents {
-        let Some(unit) = reagent
-            .item_id
-            .and_then(|id| prices.get(&id))
-            .and_then(|p| p.median_copper)
-        else {
-            return Ok(None);
-        };
-        cost = checked(
-            unit.0
-                .checked_mul(reagent.qty)
-                .and_then(|n| cost.0.checked_add(n)),
-        )?;
-    }
-    let gross = checked(sells.0.checked_mul(r.result.qty))?;
-    let net = crate::primitives::rounded_copper(gross.0 as f64 * 0.95)?;
+    let Some(cost) = input_cost(&r.reagents, prices, |p| p.median_copper)? else {
+        return Ok(None);
+    };
+    let gross = checked_copper(sells.0.checked_mul(r.result.qty))?;
+    let net = net_after_auction_cut(gross)?;
     Ok(Some(CraftQuote {
-        margin: checked(net.0.checked_sub(cost.0))?,
+        margin: checked_copper(net.0.checked_sub(cost.0))?,
         cost,
         sells,
         sales: price.sales_per_day,

@@ -10,6 +10,13 @@ reference. Its named exemptions are rules, not blanket permission to change
 output. [Build comparison](../parity/README.md#compare-two-builds) checks two
 binaries' candidate transcripts without those exemptions.
 
+## Conversion parity
+
+The Rust binary provides [`everledger parity`](conversion-parity.md). The
+Python fallback stays pinned for differential verification of shared commands.
+Native read-path tests exercise parity pricing, ranking, source labels,
+filtering, and stale output.
+
 ## RestedXP guides
 
 The Rust CLI renders the roster v1.4 character's `guide` field and provides

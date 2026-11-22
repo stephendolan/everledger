@@ -94,3 +94,36 @@ pub fn deserialize_quantity<'de, D: serde::Deserializer<'de>>(
         })
         .transpose()
 }
+
+pub(crate) fn checked_copper(value: Option<i64>) -> Result<Copper> {
+    value
+        .map(Copper)
+        .ok_or_else(|| Failure::error("copper out of range"))
+}
+
+pub(crate) fn input_cost(
+    inputs: &[crate::catalogue::RecipeItem],
+    prices: &PriceTable,
+    unit_price: impl Fn(&Price) -> Option<Copper>,
+) -> Result<Option<Copper>> {
+    let mut cost = Copper(0);
+    for item in inputs {
+        let Some(unit) = item
+            .item_id
+            .and_then(|id| prices.get(&id))
+            .and_then(&unit_price)
+        else {
+            return Ok(None);
+        };
+        cost = checked_copper(
+            unit.0
+                .checked_mul(item.qty)
+                .and_then(|n| cost.0.checked_add(n)),
+        )?;
+    }
+    Ok(Some(cost))
+}
+
+pub(crate) fn net_after_auction_cut(gross: Copper) -> Result<Copper> {
+    rounded_copper(gross.0 as f64 * 0.95)
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "Combine Lesser Magic Essence",
+    "source_url": "https://wowforever.ninja/items/10938-lesser-magic-essence/",
+    "input": {"item_id": 10938, "name": "Lesser Magic Essence", "qty": 3},
+    "output": {"item_id": 10939, "name": "Greater Magic Essence", "qty": 1}
+  },
+  {
+    "name": "Split Greater Magic Essence",
+    "source_url": "https://wowforever.ninja/items/10939-greater-magic-essence/",
+    "input": {"item_id": 10939, "name": "Greater Magic Essence", "qty": 1},
+    "output": {"item_id": 10938, "name": "Lesser Magic Essence", "qty": 3}
+  },
+  {
+    "name": "Combine Lesser Astral Essence",
+    "source_url": "https://wowforever.ninja/items/10998-lesser-astral-essence/",
+    "input": {"item_id": 10998, "name": "Lesser Astral Essence", "qty": 3},
+    "output": {"item_id": 11082, "name": "Greater Astral Essence", "qty": 1}
+  },
+  {
+    "name": "Split Greater Astral Essence",
+    "source_url": "https://wowforever.ninja/items/11082-greater-astral-essence/",
+    "input": {"item_id": 11082, "name": "Greater Astral Essence", "qty": 1},
+    "output": {"item_id": 10998, "name": "Lesser Astral Essence", "qty": 3}
+  },
+  {
+    "name": "Combine Lesser Mystic Essence",
+    "source_url": "https://wowforever.ninja/items/11134-lesser-mystic-essence/",
+    "input": {"item_id": 11134, "name": "Lesser Mystic Essence", "qty": 3},
+    "output": {"item_id": 11135, "name": "Greater Mystic Essence", "qty": 1}
+  },
+  {
+    "name": "Split Greater Mystic Essence",
+    "source_url": "https://wowforever.ninja/items/11135-greater-mystic-essence/",
+    "input": {"item_id": 11135, "name": "Greater Mystic Essence", "qty": 1},
+    "output": {"item_id": 11134, "name": "Lesser Mystic Essence", "qty": 3}
+  },
+  {
+    "name": "Combine Lesser Nether Essence",
+    "source_url": "https://wowforever.ninja/items/11174-lesser-nether-essence/",
+    "input": {"item_id": 11174, "name": "Lesser Nether Essence", "qty": 3},
+    "output": {"item_id": 11175, "name": "Greater Nether Essence", "qty": 1}
+  },
+  {
+    "name": "Split Greater Nether Essence",
+    "source_url": "https://wowforever.ninja/items/11175-greater-nether-essence/",
+    "input": {"item_id": 11175, "name": "Greater Nether Essence", "qty": 1},
+    "output": {"item_id": 11174, "name": "Lesser Nether Essence", "qty": 3}
+  },
+  {
+    "name": "Combine Lesser Eternal Essence",
+    "source_url": "https://wowforever.ninja/items/16202-lesser-eternal-essence/",
+    "input": {"item_id": 16202, "name": "Lesser Eternal Essence", "qty": 3},
+    "output": {"item_id": 16203, "name": "Greater Eternal Essence", "qty": 1}
+  },
+  {
+    "name": "Split Greater Eternal Essence",
+    "source_url": "https://wowforever.ninja/items/16203-greater-eternal-essence/",
+    "input": {"item_id": 16203, "name": "Greater Eternal Essence", "qty": 1},
+    "output": {"item_id": 16202, "name": "Lesser Eternal Essence", "qty": 3}
+  }
+]

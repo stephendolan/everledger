@@ -46,6 +46,7 @@ Use `target/release/everledger` followed by a command. See the
 | `recipe` | Recipe facts and which roster characters know it. |
 | `bridge` | Profession skill-up bands across a range. |
 | `margins` | Craft margins, optionally scoped to a character or level. |
+| `parity` | Rank priced conversions by estimated output volume and floor-realized spread. |
 | `vendors` | Listed prices and seller locations, with faction from ForeverDB. |
 | `char` | Characters, profession ranks, and known recipes. |
 | `listings` | Recorded auctions compared with the AHledger floor. |
@@ -69,6 +70,20 @@ and ends with a source summary. Exit codes are:
 | `2` | Usage error. |
 | `3` | Stale data printed. |
 | `4` | Source unreachable. |
+
+## Conversion parity
+
+```sh
+everledger parity
+everledger parity --json
+everledger parity --all --json
+```
+
+Parity reads one AHledger price table for the configured market. The default
+view includes conversions with a positive floor-realized or after-cut median
+spread. Use `--all` to include losses and break-even rows. A scan older than
+15 minutes still prints and exits 3. See the [parity calculation](docs/conversion-parity.md)
+for field definitions and source rules.
 
 ## Environment
 

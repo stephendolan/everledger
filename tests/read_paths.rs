@@ -1182,3 +1182,161 @@ fn guide_lists_installed_groups_counts_and_unavailable_chapters() {
         );
     }
 }
+
+fn parity_fixture(epoch: i64) -> Fixture {
+    let mut fixture = Fixture::new();
+    let recipe = |spell_id, name, input_id, input_qty, output_id, output_qty| {
+        serde_json::json!({
+            "spell_id": spell_id,
+            "name": name,
+            "bands": {"learn": 1, "yellow": null, "green": null, "grey": null},
+            "reagents": [{"item_id": input_id, "qty": input_qty, "name": "Input"}],
+            "result": {"item_id": output_id, "qty": output_qty, "name": name},
+            "source_type": "Trainer"
+        })
+    };
+    fixture.catalogue = CatalogueStore::from_document(
+        Document::from_typed(&serde_json::json!({
+            "generated_at": "2026-11-15T12:00:00Z",
+            "source": "fixture catalogue",
+            "professions": {"tailoring": {"stated_count": 6, "recipes": [
+                recipe(1, "Bulk cloth", 10, 2, 11, 3),
+                recipe(2, "Single cloth", 10, 2, 12, 1),
+                recipe(3, "Median only", 10, 1, 13, 1),
+                recipe(4, "Bandage", 10, 3, 14, 1),
+                recipe(5, "No floor", 10, 1, 15, 1),
+                recipe(6, "Unsupported quantity", 10, 0, 12, 1)
+            ]}}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fixture.raw(
+        "/v1/pricetable/forever.pvp.alliance.us",
+        &format!(
+            "AHL1|forever/pvp/alliance/us|{epoch}|8\n\
+             10:125:100:40:::::0\n\
+             11:100:100:4:::::100\n\
+             12:250:245:3:::::100\n\
+             13:200:100:2:::::100\n\
+             14:10:1::::::\n\
+             15:1000::1:::::100\n\
+             10938:150:141:80:::::300\n\
+             10939:468:330:32:::::100"
+        ),
+    );
+    fixture
+}
+
+#[test]
+fn parity_ranks_realized_spread_per_unit_and_keeps_both_price_bases() {
+    let f = parity_fixture(1794744000);
+    let command = everledger::cli::parse_from(["everledger", "parity", "--json"]).unwrap();
+    let mut stdout = Vec::new();
+    assert_eq!(
+        everledger::cli::execute(&command, &f.context(), &mut stdout),
+        ExitCode::Answer
+    );
+    let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    let rows = json["parities"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "Split Greater Magic Essence",
+            "Single cloth",
+            "Bulk cloth",
+            "Median only"
+        ]
+    );
+    let split = &rows[0];
+    assert_eq!(split["source"]["kind"], "item_use");
+    assert!(
+        split["source"]["url"]
+            .as_str()
+            .unwrap()
+            .contains("10939-greater-magic-essence")
+    );
+    assert_eq!(split["output"]["qty"], 3);
+    assert_eq!(split["floor_realized"]["output_value_copper"], 399);
+    assert_eq!(split["floor_realized"]["spread_copper"], 69);
+    assert!((split["floor_realized"]["spread_percent"].as_f64().unwrap() - 20.909).abs() < 0.001);
+    assert_eq!(split["weighted_spread_copper_per_day"], 690.0);
+    assert_eq!(split["output_listed_units"], 80);
+    assert_eq!(split["output_sales_per_day"], 30.0);
+    assert_eq!(split["verdict"], "positive at floors");
+
+    let bulk = &rows[2];
+    assert_eq!(
+        bulk["source"],
+        serde_json::json!({"kind":"catalogue","profession":"tailoring","spell_id":1})
+    );
+    assert_eq!(
+        bulk["floor"],
+        serde_json::json!({
+            "input_cost_copper": 200, "output_value_copper": 300,
+            "spread_copper": 100, "spread_percent": 50.0
+        })
+    );
+    assert_eq!(
+        bulk["median"],
+        serde_json::json!({
+            "input_cost_copper": 250, "output_value_copper": 300,
+            "spread_copper": 50, "spread_percent": 20.0
+        })
+    );
+    assert_eq!(bulk["floor_realized"]["spread_copper"], 82);
+    assert_eq!(bulk["median_after_cut"]["spread_copper"], 35);
+    assert_eq!(rows[3]["verdict"], "positive only at medians");
+
+    let all = f.command(&["parity", "--json", "--all"]).unwrap();
+    let json: serde_json::Value = all.data.decode("parity output").unwrap();
+    let rows = json["parities"].as_array().unwrap();
+    assert_eq!(rows.len(), 6);
+    let combine = rows
+        .iter()
+        .find(|r| r["name"] == "Combine Lesser Magic Essence")
+        .unwrap();
+    assert_eq!(combine["inputs"][0]["qty"], 3);
+    assert_eq!(combine["output"]["qty"], 1);
+    assert_eq!(combine["median"]["spread_copper"], 18);
+    assert_eq!(combine["verdict"], "negative both");
+    let bandage = rows.last().unwrap();
+    assert_eq!(bandage["name"], "Bandage");
+    assert_eq!(bandage["verdict"], "negative both");
+    assert_eq!(bandage["floor_realized"]["output_value_copper"], 1);
+    assert!(bandage["output_sales_per_day"].is_null());
+    assert!(bandage["weighted_spread_copper_per_day"].is_null());
+    assert_eq!(
+        *f.http.requests.borrow(),
+        ["http://127.0.0.1/v1/pricetable/forever.pvp.alliance.us"; 2]
+    );
+    assert!(!f.config.data_dir.exists());
+}
+
+#[test]
+fn parity_prints_stale_rows_and_propagates_source_failure() {
+    let f = parity_fixture(1794743099);
+    let command = everledger::cli::parse_from(["everledger", "parity", "--all"]).unwrap();
+    let mut stdout = Vec::new();
+    assert_eq!(
+        everledger::cli::execute(&command, &f.context(), &mut stdout),
+        ExitCode::Stale
+    );
+    let table = String::from_utf8(stdout).unwrap();
+    assert!(table.contains("Realized spread"));
+    assert!(table.contains("Bandage"));
+    assert!(table.contains("negative both"));
+    assert!(table.contains("stale:"));
+    assert!(table.contains("2026-11-15T11:44:59Z"));
+    assert!(table.contains("source:"));
+
+    f.fail("/v1/pricetable/forever.pvp.alliance.us", 503);
+    let mut stdout = Vec::new();
+    assert_eq!(
+        everledger::cli::execute(&command, &f.context(), &mut stdout),
+        ExitCode::Unreachable
+    );
+    assert!(stdout.is_empty());
+}

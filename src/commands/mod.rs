@@ -7,6 +7,7 @@ pub mod guide;
 pub mod listings;
 pub mod margins;
 pub mod net;
+pub mod parity;
 pub mod positions;
 pub mod price;
 pub mod purchases;

@@ -12,6 +12,7 @@ Commands:
   recipe       Catalogue facts and roster known-by annotation
   bridge       Catalogue skill-up bands across a range
   margins      AHledger craft margins; optional roster recipe/level scope
+  parity       Catalogue and item-use conversions at AHledger floors and medians
   vendors      Vendor listed prices/locations; ForeverDB includes faction
   char         Characters, profession ranks, known recipes and saved RestedXP position
   guide        RestedXP steps, search and installed guide list
@@ -41,7 +42,7 @@ JSON matched/returned counts describe the accompanying filtered array;
 aggregates count all pages, events count the current page, bootstrap counts zero.
 Exit codes: 0 answer, 1 error, 2 usage, 3 stale data printed, 4 source unreachable.
 Journal save age is normal: old saves alone do not change exit codes.
-Price/margins AH freshness limit: 15m; catalogue advisory age: 14d.
+Price/margins/parity AH freshness limit: 15m; catalogue advisory age: 14d.
 Listings use the roster scan limit (15m). Positions apply both market/scan limits.
 Vendor queries cache snapshots until refresh catalogue; after 1d they are stale.
 On refresh failure a cache up to 7d old prints stale with exit 3, else exit 4.
@@ -146,6 +147,19 @@ Options:
       --char <CHAR>    
       --json           one JSON document using API field names
   -h, --help           Print help
+```
+
+## parity
+
+```text
+Catalogue and item-use conversions at AHledger floors and medians
+
+Usage: everledger parity [OPTIONS]
+
+Options:
+      --all   Include conversions with no positive spread
+      --json  one JSON document using API field names
+  -h, --help  Print help
 ```
 
 ## vendors
