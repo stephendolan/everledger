@@ -14,6 +14,7 @@ pub mod purchases;
 pub mod recipe;
 pub mod refresh;
 pub mod sales;
+pub mod saleslog;
 pub mod status;
 pub mod vendors;
 

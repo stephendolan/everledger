@@ -52,6 +52,7 @@ Use `target/release/everledger` followed by a command. See the
 | `listings` | Recorded auctions compared with the AHledger floor. |
 | `positions` | Holdings and listings valued at the floor; cost basis needs assignments. |
 | `sales` | Sales proceeds, with auction sales as the default. |
+| `saleslog` | First-party posting and outcome audit, Analysis A, and report readiness. |
 | `purchases` | Auction and vendor purchases. |
 | `expirations` | Expired auctions and market inputs for reposting. |
 | `net` | Item auction cash and counts; profit basis remains unknown. |
@@ -161,6 +162,31 @@ fallback remains the differential reference for commands it supports.
 in the authored definition. Chapters with unavailable counts stay visible.
 JSON includes `groups`, with `group`, `subgroup` and `chapters`. Chapters
 carry their level range, count or unavailable reason, and definition provenance.
+
+## First-party sales log
+
+```sh
+everledger saleslog listings --days 30 --char Slade
+everledger saleslog outcomes --days 30 --json
+everledger saleslog report --analysis a
+everledger status
+```
+
+The Rust CLI reads the authenticated roster service's sales log. Reports use
+roster v1.6.1 or later for the November verification gate. The MacBook owns
+ingest, linkage, scan selection and verdicts. Collection time is shown as mail
+collection. A separate interval bounds sale time. Listing-time pairings use a
+scan at or before the posting bound and carry their age. Pairings over four
+hours old are excluded from decision-grade analyses. Sales-log commands print
+saved results with exit 3 when the roster flags the source stale. If the roster
+is unreachable, the commands exit 4 without output on stdout. Status includes
+the sales log's counts, linkage and pairing rates, and oldest unpaired record.
+
+Analysis A prints its evidence counts even when the verdict is unresolved.
+The service keeps it exploratory until linkage and November verification pass
+and the analysis reaches its own minimum sample. Analyses B and C show data
+accumulation for their v2 reports. JSON preserves the roster field names,
+nulls and integer copper amounts. [Prices from AHledger](https://ahledger.com)
 
 ## Python fallback
 

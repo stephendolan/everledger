@@ -369,15 +369,24 @@ def status(args):
         code=max(code,checked)
     except Failure as e:
         rows.append({'source':'catalogue','state':str(e)}); code=max(code,e.code)
-    for label,path in [('roster','/characters'),('outcomes','/events'),('listings','/listings')]:
+    for label,path in [('roster','/characters'),('outcomes','/events'),('listings','/listings'),('sales log','/saleslog/status')]:
         try:
             d=outcomes.event_page({'limit':1}) if label=='outcomes' else roster(path)
+            if label == 'sales log' and (not d.get('line') or not d.get('market_source')):
+                raise Failure('sales log status: invalid response shape (missing summary)')
             used+=sources(d)
             roster_sources+=sources(d)
-            rows.append({'source':label,'state':d.get('state','reachable'),'sources':sources(d)})
-            if label=='listings': stale=stale or is_stale(outcomes.listing_sources(d))
+            if label == 'sales log':
+                rows.append({**d, 'source': label, 'state': 'reachable'})
+                stale = stale or is_stale(sources(d))
+            else:
+                rows.append({'source':label,'state':d.get('state','reachable'),'sources':sources(d)})
+                if label=='listings': stale=stale or is_stale(outcomes.listing_sources(d))
         except Failure as e:
-            rows.append({'source':label,'state':str(e)}); code=max(code,e.code)
+            if label == 'sales log' and (e.body or {}).get('status') == 404:
+                rows.append({'source': label, 'state': 'unavailable (requires roster 1.6 or later)'})
+            else:
+                rows.append({'source':label,'state':str(e)}); code=max(code,e.code)
     try:
         _,s=market_table(); used.append(s); rows.append({'source':'AHledger','state':'stale' if s['stale'] else 'reachable',**s}); stale=stale or s['stale']
     except Failure as e:
@@ -393,6 +402,7 @@ def status(args):
     stale = stale or is_stale(vendor_sources)
     rows.append(vendor_status)
     lines=[' | '.join([human(r['source'])] + ([human(r['backend'])] if r.get('backend') else []) + [human(r['state'])]) for r in rows]
+    lines = [f"{r['line']} | AHledger {r['market_source']}" if r.get('line') else line for r, line in zip(rows, lines)]
     info = vendor_status['foreverdb']
     lines.append(f"ForeverDB {info['state']} | transport {info['transport'] or 'none'} | last sync {info['last_sync_at'] or 'never'} | {info['record_count']} vendor records | {info['item_count']} item records | pending {human(info['pending'])}")
     ninja_coverage = vendor_status['coverage'][vendors.BACKEND]

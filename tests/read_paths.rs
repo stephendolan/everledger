@@ -1341,3 +1341,165 @@ fn parity_prints_stale_rows_and_propagates_source_failure() {
     );
     assert!(stdout.is_empty());
 }
+
+#[test]
+fn saleslog_listing_and_outcome_commands_preserve_audit_fields() {
+    let f = Fixture::new();
+    f.raw(
+        "/saleslog/listings?days=30&char=Ada+Example",
+        r#"{
+        "listings":[{"listing_id":9,"character_name":"Ada Example","item_name_snapshot":"Ore",
+        "quantity_total":4,"posted_at_earliest":null,"posted_at_latest":"2026-11-15T11:00:00Z",
+        "posted_at_precision":"flush_bounded","posted_price_per_unit_copper":10001,
+        "pairing_status":"paired_stale","pairing_scan_ts":"2026-11-15T06:59:59Z",
+        "pairing_scan_age_seconds":14401,"floor_at_pairing_copper":10002,
+        "median_at_pairing_copper":12000,"price_position_bp":0,"duration_chosen_seconds":null}],
+        "attribution":{"text":"Prices from AHledger","url":"https://ahledger.com"},
+        "sources":[{"name":"Journalator.lua","stale":true}]
+    }"#,
+    );
+    let out = f
+        .command(&[
+            "saleslog",
+            "listings",
+            "--days",
+            "30",
+            "--char",
+            "Ada Example",
+            "--json",
+        ])
+        .unwrap();
+    assert_eq!(out.exit_code(), ExitCode::Stale);
+    let row = &out.data.get("listings").unwrap().as_array().unwrap()[0];
+    assert_eq!(
+        row.get("posted_price_per_unit_copper")
+            .and_then(Document::as_i64),
+        Some(10001)
+    );
+    assert_eq!(row.get("duration_chosen_seconds"), Some(&Document::Null));
+    assert!(
+        out.lines
+            .iter()
+            .any(|l| l.contains("paired_stale") && l.contains("14401s"))
+    );
+    assert!(
+        out.lines
+            .iter()
+            .any(|l| l.contains("Prices from AHledger (https://ahledger.com)"))
+    );
+
+    f.raw("/saleslog/outcomes", r#"{
+        "outcomes":[{"outcome_type":"sold","character_name":"Ada Example",
+            "item_name_snapshot":"Ore","units_involved":4,"listing_id":9,"linkage_status":"linked",
+            "collected_at":"2026-11-15T12:00:00Z","collected_at_precision":"mail_collection",
+            "sale_interval_start":"2026-11-15T11:00:00Z","sale_interval_end":"2026-11-15T11:57:00Z",
+            "sale_interval_source":"last_live_observation+first_absent_observation",
+            "gross_proceeds_copper":40004,"net_proceeds_copper":38004,"proceeds_basis":"journalator_gross",
+            "pairing_status":"unpaired"}],
+        "attribution":{"text":"Prices from AHledger","url":"https://ahledger.com"},
+        "sources":[{"name":"Journalator.lua","stale":false}]
+    }"#);
+    let out = f.command(&["saleslog", "outcomes"]).unwrap();
+    assert_eq!(out.exit_code(), ExitCode::Answer);
+    let summary = out.lines.join("\n");
+    assert!(summary.contains("mail collected 2026-11-15T12:00:00Z"));
+    assert!(summary.contains("sale interval [2026-11-15T11:00:00Z, 2026-11-15T11:57:00Z]"));
+    assert!(!summary.contains("sale interval [2026-11-15T11:00:00Z, 2026-11-15T12:00:00Z]"));
+    assert!(summary.contains("basis journalator_gross"));
+}
+
+#[test]
+fn saleslog_report_decodes_exploratory_and_accumulation_without_new_calculations() {
+    let f = Fixture::new();
+    f.raw("/saleslog/report", r#"{
+        "attribution":{"text":"Prices from AHledger","url":"https://ahledger.com"},
+        "sources":[],
+        "reports":[
+          {"analysis":"a","state":"exploratory","verdict":"unresolved","reason":"november_verification_minimum_not_reached",
+           "scope":"Stephen's sales.","proceeds_basis":"journalator_gross","total_count":6,"decision_grade_count":5,
+           "excluded_count":1,"excluded_by_reason":{"unpaired":1},"linkage_gate":{"numerator":6,"denominator":6},
+           "verification":{"verified_sales":0,"minimum_sales":10,"verified_distinct_items":0,"minimum_distinct_items":3},
+           "listing_time":{"sales":5,"distinct_items":3,"median_scan_age_seconds":950,
+               "median_gap_median_to_realized_bp":1201,"median_gap_floor_to_realized_bp":-250,
+               "recent_move_groups":{"unknown":{"count":5,"median_gap_bp":1201}}},
+           "at_most_one_hour":{"sales":5,"distinct_items":3,"median_scan_age_seconds":950,"recent_move_groups":{}},
+           "scan_age_sensitive":false,"floor_proxy":{"thresholds":"At floor: −1c to 0c.","scope":"Floor depth is a proxy.","state":"accumulating","at_or_near_floor_count":1,
+               "decision_grade_at_floor_count":1,"minimum_at_floor_sales":30,"isolated_share":{"numerator":0,"denominator":1},
+               "groups":{"unclassified_floor":{"count":1,"median_realized_copper":null}}},
+           "expired_ask_side":{"total_count":1,"excluded_by_reason":{"unlinked":1},"rows":[]},
+           "prior":"Wave 2 basket cross-section."},
+          {"analysis":"b","state":"report_code_v2","counts":{"listings":7},"message":"Data is accumulating. Report code is scheduled for v2."},
+          {"analysis":"c","state":"report_code_v2","counts":{"listings":7},"message":"Data is accumulating. Report code is scheduled for v2."}]
+        }"#);
+    let out = f.command(&["saleslog", "report", "--json"]).unwrap();
+    let reports = out.data.get("reports").unwrap().as_array().unwrap();
+    assert_eq!(
+        reports[0].get("state").and_then(Document::as_str),
+        Some("exploratory")
+    );
+    assert_eq!(
+        reports[2].get("state").and_then(Document::as_str),
+        Some("report_code_v2")
+    );
+    let lines = out.lines.join("\n");
+    for part in [
+        "Analysis A | exploratory",
+        "6 total | 5 decision-grade | 1 excluded",
+        "November verification 0/10",
+        "At floor: −1c to 0c.",
+        "Floor depth is a proxy.",
+        "median-to-realized 12.01%",
+        "floor-to-realized -2.50%",
+        "Analysis B | Data is accumulating.",
+        "Analysis C | Data is accumulating.",
+        "Prices from AHledger (https://ahledger.com)",
+    ] {
+        assert!(lines.contains(part), "missing {part}");
+    }
+}
+
+#[test]
+fn saleslog_errors_never_emit_empty_figures_and_status_keeps_counts() {
+    let f = Fixture::new();
+    for (args, route) in [
+        (vec!["saleslog", "listings"], "/saleslog/listings"),
+        (vec!["saleslog", "outcomes", "--json"], "/saleslog/outcomes"),
+        (
+            vec!["saleslog", "report", "--analysis", "a"],
+            "/saleslog/report?analysis=a",
+        ),
+    ] {
+        f.fail(route, 503);
+        let command =
+            everledger::cli::parse_from(std::iter::once("everledger").chain(args)).unwrap();
+        let mut stdout = vec![];
+        assert_eq!(
+            everledger::cli::execute(&command, &f.context(), &mut stdout),
+            ExitCode::Unreachable
+        );
+        assert!(stdout.is_empty());
+    }
+    f.raw("/saleslog/status", r#"{"counts":{"listings":7,"outcomes":9},
+        "line":"Sales log: 7 listings, 9 outcomes | linked 6/8 | paired 7/16 | oldest unpaired unknown",
+        "market_source":"unreachable","sources":[]}"#);
+    let status = f.command(&["status", "--json"]).unwrap();
+    assert!(status.lines.iter().any(
+        |line| line.contains("Sales log: 7 listings") && line.contains("AHledger unreachable")
+    ));
+    let row = status
+        .data
+        .get("status")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("source").and_then(Document::as_str) == Some("sales log"))
+        .unwrap();
+    assert_eq!(
+        row.get("counts")
+            .unwrap()
+            .get("outcomes")
+            .and_then(Document::as_i64),
+        Some(9)
+    );
+}

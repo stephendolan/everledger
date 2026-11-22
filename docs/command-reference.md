@@ -19,11 +19,12 @@ Commands:
   listings     Recorded live auction listings and AHledger floor comparison
   positions    Inventory holdings/listings and AHledger floor; basis unknown without assignments
   sales        Sales proceeds (defaults to auction)
+  saleslog     First-party listings, outcomes and execution analysis
   purchases    Auction and vendor purchases
   expirations  Expired auctions with market repost inputs
   net          Item auction cash/count diagnostic; profit basis stays unknown
   events       Typed journal feed; prints next_cursor, has_more and service checkpoint
-  status       Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
+  status       Reachability/freshness of AHledger, roster, sales log, catalogue and vendors
   refresh      Rebuild catalogue and refresh the configured vendor backend
 
 Options:
@@ -259,6 +260,23 @@ Options:
   -h, --help           Print help
 ```
 
+## saleslog
+
+```text
+First-party listings, outcomes and execution analysis
+
+Usage: everledger saleslog [OPTIONS] <COMMAND>
+
+Commands:
+  listings  Inspect first-party postings and listing-time scan pairings
+  outcomes  Inspect first-party outcomes, linkage, and sale intervals
+  report    Read Analysis A and the accumulation status of Analyses B and C
+
+Options:
+      --json  one JSON document using API field names
+  -h, --help  Print help
+```
+
 ## purchases
 
 ```text
@@ -346,7 +364,7 @@ at-least-once delivery. This CLI persists nothing.
 ## status
 
 ```text
-Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors
+Reachability/freshness of AHledger, roster, sales log, catalogue and vendors
 
 Usage: everledger status [OPTIONS]
 

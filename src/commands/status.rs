@@ -16,6 +16,8 @@ use serde::Deserialize;
 pub struct StatusRow {
     pub source: String,
     pub backend: Option<Backend>,
+    pub line: Option<String>,
+    pub market_source: Option<String>,
     #[serde(default)]
     pub state: Field<String>,
 }
@@ -24,10 +26,16 @@ struct ServiceStatus {
     #[serde(default)]
     state: Field<String>,
 }
+#[derive(Deserialize)]
+struct SalesLogStatus {
+    line: String,
+    market_source: String,
+}
 enum Probe {
     Roster,
     Outcomes,
     Listings,
+    SalesLog,
 }
 impl Probe {
     fn name(&self) -> &'static str {
@@ -35,6 +43,7 @@ impl Probe {
             Self::Roster => "roster",
             Self::Outcomes => "outcomes",
             Self::Listings => "listings",
+            Self::SalesLog => "sales log",
         }
     }
 }
@@ -71,6 +80,49 @@ fn probe(probe: &Probe, context: &Context<'_>) -> Result<(Document, Vec<Source>,
                 crate::roster::roster(context.http, context.config, "/listings", &[])?;
             let stale = is_stale(&crate::commands::listings::listing_sources(&data)?);
             (data.into_document(), stale)
+        }
+        Probe::SalesLog => {
+            let response = crate::roster::roster::<SalesLogStatus>(
+                context.http,
+                context.config,
+                "/saleslog/status",
+                &[],
+            );
+            let mut row = match response {
+                Ok(data) => {
+                    let SalesLogStatus {
+                        line,
+                        market_source,
+                    } = data.view();
+                    if line.is_empty() || market_source.is_empty() {
+                        return Err(crate::Failure::shape("sales log status", "missing summary"));
+                    }
+                    data.into_document()
+                }
+                Err(error)
+                    if error
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.get("status"))
+                        .and_then(Document::as_i64)
+                        == Some(404) =>
+                {
+                    return Ok((
+                        Document::object([
+                            ("source", probe.name().into()),
+                            ("state", "unavailable (requires roster 1.6 or later)".into()),
+                        ]),
+                        vec![],
+                        false,
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+            let used = sources(&row)?;
+            row.set("state", "reachable")?;
+            row.set("source", probe.name())?;
+            let stale = is_stale(&used);
+            return Ok((row, used, stale));
         }
     };
     let view: ServiceStatus = data.decode("service status")?;
@@ -130,7 +182,12 @@ pub fn run(_args: &Args, context: &Context<'_>) -> Result<CommandOutput> {
         }
         Err(e) => failure("catalogue", e, &mut rows, &mut code),
     }
-    for probe_kind in [Probe::Roster, Probe::Outcomes, Probe::Listings] {
+    for probe_kind in [
+        Probe::Roster,
+        Probe::Outcomes,
+        Probe::Listings,
+        Probe::SalesLog,
+    ] {
         match probe(&probe_kind, context) {
             Ok((row, sources, probe_stale)) => {
                 roster_sources.extend(sources.clone());

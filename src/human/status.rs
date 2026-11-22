@@ -10,6 +10,12 @@ pub fn render(rows: &[StatusRow], vendor: &BackendStatusData) -> Vec<String> {
     let mut lines = rows
         .iter()
         .map(|r| {
+            if let Some(line) = &r.line {
+                return match &r.market_source {
+                    Some(state) => format!("{line} | AHledger {state}"),
+                    None => line.clone(),
+                };
+            }
             let mut parts = vec![text(Some(&r.source))];
             if let Some(backend) = r.backend {
                 parts.push(backend.name().into());

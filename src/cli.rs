@@ -13,7 +13,11 @@ struct Cli {
 }
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct OutputArgs {
-    #[arg(long = "json", help = "one JSON document using API field names")]
+    #[arg(
+        long = "json",
+        global = true,
+        help = "one JSON document using API field names"
+    )]
     pub json: bool,
 }
 
@@ -79,6 +83,8 @@ commands! {
     Positions(positions),
     #[command(name = "sales", about = "Sales proceeds (defaults to auction)")]
     Sales(sales),
+    #[command(name = "saleslog", about = "First-party listings, outcomes and execution analysis")]
+    SalesLog(saleslog),
     #[command(name = "purchases", about = "Auction and vendor purchases")]
     Purchases(purchases),
     #[command(
@@ -98,7 +104,7 @@ commands! {
     Events(events),
     #[command(
         name = "status",
-        about = "Reachability/freshness of AHledger, roster, outcomes, catalogue and vendors"
+        about = "Reachability/freshness of AHledger, roster, sales log, catalogue and vendors"
     )]
     Status(status),
     #[command(
