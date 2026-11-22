@@ -13,8 +13,8 @@ binaries' candidate transcripts without those exemptions.
 ## RestedXP guides
 
 The Rust CLI renders the roster v1.4 character's `guide` field and provides
-the `guide` command. The frozen Python reference has no guide command or human
-guide rendering. A character payload without the new field retains the
+the `guide` command for routes, search, and the installed catalogue. The frozen
+Python reference has no guide command or human guide rendering. A character payload without the new field retains the
 existing Rust and Python behavior. With v1.4 payloads, Rust preserves the
 server's guide data in JSON. Native read-path tests cover the new field and
 command. The differential matrix continues to compare the shared surface

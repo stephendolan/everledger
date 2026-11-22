@@ -1096,3 +1096,54 @@ fn guide_passes_term_and_limit_and_reports_upcoming_or_search_results() {
             .any(|line| line.contains("step 9 (+1 installed step) | Prepare at the harbor"))
     );
 }
+
+#[test]
+fn guide_lists_installed_groups_counts_and_unavailable_chapters() {
+    let f = Fixture::new();
+    f.raw(
+        "/guides?group=Dungeon+Guide+1-20",
+        include_str!("fixtures/restedxp-guide-catalogue.json"),
+    );
+    let result = f
+        .command(&["guide", "--list", "--group", "Dungeon Guide 1-20", "--json"])
+        .unwrap();
+    let groups = result.data.get("groups").unwrap().as_array().unwrap();
+    let chapters = groups[0].get("chapters").unwrap().as_array().unwrap();
+    assert_eq!(chapters[0].get("step_count"), Some(&Document::Null));
+    assert_eq!(
+        chapters[2].get("step_count"),
+        Some(&Document::from(129_i64))
+    );
+    assert_eq!(
+        result.lines,
+        [
+            "RestedXP Forever Dungeon Guide (A) / Dungeon Guide 1-20",
+            "  1-9 Zephras Isle | levels 1–9 | step count unavailable (Chapter uses RestedXP includes)",
+            "  18-19 Ruins of Lordaeron | levels 18–19 | 60 defined steps",
+            "  19-20 Deadmines | levels 19–20 | 129 defined steps",
+        ]
+    );
+    f.raw(
+        "/guides",
+        r#"{"available":false,"reason":"No installed guide chapters could be identified","groups":null,
+            "sources":[{"file":"damaged.lua","issues":["Cannot read guide file"]}]}"#,
+    );
+    let result = f.command(&["guide", "--list"]).unwrap();
+    assert_eq!(result.data.get("groups"), Some(&Document::Null));
+    assert!(result.lines[0].contains("Installed guides unavailable"));
+    assert!(result.lines[1].contains("damaged.lua | Cannot read guide file"));
+    for args in [
+        &["guide"][..],
+        &["guide", "Ada", "--list"],
+        &["guide", "Ada", "--group", "Test"],
+        &["guide", "--group", "Test"],
+        &["guide", "--list", "--search", "Cave"],
+        &["guide", "--list", "--limit", "1"],
+    ] {
+        assert!(
+            everledger::cli::parse_from(std::iter::once("everledger").chain(args.iter().copied()))
+                .is_err(),
+            "accepted {args:?}"
+        );
+    }
+}

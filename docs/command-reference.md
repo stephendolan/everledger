@@ -14,7 +14,7 @@ Commands:
   margins      AHledger craft margins; optional roster recipe/level scope
   vendors      Vendor listed prices/locations; ForeverDB includes faction
   char         Characters, profession ranks, known recipes and saved RestedXP position
-  guide        Upcoming RestedXP steps and term search
+  guide        RestedXP steps, search and installed guide list
   listings     Recorded live auction listings and AHledger floor comparison
   positions    Inventory holdings/listings and AHledger floor; basis unknown without assignments
   sales        Sales proceeds (defaults to auction)
@@ -184,14 +184,16 @@ Options:
 ## guide
 
 ```text
-Upcoming RestedXP steps and term search
+RestedXP steps, search and installed guide list
 
-Usage: everledger guide [OPTIONS] <NAME>
+Usage: everledger guide [OPTIONS] [NAME]
 
 Arguments:
-  <NAME>  Character name or unique first name
+  [NAME]  Character name or unique first name
 
 Options:
+      --list           List installed guide families and chapters
+      --group <GROUP>  Filter the list by family or subgroup
       --search <TERM>  Search chapters, step text and targets
       --limit <LIMIT>  Maximum results (default 5 upcoming or 20 matches)
       --json           one JSON document using API field names

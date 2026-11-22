@@ -1,0 +1,36 @@
+{
+  "available": true,
+  "group_query": "Dungeon Guide 1-20",
+  "groups": [
+    {
+      "group": "RestedXP Forever Dungeon Guide (A)",
+      "subgroup": "Dungeon Guide 1-20",
+      "chapters": [
+        {
+          "chapter": "1-9 Zephras Isle",
+          "chapter_levels": [1, 9],
+          "available": false,
+          "step_count": null,
+          "reason": "Chapter uses RestedXP includes"
+        },
+        {
+          "chapter": "18-19 Ruins of Lordaeron",
+          "chapter_levels": [18, 19],
+          "available": true,
+          "step_count": 60,
+          "reason": null
+        },
+        {
+          "chapter": "19-20 Deadmines",
+          "chapter_levels": [19, 20],
+          "available": true,
+          "step_count": 129,
+          "reason": null
+        }
+      ]
+    }
+  ],
+  "reason": null,
+  "sources": [],
+  "generated_at": "2026-11-22T03:00:00Z"
+}

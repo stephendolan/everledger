@@ -63,7 +63,7 @@ commands! {
         about = "Characters, profession ranks, known recipes and saved RestedXP position"
     )]
     Char(char),
-    #[command(name = "guide", about = "Upcoming RestedXP steps and term search")]
+    #[command(name = "guide", about = "RestedXP steps, search and installed guide list")]
     Guide(guide),
     #[command(
         name = "listings",

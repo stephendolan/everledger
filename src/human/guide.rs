@@ -1,5 +1,5 @@
 use crate::{
-    commands::guide::GuideResponse,
+    commands::guide::{CatalogueResponse, GuideResponse},
     human::{integer, text},
     read_roster::{GuideProgress, GuideStep},
 };
@@ -97,6 +97,50 @@ pub fn route(response: &GuideResponse) -> Vec<String> {
     }
     if let Some(reason) = &response.route_end {
         lines.push(format!("  Installed route ends here ({reason})"));
+    }
+    lines
+}
+
+pub fn catalogue(response: &CatalogueResponse) -> Vec<String> {
+    let mut lines = Vec::new();
+    match response.groups.as_deref() {
+        None => lines.push(format!(
+            "Installed guides unavailable ({})",
+            text(response.reason.as_deref())
+        )),
+        Some([]) => lines.push(match &response.group_query {
+            Some(query) => format!("No installed guide groups match {query:?}"),
+            None => "No installed guide groups".into(),
+        }),
+        Some(groups) => {
+            for group in groups {
+                let family = group.group.as_deref().unwrap_or("Guide family unavailable");
+                lines.push(match &group.subgroup {
+                    Some(subgroup) => format!("{family} / {subgroup}"),
+                    None => family.to_owned(),
+                });
+                for chapter in &group.chapters {
+                    let levels = chapter.chapter_levels.map_or_else(
+                        || "levels unavailable".into(),
+                        |[low, high]| format!("levels {low}–{high}"),
+                    );
+                    let count = match chapter.step_count {
+                        Some(1) => "1 defined step".into(),
+                        Some(n) => format!("{n} defined steps"),
+                        None => format!(
+                            "step count unavailable ({})",
+                            text(chapter.reason.as_deref())
+                        ),
+                    };
+                    lines.push(format!("  {} | {levels} | {count}", chapter.chapter));
+                }
+            }
+        }
+    }
+    for source in &response.sources {
+        for issue in &source.issues {
+            lines.push(format!("  Coverage | {} | {issue}", source.file));
+        }
     }
     lines
 }

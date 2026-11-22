@@ -116,6 +116,8 @@ everledger char Slade --json
 everledger guide Slade --limit 5
 everledger guide Slade --search Deadmines
 everledger guide Nuggles --search Deadmines --json
+everledger guide --list
+everledger guide --list --group "Dungeon Guide 1-20" --json
 ```
 
 `char` shows the saved guide family, chapter, step, instructions or target,
@@ -133,6 +135,12 @@ chapter level range, definition file and line, and `steps_from_current`.
 Search includes `previous` when known. An unavailable route has null steps.
 An empty array means the installed route returned zero results. The Python
 fallback remains the differential reference for commands it supports.
+
+`guide --list` shows the installed families and their chapters. The optional
+`--group` filter matches family and subgroup labels. Counts include branches
+in the authored definition. Chapters with unavailable counts stay visible.
+JSON includes `groups`, with `group`, `subgroup` and `chapters`. Chapters
+carry their level range, count or unavailable reason, and definition provenance.
 
 ## Python fallback
 
