@@ -120,6 +120,11 @@ everledger guide --list
 everledger guide --list --group "Dungeon Guide 1-20" --json
 ```
 
+A named `char` shows the active talent trees and purchased ranks from the
+roster snapshot when the server provides them. The capture time belongs to
+the character's game read. JSON preserves the roster's `character.talents`
+object, including an unavailable reason when the server has no usable scan.
+
 `char` shows the saved guide family, chapter, step, instructions or target,
 and SavedVariables age when the roster provides them. JSON exposes the
 same position in `character.guide`, with the installed file and line under

@@ -48,6 +48,27 @@ pub struct GuideProgress {
     pub saved_at: Option<String>,
     pub file_age_seconds: Option<i64>,
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct TalentSnapshot {
+    pub available: bool,
+    pub captured_at: Option<String>,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub trees: Vec<TalentTree>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct TalentTree {
+    pub name: String,
+    pub points: u64,
+    pub talents: Vec<RankedTalent>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct RankedTalent {
+    pub name: String,
+    pub rank: u64,
+    pub max_rank: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct Character {
     pub name: Option<String>,
@@ -61,6 +82,7 @@ pub struct Character {
     pub gold_copper: Option<crate::Copper>,
     pub hearth: Option<Hearth>,
     pub guide: Option<GuideProgress>,
+    pub talents: Option<TalentSnapshot>,
     pub professions_updated_at: Option<String>,
     #[serde(default)]
     pub professions: Vec<Profession>,

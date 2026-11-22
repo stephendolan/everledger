@@ -530,7 +530,7 @@ class CLI(unittest.TestCase):
         self.assertIn('events --limit 0 --json',self.run_cli('events','--after','',code=2).stderr)
 
     def test_outcomes_are_not_stale_errors(self):
-        r=self.run_cli('sales','--since','7d','--until','2026-11-14','--json')
+        r=self.run_cli('sales','--since','2026-11-07','--until','2026-11-14','--json')
         self.assertEqual(json.loads(r.stdout)['sales'],[])
         self.assertNotIn('venue=',Handler.requests[-1])
         self.assertIn('since=',Handler.requests[-1])

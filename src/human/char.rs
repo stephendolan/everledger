@@ -49,6 +49,28 @@ pub fn character(
     if let Some(guide) = &c.guide {
         lines.push(crate::human::guide::progress(guide));
     }
+    if let Some(talents) = &c.talents {
+        if talents.available {
+            lines.push(format!(
+                "  Talents (captured {})",
+                text(talents.captured_at.as_deref())
+            ));
+            for tree in &talents.trees {
+                lines.push(format!("    {}: {} points", tree.name, tree.points));
+                for talent in &tree.talents {
+                    lines.push(format!(
+                        "      {} {}/{}",
+                        talent.name, talent.rank, talent.max_rank
+                    ));
+                }
+            }
+        } else {
+            lines.push(format!(
+                "  Talents unavailable ({})",
+                text(talents.reason.as_deref())
+            ));
+        }
+    }
     let want = profession.map(crate::primitives::lower);
     for p in &c.professions {
         if p.skill_available == Some(true) {

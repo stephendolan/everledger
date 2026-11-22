@@ -1,6 +1,42 @@
 {
  "now": "2026-11-15T12:00:00Z",
  "routes": {
+  "/characters/Ada": {
+   "character": {
+    "name": "Ada Test",
+    "talents": {
+     "available": true,
+     "captured_at": "2026-11-21T22:10:00Z",
+     "trees": [
+      {
+       "name": "Combat",
+       "points": 0,
+       "talents": []
+      },
+      {
+       "name": "Subtlety",
+       "points": 3,
+       "talents": [
+        {
+         "name": "Improved Ambush",
+         "rank": 3,
+         "max_rank": 3
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "/characters/Bea": {
+   "character": {
+    "name": "Bea Test",
+    "talents": {
+     "available": false,
+     "reason": "No per-character talent snapshot recorded"
+    }
+   }
+  },
   "/characters/Slade": {
    "generated_at": "2026-11-15T12:00:00Z",
    "sources": [
@@ -419,6 +455,8 @@
   "/v1/pricetable/forever.pvp.alliance.us": "m|v|1794744000\n2604:88:87:709:::::10"
  },
  "commands": [
+  ["char", "Ada"],
+  ["char", "Bea"],
   [
    "char",
    "Slade"

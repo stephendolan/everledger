@@ -2,6 +2,52 @@
  {
   "argv": [
    "char",
+   "Ada"
+  ],
+  "exit_code": 0,
+  "stdout": "Ada Test | level unknown unknown unknown | unknown unknown | gold unknown | hearth unknown\n  (roster snapshot generated unknown; professions updated unknown)\n  Talents (captured 2026-11-21T22:10:00Z)\n    Combat: 0 points\n    Subtlety: 3 points\n      Improved Ambush 3/3\nsource: unknown (age unknown)\n",
+  "requests": [
+   "/characters/Ada"
+  ]
+ },
+ {
+  "argv": [
+   "char",
+   "Ada",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"character\": {\"name\": \"Ada Test\", \"talents\": {\"available\": true, \"captured_at\": \"2026-11-21T22:10:00Z\", \"trees\": [{\"name\": \"Combat\", \"points\": 0, \"talents\": []}, {\"name\": \"Subtlety\", \"points\": 3, \"talents\": [{\"name\": \"Improved Ambush\", \"rank\": 3, \"max_rank\": 3}]}]}}, \"sources\": []}\n",
+  "requests": [
+   "/characters/Ada"
+  ]
+ },
+ {
+  "argv": [
+   "char",
+   "Bea"
+  ],
+  "exit_code": 0,
+  "stdout": "Bea Test | level unknown unknown unknown | unknown unknown | gold unknown | hearth unknown\n  (roster snapshot generated unknown; professions updated unknown)\n  Talents unavailable (No per-character talent snapshot recorded)\nsource: unknown (age unknown)\n",
+  "requests": [
+   "/characters/Bea"
+  ]
+ },
+ {
+  "argv": [
+   "char",
+   "Bea",
+   "--json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"character\": {\"name\": \"Bea Test\", \"talents\": {\"available\": false, \"reason\": \"No per-character talent snapshot recorded\"}}, \"sources\": []}\n",
+  "requests": [
+   "/characters/Bea"
+  ]
+ },
+ {
+  "argv": [
+   "char",
    "Slade"
   ],
   "exit_code": 0,

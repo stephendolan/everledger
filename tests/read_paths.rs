@@ -918,7 +918,7 @@ fn captured_roster_shapes_replay_the_reference() {
     let routes = world.get("routes").unwrap();
     let cases: Vec<CapturedCase> =
         serde_json::from_str(include_str!("golden/captured-roster.json")).unwrap();
-    assert_eq!(cases.len(), 18);
+    assert_eq!(cases.len(), 22);
     for case in cases {
         let mut f = Fixture::new();
         f.clock = VirtualClock::new(time::instant(now).unwrap());
@@ -1016,6 +1016,41 @@ fn unread_page_values_use_the_service_decode_path() {
             }
         }
     }
+}
+
+#[test]
+fn char_displays_ranked_talents_and_keeps_the_roster_payload() {
+    let f = Fixture::new();
+    let raw = r#"{"character":{"name":"Ada Test","talents":{"available":true,
+        "captured_at":"2026-11-21T22:10:00Z","trees":[
+            {"name":"Combat","points":0,"talents":[]},
+            {"name":"Subtlety","points":3,"talents":[
+                {"name":"Improved Ambush","rank":3,"max_rank":3}]}]}}}"#;
+    f.raw("/characters/Ada", raw);
+    let text = f.command(&["char", "Ada"]).unwrap();
+    assert!(text.lines.windows(4).any(|lines| lines
+        == [
+            "  Talents (captured 2026-11-21T22:10:00Z)",
+            "    Combat: 0 points",
+            "    Subtlety: 3 points",
+            "      Improved Ambush 3/3",
+        ]));
+    let json = f.command(&["char", "Ada", "--json"]).unwrap();
+    let expected = document::parse(raw).unwrap();
+    assert_eq!(json.data.get("character"), expected.get("character"));
+
+    f.raw(
+        "/characters/Ada",
+        r#"{"character":{"name":"Ada Test","talents":{
+        "available":false,"reason":"No complete talent scan recorded"}}}"#,
+    );
+    let unavailable = f.command(&["char", "Ada"]).unwrap();
+    assert!(
+        unavailable
+            .lines
+            .iter()
+            .any(|line| line == "  Talents unavailable (No complete talent scan recorded)")
+    );
 }
 
 #[test]
